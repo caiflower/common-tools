@@ -1,3 +1,3 @@
-module caiflower.cn/common-tools
+module github.com/caiflower/common-tools
 
 go 1.19
