@@ -4,6 +4,7 @@
 | --------------------- | -------------------------------------------------- | ---------------------------------------------- | ----------------------------------- | --------- |
 | [堆排序](#堆排序)     | github.com/caiflower/common-tools/pkg/sort/heap    | 简单的堆结构，使用了go泛型，支持常用的基本类型 | 修复了交替执行Pop和Add方法产生的BUG | 2024-1-19 |
 | [延迟队列](#延迟队列) | github.com/caiflower/common-tools/pkg/delay-queque | 延迟队列                                       | -                                   | 2024-1-19 |
+| [自旋锁](#自旋锁)     | github.com/caiflower/common-tools/syncx            | 自旋锁，拷贝自ants项目                         |                                     | 2024-2-5  |
 
 # 堆排序
 
@@ -80,5 +81,38 @@ func main() {
     }
 
     wait.Wait()
+}
+```
+
+# 自旋锁
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/caiflower/common-tools/pkg/syncx"
+    "sync"
+)
+
+func main() {
+    wait := sync.WaitGroup{}
+    lock := syncx.NewSpinLock()
+    var num int
+
+    fn := func() {
+        lock.Lock()
+        num++
+        lock.Unlock()
+        wait.Done()
+    }
+
+    for i := 0; i < 10000; i++ {
+        wait.Add(1)
+        go fn()
+    }
+
+    wait.Wait()
+    fmt.Printf("-----num=%v-----", num)
 }
 ```
