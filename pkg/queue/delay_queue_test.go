@@ -1,4 +1,4 @@
-package delayque
+package queue
 
 import (
 	"fmt"
@@ -17,7 +17,7 @@ type MyData struct {
 var count int64
 
 func TestNewConcurrent(t *testing.T) {
-	queue := New()
+	queue := NewDelayQueue()
 	consumerCnt := 10
 	producerCnt := 10
 	preCnt := 10
@@ -60,7 +60,7 @@ func TestNewConcurrent(t *testing.T) {
 
 func BenchmarkNew(t *testing.B) {
 	for i := 0; i < t.N; i++ {
-		queue := New()
+		queue := NewDelayQueue()
 		total := 10 * i
 
 		fmt.Printf("offer time=%v, total: %v\n", time.Now().Format(time.DateTime), total)

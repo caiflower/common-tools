@@ -3,7 +3,7 @@
 | 名称                  | 路径                                               | 描述                                           | 修订                                | 修订时间  |
 | --------------------- | -------------------------------------------------- | ---------------------------------------------- | ----------------------------------- | --------- |
 | [堆排序](#堆排序)     | github.com/caiflower/common-tools/pkg/sort/heap    | 简单的堆结构，使用了go泛型，支持常用的基本类型 | 修复了交替执行Pop和Add方法产生的BUG | 2024-1-19 |
-| [延迟队列](#延迟队列) | github.com/caiflower/common-tools/pkg/delay-queque | 延迟队列                                       | -                                   | 2024-1-19 |
+| [延迟队列](#延迟队列) | github.com/caiflower/common-tools/pkg/queue | 延迟队列                                       | -                                   | 2024-1-19 |
 | [自旋锁](#自旋锁)     | github.com/caiflower/common-tools/syncx            | 自旋锁，拷贝自ants项目                         |                                     | 2024-2-5  |
 
 # 堆排序
@@ -49,7 +49,7 @@ import (
     "sync"
     "time"
 
-    delayque "github.com/caiflower/common-tools/pkg/delay-queque"
+    delayque "github.com/caiflower/common-tools/pkg/queue"
 )
 
 type MyData struct {
@@ -58,7 +58,7 @@ type MyData struct {
 
 func main() {
     wait := sync.WaitGroup{}
-    queue := delayque.New()
+    queue := delayque.NewDelayQueue()
     total := 10
     consumerCnt := 3
 

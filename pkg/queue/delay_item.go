@@ -1,4 +1,4 @@
-package delayque
+package queue
 
 import "time"
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	delayque "github.com/caiflower/common-tools/pkg/delay-queque"
+	delayque "github.com/caiflower/common-tools/pkg/queue"
 )
 
 type MyData struct {
@@ -15,7 +15,7 @@ type MyData struct {
 
 func main() {
 	wait := sync.WaitGroup{}
-	queue := delayque.New()
+	queue := delayque.NewDelayQueue()
 	total := 10
 	consumerCnt := 3
 

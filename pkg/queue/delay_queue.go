@@ -1,4 +1,4 @@
-package delayque
+package queue
 
 import (
 	"math"
@@ -20,7 +20,7 @@ type delayQueue struct {
 	heap    heap.Heap[int64]
 }
 
-func New() *delayQueue {
+func NewDelayQueue() *delayQueue {
 	d := &delayQueue{itemMap: make(map[int64]*delayItem), heap: *heap.NewTopMin[int64]()}
 	return d
 }
