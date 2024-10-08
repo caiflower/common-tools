@@ -109,6 +109,9 @@ func AddBean(bean interface{}) {
 }
 
 func SetBean(name string, bean interface{}) {
+	if bean == nil {
+		panic("Bean error. Bean can't be nil.")
+	}
 	beanContext.lock.Lock()
 	defer beanContext.lock.Unlock()
 
