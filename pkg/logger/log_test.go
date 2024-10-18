@@ -1,18 +1,18 @@
 package logger
 
 import (
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
-
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
+	"time"
 )
 
 func TestLoggerStdOut(t *testing.T) {
 	logger := newLoggerHandler(&Config{
-		Level:       Trace,
-		EnableTrace: true,
+		Level:       TraceLevel,
+		EnableTrace: "True",
 	})
 	group := sync.WaitGroup{}
 
@@ -36,13 +36,17 @@ func TestLoggerStdOut(t *testing.T) {
 
 func TestLoggerFileOut(t *testing.T) {
 	logger := newLoggerHandler(&Config{
-		Level:       Trace,
-		EnableTrace: true,
-		Path:        os.Getenv("HOME"),
+		Level:         TraceLevel,
+		EnableTrace:   "True",
+		Path:          os.Getenv("HOME") + "/logger",
+		RollingPolicy: RollingPolicySize,
+		MaxSize:       "10KB",
+		Compress:      "False",
+		AppenderNum:   10,
 	})
 	group := sync.WaitGroup{}
 
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 1000; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
@@ -63,15 +67,19 @@ func TestLoggerFileOut(t *testing.T) {
 
 func TestLoggerCut(t *testing.T) {
 	logger := newLoggerHandler(&Config{
-		Level:         Trace,
-		EnableTrace:   true,
-		Path:          os.Getenv("HOME"),
-		MaxSize:       "10KB",
-		RollingPolicy: RollingPolicySize,
+		Level:          TraceLevel,
+		EnableTrace:    "True",
+		Path:           os.Getenv("HOME") + "/logger",
+		MaxSize:        "10KB",
+		RollingPolicy:  RollingPolicySize,
+		Compress:       "True",
+		CleanBackup:    "True",
+		BackupMaxCount: 5,
+		AppenderNum:    5,
 	})
 	group := sync.WaitGroup{}
 
-	for i := 11; i <= 40; i++ {
+	for i := 1; i <= 100; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
@@ -88,4 +96,6 @@ func TestLoggerCut(t *testing.T) {
 	group.Wait()
 
 	logger.Close()
+
+	time.Sleep(2 * time.Second)
 }

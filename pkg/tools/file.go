@@ -5,13 +5,17 @@ import (
 	"time"
 )
 
-func Mkdir(path string, perm os.FileMode) error {
-	_, err := os.Stat(path)
-	if err == nil || os.IsExist(err) {
-		return nil
+func Mkdir(path string, perm os.FileMode) (e error) {
+	_, er := os.Stat(path)
+	b := er == nil || os.IsExist(er)
+	if !b {
+		if err := os.MkdirAll(path, perm); err != nil {
+			if os.IsPermission(err) {
+				e = err
+			}
+		}
 	}
-
-	return os.MkdirAll(path, perm)
+	return
 }
 
 func FileSize(path string) (int64, error) {
@@ -28,4 +32,9 @@ func FileModTime(path string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return stat.ModTime(), nil
+}
+
+func FileExist(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil || os.IsExist(err)
 }

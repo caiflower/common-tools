@@ -1,10 +1,13 @@
 package logger
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,49 +20,62 @@ import (
 type Appender interface {
 	write(data data)
 	needCutLog() bool
-	rollingCutLog() bool
+	rollingCutLog()
 	loadLoggerFiles()
 	compressLog()
 	cleanLog()
 	close()
 }
 
-type logAppender struct {
-	timeFormat    string
-	isConsole     bool
-	enableTrace   bool
-	dir           string
-	fileName      string
-	rollingPolicy string
-	maxTime       int64
-	maxSize       int64
+const (
+	gz = ".gz"
+)
 
-	bufPool      sync.Pool
-	log          *log.Logger
-	writeLock    sync.Locker
-	compressLock sync.Locker
-	logFile      *os.File
-	filesize     int64
-	lastTime     time.Time
-	loggerFiles  []string
+type logAppender struct {
+	timeFormat        string
+	isConsole         bool
+	enableTrace       bool
+	enableCompress    bool
+	enableCleanBackup bool
+	dir               string
+	fileName          string
+	rollingPolicy     string
+	maxTime           int64
+	maxSize           int64
+	backupMaxCount    int
+	backupMaxDiskSize int64
+
+	bufPool             sync.Pool
+	log                 *log.Logger
+	writeLock           sync.Locker
+	compressLock        sync.Locker
+	logFile             *os.File
+	filesize            int64
+	lastTime            time.Time
+	backLoggerFiles     []string
+	backLoggerFilesSize int64
 }
 
-func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize string, enableTrace bool) Appender {
+func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize, backupMaxSize string, backupMaxCount int, enableTrace, enableCompress, enableCleanBackup bool) Appender {
 	appender := &logAppender{
 		timeFormat: timeFormat,
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				return new(strings.Builder)
 			}},
-		dir:           path,
-		fileName:      fileName,
-		rollingPolicy: rollingPolicy,
-		enableTrace:   enableTrace,
-		writeLock:     syncx.NewSpinLock(),
-		compressLock:  syncx.NewSpinLock(),
-		log:           new(log.Logger),
-		maxSize:       getMaxSize(maxSize),
-		maxTime:       getMaxTime(maxTime),
+		dir:               path,
+		fileName:          fileName,
+		rollingPolicy:     rollingPolicy,
+		enableTrace:       enableTrace,
+		enableCompress:    enableCompress,
+		enableCleanBackup: enableCleanBackup,
+		writeLock:         syncx.NewSpinLock(),
+		compressLock:      syncx.NewSpinLock(),
+		log:               new(log.Logger),
+		maxSize:           getMaxSize(maxSize),
+		maxTime:           getMaxTime(maxTime),
+		backupMaxCount:    backupMaxCount,
+		backupMaxDiskSize: getMaxSize(backupMaxSize),
 	}
 
 	if appender.maxSize == 0 && appender.maxTime == 0 {
@@ -71,15 +87,19 @@ func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize 
 		appender.log.SetOutput(os.Stdout)
 	} else {
 		// 创建目录
-		err := tools.Mkdir(appender.dir, 0666)
+		err := tools.Mkdir(appender.dir, 0755)
 		if err != nil {
 			panic(fmt.Sprintf("[logger appender] mkdir err: %s\n", err))
 		}
 
 		// 创建文件流
 		appender.createFilestream()
-		// 倒入现有的所有file
 		appender.loadLoggerFiles()
+		// 启动先压缩一遍文件
+		go func() {
+			appender.compressLog()
+			appender.cleanLog()
+		}()
 	}
 
 	return appender
@@ -137,7 +157,7 @@ func getMaxSize(maxSize string) int64 {
 		if num, err = strconv.Atoi(numStr); err != nil {
 			panic(fmt.Sprintf("[logger appender] convert %s num err: %s", numStr, err.Error()))
 		}
-		num *= 1024 * 1024 & 1024
+		num *= 1024 * 1024 * 1024
 	} else {
 		panic(fmt.Sprintf("[logger appender] maxSize unKnown %s", maxSize))
 	}
@@ -149,6 +169,7 @@ func (appender *logAppender) createFilestream() {
 		if err := appender.logFile.Close(); err != nil {
 			fmt.Printf("[logger appender] close logfile err: %s\n", err)
 		}
+		appender.logFile = nil
 	}
 	filePath := appender.dir + "/" + appender.fileName
 	logfile, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0666)
@@ -170,12 +191,7 @@ func (appender *logAppender) createFilestream() {
 func (appender *logAppender) write(data data) {
 	defer onError("[logger appender]")
 
-	if needCompress := appender.rollingCutLog(); needCompress {
-		go func() {
-			appender.compressLog()
-			appender.cleanLog()
-		}()
-	}
+	appender.rollingCutLog()
 
 	buf := appender.bufPool.Get().(*strings.Builder)
 	buf.Reset()
@@ -210,16 +226,14 @@ func (appender *logAppender) write(data data) {
 	}
 }
 
-func (appender *logAppender) rollingCutLog() bool {
+func (appender *logAppender) rollingCutLog() {
 	if appender.needCutLog() {
 		appender.writeLock.Lock()
 		defer appender.writeLock.Unlock()
 		if appender.needCutLog() {
 			appender.cutLog()
-			return true
 		}
 	}
-	return false
 }
 
 func (appender *logAppender) cutLog() {
@@ -230,13 +244,20 @@ func (appender *logAppender) cutLog() {
 		appender.logFile = nil
 	}
 
+	appender.compressLock.Lock()
+	defer appender.compressLock.Unlock()
 	targetFileName := appender.fileName + "-" + time.Now().Format("20060102150405")
 	i := 0
 	for {
-		if tools.StringSliceContains(appender.loggerFiles, targetFileName+"-"+strconv.Itoa(i)) {
+		if (i == 0 && tools.StringSliceContains(appender.backLoggerFiles, targetFileName)) ||
+			(i == 0 && tools.StringSliceContains(appender.backLoggerFiles, targetFileName+gz)) ||
+			(i != 0 && tools.StringSliceContains(appender.backLoggerFiles, targetFileName+"-"+strconv.Itoa(i))) ||
+			(i != 0 && tools.StringSliceContains(appender.backLoggerFiles, targetFileName+"-"+strconv.Itoa(i)+gz)) {
 			i++
 		} else {
-			targetFileName = targetFileName + "-" + strconv.Itoa(i)
+			if i != 0 {
+				targetFileName = targetFileName + "-" + strconv.Itoa(i)
+			}
 			break
 		}
 	}
@@ -245,39 +266,110 @@ func (appender *logAppender) cutLog() {
 	if err := os.Rename(appender.dir+"/"+appender.fileName, targetFilePath); err != nil {
 		fmt.Printf("[logger appender] rename logfile err: %s\n", err)
 	}
-
 	// 切换文件
 	appender.createFilestream()
-	appender.loggerFiles = append(appender.loggerFiles, targetFileName)
+	appender.loadLoggerFiles()
+
+	// 压缩日志
+	go func() {
+		appender.compressLog()
+		appender.cleanLog()
+	}()
 }
 
 func (appender *logAppender) loadLoggerFiles() {
-	appender.writeLock.Lock()
-	appender.writeLock.Unlock()
-
 	if dir, err := os.ReadDir(appender.dir); err != nil {
 		panic(fmt.Sprintf("[logger appender] loadLoggerFiles err: %s\n", err))
 	} else {
+		appender.backLoggerFiles = []string{}
 		for _, v := range dir {
 			if !v.IsDir() {
-				if name := v.Name(); strings.HasPrefix(name, appender.fileName) {
-					appender.loggerFiles = append(appender.loggerFiles, name)
+				if name := v.Name(); strings.HasPrefix(name, appender.fileName) && name != appender.fileName {
+					appender.backLoggerFiles = append(appender.backLoggerFiles, name)
+					info, _ := v.Info()
+					appender.backLoggerFilesSize += info.Size()
 				}
 			}
 		}
+		sort.Slice(appender.backLoggerFiles, func(i, j int) bool {
+			a := strings.Split(strings.Replace(strings.Replace(appender.backLoggerFiles[i], appender.fileName+"-", "", 1), gz, "", 1), "-")
+			b := strings.Split(strings.Replace(strings.Replace(appender.backLoggerFiles[j], appender.fileName+"-", "", 1), gz, "", 1), "-")
+			if a[0] == b[0] {
+				if len(a) == len(b) {
+					return a[1] < b[1]
+				} else {
+					return len(a) < len(b)
+				}
+			} else {
+				return a[0] < b[0]
+			}
+		})
 	}
 
 }
 
 func (appender *logAppender) compressLog() {
+	defer onError("logger compress")
 
+	if appender.enableCompress {
+		appender.compressLock.Lock()
+		defer appender.compressLock.Unlock()
+
+		for _, v := range appender.backLoggerFiles {
+			if !strings.HasSuffix(v, gz) {
+				filepath := appender.dir + "/" + v
+				if tools.FileExist(filepath) {
+					fmt.Println(time.Now().Format(_timeFormat), "[LOG] compress log ->", filepath)
+					os.Remove(filepath + gz)
+					// 源文件
+					fromFile, _ := os.Open(filepath)
+					defer fromFile.Close()
+
+					// 目标文件
+					targetFile, _ := os.Create(filepath + gz)
+					defer targetFile.Close()
+
+					// gzip
+					gzipWriter := gzip.NewWriter(targetFile)
+					defer gzipWriter.Close()
+
+					io.Copy(gzipWriter, fromFile)
+					os.Remove(filepath)
+				}
+			}
+		}
+
+		appender.loadLoggerFiles()
+	}
 }
 
 func (appender *logAppender) cleanLog() {
+	if appender.enableCleanBackup {
+		appender.compressLock.Lock()
+		defer appender.compressLock.Unlock()
 
+		i := 0
+		var removeSize int64
+		for len(appender.backLoggerFiles)-i > appender.backupMaxCount || appender.backLoggerFilesSize-removeSize > appender.backupMaxDiskSize {
+			fileName := appender.backLoggerFiles[i]
+			if strings.HasSuffix(fileName, gz) {
+				filepath := appender.dir + "/" + fileName
+				fmt.Println(time.Now().Format(_timeFormat), "[LOG] clean log ->", filepath)
+				size, _ := tools.FileSize(filepath)
+				removeSize += size
+				os.Remove(filepath)
+				i++
+			}
+		}
+
+		appender.loadLoggerFiles()
+	}
 }
 
 func (appender *logAppender) needCutLog() bool {
+	if appender.dir == "" {
+		return false
+	}
 	switch appender.rollingPolicy {
 	case RollingPolicyTimeAndSize:
 		return appender.lastTime.Add(time.Duration(appender.maxTime)*time.Second).Before(time.Now()) || appender.filesize > appender.maxSize
@@ -296,6 +388,7 @@ func (appender *logAppender) needCutLog() bool {
 func (appender *logAppender) close() {
 	appender.writeLock.Lock()
 	defer appender.writeLock.Unlock()
+
 	if appender.logFile != nil {
 		if err := appender.logFile.Close(); err != nil {
 			fmt.Printf("[logger appender] close logfile err: %s\n", err)
