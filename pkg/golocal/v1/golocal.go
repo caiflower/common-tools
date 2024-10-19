@@ -50,3 +50,10 @@ func Get(key string) interface{} {
 		return nil
 	}
 }
+
+func Clean() {
+	id := getGoID()
+	if v := getMapByGoID(id); v != nil {
+		localMap.Delete(id)
+	}
+}

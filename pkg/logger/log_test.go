@@ -21,6 +21,7 @@ func TestLoggerStdOut(t *testing.T) {
 		go func(i int) {
 			defer group.Done()
 			golocalv1.PutTraceID("lt-" + strconv.Itoa(i))
+			defer golocalv1.Clean()
 			logger.Trace("trace" + strconv.Itoa(i))
 			logger.Debug("debug" + strconv.Itoa(i))
 			logger.Info("info" + strconv.Itoa(i))
@@ -51,6 +52,7 @@ func TestLoggerFileOut(t *testing.T) {
 		go func(i int) {
 			defer group.Done()
 			golocalv1.PutTraceID("lt-" + strconv.Itoa(i))
+			defer golocalv1.Clean()
 			logger.Trace("trace" + strconv.Itoa(i))
 			logger.Debug("debug" + strconv.Itoa(i))
 			logger.Info("info" + strconv.Itoa(i))
@@ -84,6 +86,7 @@ func TestLoggerCut(t *testing.T) {
 		go func(i int) {
 			defer group.Done()
 			golocalv1.PutTraceID("lt-" + strconv.Itoa(i))
+			defer golocalv1.Clean()
 			logger.Trace("trace" + strconv.Itoa(i))
 			logger.Debug("debug" + strconv.Itoa(i))
 			logger.Info("info" + strconv.Itoa(i))

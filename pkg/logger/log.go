@@ -115,6 +115,14 @@ func (lh *loggerHandler) Close() {
 	}
 }
 
+func DefaultLogger() *loggerHandler {
+	return defaultLogger
+}
+
+func NewLogger(config *Config) *loggerHandler {
+	return newLoggerHandler(config)
+}
+
 func newLoggerHandler(config *Config) *loggerHandler {
 	if config.Level == "" {
 		config.Level = InfoLevel
