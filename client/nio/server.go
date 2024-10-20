@@ -1,0 +1,191 @@
+package nio
+
+import (
+	"bytes"
+	"encoding/binary"
+	"github.com/caiflower/common-tools/pkg/e"
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
+	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/caiflower/common-tools/pkg/syncx"
+	"net"
+	"sync"
+	"sync/atomic"
+)
+
+type socket struct {
+	addr    string   //对于服务端:代表监听的地址，对于客户端:代表要连接的地址
+	handler *Handler //业务处理器，由使用方自行实现，必须设置
+	closed  bool     //服务端或客户端是否已关闭
+	ordered bool     //true消息处理顺序请求，false并发请求
+	timeout int
+}
+
+type Config struct {
+	Addr    string `yaml:"server.addr"`
+	Timeout int    `yaml:"client.timeout"`
+}
+
+type IServer interface {
+	Open() error
+	Close()
+}
+
+type Server struct {
+	socket
+	buildSessionID int64
+	lock           sync.Locker
+	sessions       map[int64]*Session
+	sessionCnt     int
+	acceptor       net.Listener
+	logger         logger.ILog
+}
+
+func NewServer(config *Config, handler *Handler) *Server {
+	return NewServerWithAllArgs(config, syncx.NewSpinLock(), logger.DefaultLogger(), handler)
+}
+
+func NewServerWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog, handler *Handler) *Server {
+	if logger == nil {
+		panic("[nio] logger must not be nil. ")
+	}
+	if locker == nil {
+		panic("[nio] locker must not be nil. ")
+	}
+	if handler == nil {
+		panic("[nio] handler must not be nil. ")
+	}
+	if config == nil {
+		config = &Config{Addr: "127.0.0.1:8801"}
+	}
+	if handler.codec == nil {
+		handler.codec = GetZipCodec(logger)
+	}
+	return &Server{
+		socket: socket{
+			addr:    config.Addr,
+			handler: handler,
+			closed:  true,
+		},
+		lock:       locker,
+		sessions:   make(map[int64]*Session),
+		sessionCnt: 0,
+		logger:     logger,
+	}
+}
+
+func (s *Server) Open() error {
+	s.logger.Info("Open socket %s acceptor and listening...", s.addr)
+
+	listen, err := net.Listen("tcp", s.socket.addr)
+	if err != nil {
+		s.logger.Info("Open socket %s err: %s .", s.addr, err.Error())
+		return err
+	}
+
+	s.acceptor = listen
+	s.closed = false
+	s.logger.Info("Open socket %s success. ", s.addr)
+
+	go s.handlerConnection()
+	return nil
+}
+
+func (s *Server) Close() {
+	s.logger.Info("Close socket %s acceptor. ", s.addr)
+
+	for i := 0; i < 3; i++ {
+		if err := s.acceptor.Close(); err != nil {
+			s.logger.Warn("Close socket %s err: %s .", s.addr, err.Error())
+		} else {
+			s.closed = true
+		}
+	}
+
+	if s.closed {
+		s.logger.Info("Close socket %s success.", s.addr)
+	} else {
+		s.logger.Error("Close socket %s failed. Force stop.", s.addr)
+		s.closed = true
+	}
+}
+
+func (s *Server) handlerConnection() {
+	golocalv1.PutTraceID("nio.handlerConnection")
+	defer golocalv1.Clean()
+
+	for {
+		if s.closed {
+			s.logger.Info("socket is closed and stop handlerConnection.")
+			return
+		}
+
+		connect, err := s.acceptor.Accept()
+		if err != nil {
+			s.logger.Error("socket is closed. accept client err: %s", err.Error())
+			return
+		}
+
+		sessionId := atomic.AddInt64(&s.buildSessionID, 1)
+		session := &Session{
+			id:         sessionId,
+			connection: connect,
+			attribute:  make(map[string]interface{}),
+			codec:      GetZipCodec(s.logger),
+			logger:     s.logger,
+		}
+		if err = s.syncSession(session); err != nil {
+			connect.Close()
+			continue
+		}
+
+		s.addSession(session)
+
+		if s.handler.OnSessionConnected != nil {
+			func() {
+				defer e.OnError("")
+				s.handler.OnSessionConnected(session)
+			}()
+		}
+
+		// 会话处理
+		go s.handler.readIO(&s.socket, session)
+	}
+}
+
+func (s *Server) syncSession(session *Session) error {
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.BigEndian, session.id); err != nil {
+		s.logger.Error("sync session err: %s", err.Error())
+		return err
+	}
+	if _, ioErr := session.connection.Write(buf.Bytes()); ioErr != nil {
+		s.logger.Error("sync session failed. write err: %s", ioErr.Error())
+		return ioErr
+	}
+	return nil
+}
+
+func (s *Server) addSession(session *Session) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.sessions[session.id] = session
+	s.sessionCnt++
+}
+
+func (s *Server) removeSession(sessionID int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	session := s.sessions[sessionID]
+	session.Close()
+	s.sessions[sessionID] = nil
+	s.sessionCnt--
+	if s.handler.OnSessionClosed != nil {
+		defer e.OnError("")
+		s.handler.OnSessionClosed(session)
+	}
+}
+
+func (s *Server) getSessionCount() int {
+	return s.sessionCnt
+}
