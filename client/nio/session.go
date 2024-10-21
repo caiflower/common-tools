@@ -2,25 +2,33 @@ package nio
 
 import (
 	"errors"
-	"github.com/caiflower/common-tools/pkg/logger"
 	"net"
+
+	"github.com/caiflower/common-tools/pkg/logger"
 )
 
 type ISession interface {
+	WriteMsg(msg *Msg) error
+	Put(key string, v interface{})
+	Get(key string) interface{}
 	Close()
 }
 
 type Session struct {
-	id         int64                  // sessionId
+	id         int64                  // sessionId, 8个字节
 	connection net.Conn               // 会话连接
 	attribute  map[string]interface{} // 缓存一些属性，不会同步到服务端或客户端，只在本侧有效
 	codec      ICodec                 // 消息编解码器
-	logger     logger.ILog
+	logger     logger.ILog            // 日志框架
+	server     *Server
+	client     *Client
 }
 
 func (s *Session) Close() {
-	if err := s.connection.Close(); err != nil {
-		s.logger.Error("%d close session err: %s", s.id, err.Error())
+	if s.server != nil {
+		s.server.removeSession(s.id)
+	} else {
+		s.client.Close()
 	}
 }
 
@@ -32,4 +40,12 @@ func (s *Session) WriteMsg(msg *Msg) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Session) Put(key string, v interface{}) {
+	s.attribute[key] = v
+}
+
+func (s *Session) Get(key string) interface{} {
+	return s.attribute[key]
 }

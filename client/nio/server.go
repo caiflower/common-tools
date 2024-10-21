@@ -3,13 +3,15 @@ package nio
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
+
 	"github.com/caiflower/common-tools/pkg/e"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
-	"net"
-	"sync"
-	"sync/atomic"
 )
 
 type socket struct {
@@ -28,6 +30,7 @@ type Config struct {
 type IServer interface {
 	Open() error
 	Close()
+	GetSessionCount() int
 }
 
 type Server struct {
@@ -60,6 +63,7 @@ func NewServerWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog
 	if handler.codec == nil {
 		handler.codec = GetZipCodec(logger)
 	}
+	handler.logger = logger
 	return &Server{
 		socket: socket{
 			addr:    config.Addr,
@@ -74,37 +78,38 @@ func NewServerWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog
 }
 
 func (s *Server) Open() error {
-	s.logger.Info("Open socket %s acceptor and listening...", s.addr)
+	s.logger.Info("[server] Open socket %s acceptor and listening...", s.addr)
 
 	listen, err := net.Listen("tcp", s.socket.addr)
 	if err != nil {
-		s.logger.Info("Open socket %s err: %s .", s.addr, err.Error())
+		s.logger.Info("[server] Open socket %s err: %s .", s.addr, err.Error())
 		return err
 	}
 
 	s.acceptor = listen
 	s.closed = false
-	s.logger.Info("Open socket %s success. ", s.addr)
+	s.logger.Info("[server] Open socket %s success. ", s.addr)
 
 	go s.handlerConnection()
 	return nil
 }
 
 func (s *Server) Close() {
-	s.logger.Info("Close socket %s acceptor. ", s.addr)
+	s.logger.Info("[server] Close socket %s acceptor. ", s.addr)
 
 	for i := 0; i < 3; i++ {
 		if err := s.acceptor.Close(); err != nil {
-			s.logger.Warn("Close socket %s err: %s .", s.addr, err.Error())
+			s.logger.Warn("[server] Close socket %s err: %s .", s.addr, err.Error())
 		} else {
 			s.closed = true
+			break
 		}
 	}
 
 	if s.closed {
-		s.logger.Info("Close socket %s success.", s.addr)
+		s.logger.Info("[server] Close socket %s success.", s.addr)
 	} else {
-		s.logger.Error("Close socket %s failed. Force stop.", s.addr)
+		s.logger.Error("[server] Close socket %s failed. Force stop.", s.addr)
 		s.closed = true
 	}
 }
@@ -115,13 +120,17 @@ func (s *Server) handlerConnection() {
 
 	for {
 		if s.closed {
-			s.logger.Info("socket is closed and stop handlerConnection.")
+			s.logger.Info("[server] socket is closed and stop handlerConnection.")
 			return
 		}
 
 		connect, err := s.acceptor.Accept()
 		if err != nil {
-			s.logger.Error("socket is closed. accept client err: %s", err.Error())
+			if strings.Contains(err.Error(), "use of closed network") {
+				s.logger.Info("[server] socket is closed and stop handlerConnection.")
+			} else {
+				s.logger.Error("[server] socket is closed. accept client err: %s", err.Error())
+			}
 			return
 		}
 
@@ -132,6 +141,7 @@ func (s *Server) handlerConnection() {
 			attribute:  make(map[string]interface{}),
 			codec:      GetZipCodec(s.logger),
 			logger:     s.logger,
+			server:     s,
 		}
 		if err = s.syncSession(session); err != nil {
 			connect.Close()
@@ -155,11 +165,11 @@ func (s *Server) handlerConnection() {
 func (s *Server) syncSession(session *Session) error {
 	buf := new(bytes.Buffer)
 	if err := binary.Write(buf, binary.BigEndian, session.id); err != nil {
-		s.logger.Error("sync session err: %s", err.Error())
+		s.logger.Error("[server] sync session err: %s", err.Error())
 		return err
 	}
 	if _, ioErr := session.connection.Write(buf.Bytes()); ioErr != nil {
-		s.logger.Error("sync session failed. write err: %s", ioErr.Error())
+		s.logger.Error("[server] sync session failed. write err: %s", ioErr.Error())
 		return ioErr
 	}
 	return nil
@@ -177,7 +187,6 @@ func (s *Server) removeSession(sessionID int64) {
 	defer s.lock.Unlock()
 
 	session := s.sessions[sessionID]
-	session.Close()
 	s.sessions[sessionID] = nil
 	s.sessionCnt--
 	if s.handler.OnSessionClosed != nil {
@@ -186,6 +195,6 @@ func (s *Server) removeSession(sessionID int64) {
 	}
 }
 
-func (s *Server) getSessionCount() int {
+func (s *Server) GetSessionCount() int {
 	return s.sessionCnt
 }

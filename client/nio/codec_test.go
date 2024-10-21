@@ -2,9 +2,10 @@ package nio
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"testing"
 )
 
 type test struct {
@@ -97,5 +98,26 @@ func TestGzipCodec(t *testing.T) {
 
 	for _, v := range tests {
 		v.valid()
+	}
+}
+
+func TestGzipCodec1(t *testing.T) {
+	// 测试粘包情况
+	codec := GetZipCodec(logger.DefaultLogger())
+	buffer := codec.Encode(&Msg{
+		flag: 1,
+		body: "test1",
+	})
+
+	buffer1 := codec.Encode(&Msg{
+		flag: 2,
+		body: "test2",
+	})
+	buffer.Write(buffer1.Bytes())
+
+	lastMsg := new(Msg)
+	for codec.Decode(lastMsg, buffer) {
+		msg := *lastMsg
+		fmt.Printf("flag = %d, body = %s\n", msg.flag, string(msg.bytes))
 	}
 }

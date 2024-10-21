@@ -3,6 +3,7 @@ package nio
 import (
 	"bytes"
 	"encoding/binary"
+
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
@@ -30,15 +31,30 @@ type Msg struct {
 	bytes []byte
 }
 
-type gzipCodec struct {
+func NewMsg(flag uint8, body interface{}) *Msg {
+	return &Msg{
+		flag: flag,
+		body: body,
+	}
+}
+
+func (m *Msg) Flag() uint8 {
+	return m.flag
+}
+
+func (m *Msg) Unmarshal(v interface{}) error {
+	return tools.Unmarshal(m.bytes, v)
+}
+
+type GzipCodec struct {
 	logger logger.ILog
 }
 
-func GetZipCodec(logger logger.ILog) *gzipCodec {
-	return &gzipCodec{logger: logger}
+func GetZipCodec(logger logger.ILog) *GzipCodec {
+	return &GzipCodec{logger: logger}
 }
 
-func (gc *gzipCodec) Encode(msg *Msg) *bytes.Buffer {
+func (gc *GzipCodec) Encode(msg *Msg) *bytes.Buffer {
 	buf := new(bytes.Buffer)
 
 	var gzipBytes []byte
@@ -72,7 +88,7 @@ func (gc *gzipCodec) Encode(msg *Msg) *bytes.Buffer {
 	return buf
 }
 
-func (gc *gzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
+func (gc *GzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 	if reader == nil || msg == nil {
 		gc.logger.Warn("decode msg failed. msg or reader is nil. ")
 		return false
@@ -83,12 +99,18 @@ func (gc *gzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 
 		// 读取4个字节
 		var length uint32
-		binary.Read(reader, binary.BigEndian, &length)
+		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
+			gc.logger.Error("decode msg error: %s", err.Error())
+			return false
+		}
 		msg.length = length
 
 		// 读取1个字节
 		var flag uint8
-		binary.Read(reader, binary.BigEndian, &flag)
+		if err := binary.Read(reader, binary.BigEndian, &flag); err != nil {
+			gc.logger.Error("decode msg error: %s", err.Error())
+			return false
+		}
 		msg.flag = flag
 
 		// 流中数据不够，暂时返回
@@ -102,7 +124,9 @@ func (gc *gzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 	}
 
 	var err error
-	if msg.body == nil && reader.Len() == int(msg.length-1) {
+
+	// >为粘包情况
+	if msg.body == nil && reader.Len() >= int(msg.length-1) {
 		gizBytes := make([]byte, msg.length-1)
 		_, err = reader.Read(gizBytes)
 		if err != nil {
