@@ -282,6 +282,7 @@ func (appender *logAppender) loadLoggerFiles() {
 		panic(fmt.Sprintf("[logger appender] loadLoggerFiles err: %s\n", err))
 	} else {
 		appender.backLoggerFiles = []string{}
+		appender.backLoggerFilesSize = 0
 		for _, v := range dir {
 			if !v.IsDir() {
 				if name := v.Name(); strings.HasPrefix(name, appender.fileName) && name != appender.fileName {

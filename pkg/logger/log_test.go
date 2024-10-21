@@ -1,12 +1,13 @@
 package logger
 
 import (
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 )
 
 func TestLoggerStdOut(t *testing.T) {
@@ -76,7 +77,8 @@ func TestLoggerCut(t *testing.T) {
 		RollingPolicy:  RollingPolicySize,
 		Compress:       "True",
 		CleanBackup:    "True",
-		BackupMaxCount: 5,
+		BackupMaxCount: 10,
+		BackupMaxDisk:  "10MB",
 		AppenderNum:    5,
 	})
 	group := sync.WaitGroup{}
