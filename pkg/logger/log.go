@@ -152,7 +152,7 @@ func newLoggerHandler(config *Config) *loggerHandler {
 	if config.Compress != "" {
 		compress, _ = strconv.ParseBool(config.Compress)
 	}
-	enableTrace := false
+	enableTrace := true
 	if config.EnableTrace != "" {
 		enableTrace, _ = strconv.ParseBool(config.EnableTrace)
 	}
