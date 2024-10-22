@@ -296,7 +296,7 @@ func (c *Cluster) findCurNode() {
 	}
 }
 
-func (c *Cluster) GetClientHandler(nodeName string) *nio.Handler {
+func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 	handler := &nio.Handler{}
 
 	handler.OnSessionConnected = func(session *nio.Session) {
@@ -353,7 +353,7 @@ func (c *Cluster) GetClientHandler(nodeName string) *nio.Handler {
 	return handler
 }
 
-func (c *Cluster) GetServerHandler() *nio.Handler {
+func (c *Cluster) getServerHandler() *nio.Handler {
 	handler := &nio.Handler{}
 
 	handler.OnMessageReceived = func(session *nio.Session, message *nio.Msg) {
@@ -457,7 +457,7 @@ func (c *Cluster) reconnect() {
 			client := nio.NewClient(&nio.Config{
 				Addr:    node.address,
 				Timeout: c.config.Timeout,
-			}, c.GetClientHandler(nodeName))
+			}, c.getClientHandler(nodeName))
 
 			if err := client.Connect(); err != nil {
 				c.logger.Error("[cluster] connect node %s error: %v", node.address, err)
@@ -472,7 +472,7 @@ func (c *Cluster) reconnect() {
 func (c *Cluster) listen() {
 	server := nio.NewServer(&nio.Config{
 		Addr: c.curNode.address,
-	}, c.GetServerHandler())
+	}, c.getServerHandler())
 
 	if err := server.Open(); err != nil {
 		c.logger.Error("[cluster] open server %s error: %v", c.curNode.address, err)
@@ -519,7 +519,7 @@ func (c *Cluster) fighting() {
 		}
 
 		count := c.GetAliveNodeCount()
-		if count > c.GetAllNodeCount()/2 { // 说明该节点可能已经失联
+		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
 			c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
 			break
 		} else {
@@ -554,9 +554,9 @@ func (c *Cluster) fighting() {
 			return
 		}
 
-		c.sate = candidate
 		count := c.GetAliveNodeCount()
-		if count > c.GetAllNodeCount()/2 { // 说明该节点可能已经失联
+		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
+			c.sate = candidate
 			// 先给自己投一票
 			if !c.voteNode(nextTerm, c.curNode.name) {
 				// 说明已经投票给别人或者自己了，直接进入下一个周期
