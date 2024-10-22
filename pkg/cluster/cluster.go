@@ -25,6 +25,7 @@ type ICluster interface {
 	IsCandidate() bool               // 当前节点是否是候选人
 	IsFollower() bool                // 当前节点是否是群众
 	GetLeaderNode() *Node            // 获取当前的主节点
+	GetLeaderName() string           // 获取leader名称
 	GetMyNode() *Node                // 获取当前本节点
 	GetNodeByName(name string) *Node // 根据名称获取节点
 	GetMyAddress() string            // 获取当前节点通信地址
@@ -65,8 +66,9 @@ type Config struct {
 type Cluster struct {
 	lock           sync.Locker
 	config         *Config
-	curNode        *Node          // 当前节点
-	leaderNode     *Node          // 领导节点
+	curNode        *Node // 当前节点
+	leaderNode     *Node // 领导节点
+	leaderLock     sync.Locker
 	lostLeaderTime time.Time      // 没有leader的时间
 	allNode        *sync.Map      // 所有的节点
 	aliveNodes     *sync.Map      // 所有存活的节点
@@ -103,6 +105,7 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 		lock:       syncx.NewSpinLock(),
 		votesMap:   make(map[int]string),
 		votesLock:  syncx.NewSpinLock(),
+		leaderLock: syncx.NewSpinLock(),
 		msgChan:    make(chan *Message, 100),
 	}
 
@@ -153,26 +156,38 @@ func (c *Cluster) Close() {
 }
 
 func (c *Cluster) IsFighting() bool {
-	return c.sate == candidate
+	c.leaderLock.Lock()
+	c.leaderLock.Unlock()
+	return c.sate == fighting
 }
 
 func (c *Cluster) IsClosed() bool {
+	c.leaderLock.Lock()
+	c.leaderLock.Unlock()
 	return c.sate == closed
 }
 
 func (c *Cluster) IsReady() bool {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
 	return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
 }
 
 func (c *Cluster) IsLeader() bool {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
 	return c.sate == leader
 }
 
 func (c *Cluster) IsCandidate() bool {
+	c.leaderLock.Lock()
+	c.leaderLock.Unlock()
 	return c.sate == candidate
 }
 
 func (c *Cluster) IsFollower() bool {
+	c.leaderLock.Lock()
+	c.leaderLock.Unlock()
 	return c.sate == follower
 }
 
@@ -190,6 +205,16 @@ func (c *Cluster) GetMyName() string {
 
 func (c *Cluster) GetMyTerm() int {
 	return c.term
+}
+
+func (c *Cluster) GetLeaderName() string {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
+	if c.leaderNode != nil {
+		return c.leaderNode.name
+	} else {
+		return ""
+	}
 }
 
 func (c *Cluster) GetAllNodeNames() (allNames []string) {
@@ -213,7 +238,7 @@ func (c *Cluster) GetAliveNodeNames() (aliveNames []string) {
 }
 
 func (c *Cluster) GetAliveNodeCount() int {
-	return len(c.GetAllNodeNames())
+	return len(c.GetAliveNodeNames())
 }
 
 func (c *Cluster) GetLostNodeNames() (lostNames []string) {
@@ -294,31 +319,30 @@ func (c *Cluster) GetClientHandler(nodeName string) *nio.Handler {
 
 		switch message.Flag() {
 		case messageAskLeaderRes:
-			if c.IsFighting() || !c.IsReady() {
-				c.logger.Info("[cluster] messageAskLeaderRes %+v", nodeMsg)
-			}
+			if nodeMsg.Success {
+				c.logger.Debug("[cluster] messageAskLeaderRes nodeName=%s, get leaderNode=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
 
-			if v, ok := c.aliveNodes.Load(nodeMsg.LeaderNodeName); nodeMsg.LeaderNodeName != "" && ok {
-				node := v.(*Node)
-				// 标记leader节点
-				c.signLeader(node, nodeMsg.Term)
+				if nodeMsg.LeaderNodeName == "" {
+					return
+				}
+
+				if v, ok := c.aliveNodes.Load(nodeMsg.LeaderNodeName); nodeMsg.LeaderNodeName != "" && ok {
+					node := v.(*Node)
+					// 标记leader节点
+					c.signLeader(node, nodeMsg.Term)
+				}
 			}
 		case messageAskVoteRes:
-			if c.IsFighting() || !c.IsReady() {
-				c.logger.Info("[cluster] messageAskVoteRes %+v", nodeMsg)
-			}
+			c.logger.Debug("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for %s", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
+
 			c.msgChan <- nodeMsg
 		case messageBroadcastLeaderRes:
-			if c.IsFighting() || !c.IsReady() {
-				c.logger.Info("[cluster] messageBroadcastLeaderRes %+v", nodeMsg)
+			if nodeMsg.Success {
+				c.logger.Debug("[cluster] messageBroadcastLeaderRes nodeName=%s, leaderName=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
 			}
 			c.msgChan <- nodeMsg
 		case messageHeartbeatRes:
-			if nodeMsg.Success {
-				if _, ok := c.aliveNodes.Load(nodeMsg.NodeName); ok {
-					c.curNode.heartbeat = time.Now()
-				}
-			} else {
+			if !nodeMsg.Success {
 				c.releaseLeader()
 			}
 		default:
@@ -344,10 +368,11 @@ func (c *Cluster) GetServerHandler() *nio.Handler {
 			msg := new(Message)
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
-			msg.Success = true
+			msg.Success = false
 			if c.IsReady() && nodeMsg.Term <= c.GetMyTerm() {
 				msg.Term = c.GetMyTerm()
-				msg.LeaderNodeName = c.GetLeaderNode().name
+				msg.LeaderNodeName = c.GetLeaderName()
+				msg.Success = true
 			}
 
 			if err := session.WriteMsg(nio.NewMsg(messageAskLeaderRes, msg)); err != nil {
@@ -380,6 +405,7 @@ func (c *Cluster) GetServerHandler() *nio.Handler {
 				} else {
 					c.curNode.heartbeat = time.Now()
 					c.signLeader(v.(*Node), nodeMsg.Term)
+					msg.LeaderNodeName = nodeMsg.LeaderNodeName
 				}
 			}
 
@@ -394,8 +420,8 @@ func (c *Cluster) GetServerHandler() *nio.Handler {
 			if c.GetMyTerm() > nodeMsg.Term {
 				msg.Term = c.GetMyTerm()
 				msg.Success = false
-			} else if c.GetLeaderNode().name == msg.NodeName {
-				c.leaderNode.heartbeat = time.Now()
+			} else if c.GetLeaderName() == nodeMsg.NodeName {
+				c.curNode.heartbeat = time.Now()
 			}
 
 			if err := session.WriteMsg(nio.NewMsg(messageHeartbeatRes, msg)); err != nil {
@@ -459,6 +485,10 @@ func (c *Cluster) fighting() {
 	if c.IsFighting() {
 		return
 	}
+	// 保证同时只有一个竞选过程在执行
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.sate = fighting
 
 	defer func() {
 		if c.leaderNode != nil {
@@ -471,11 +501,7 @@ func (c *Cluster) fighting() {
 	}()
 
 	// 随机休眠一下，防止所有节点同时开始竞选
-	time.Sleep(time.Duration(tools.RandInt(2, 5)) * time.Second)
-
-	// 保证同时只有一个竞选过程在执行
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	time.Sleep(time.Duration(tools.RandInt(1, 3)) * time.Second)
 
 	// 如果集群已经就绪或者关闭了，那么直接返回即可
 	if c.IsReady() || c.IsClose() {
@@ -517,7 +543,10 @@ func (c *Cluster) fighting() {
 	}
 
 	nextTerm := c.term + 1
-	c.logger.Info("[cluster] node name: %s term: %d begin get vote. ", c.curNode.name, c.term)
+	c.leaderLock.Lock()
+	c.term = nextTerm
+	c.leaderLock.Unlock()
+	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
 
 	// 开始获取选票
 	for {
@@ -530,6 +559,7 @@ func (c *Cluster) fighting() {
 		if count > c.GetAllNodeCount()/2 { // 说明该节点可能已经失联
 			// 先给自己投一票
 			if !c.voteNode(nextTerm, c.curNode.name) {
+				// 说明已经投票给别人或者自己了，直接进入下一个周期
 				return
 			}
 			// 向其他节点获取投票
@@ -553,6 +583,7 @@ func (c *Cluster) fighting() {
 					}
 				}
 				if sign {
+					logger.Info("[cluster] sign myself: %s to be leader. ", c.GetMyName())
 					c.signLeader(c.curNode, nextTerm)
 				}
 			}
@@ -572,18 +603,18 @@ func (c *Cluster) fighting() {
 
 func (c *Cluster) heartbeat() {
 	for {
-		time.Sleep(time.Duration(c.config.Timeout/3) * time.Second)
-		switch c.sate {
-		case follower:
-			// 如果集群不就绪
-			//if !c.IsReady() {
-			//	logger.Info("[cluster] is not ready. go fighting.")
-			//	go c.fighting()
-			//}
-		case leader:
+		if c.IsLeader() {
+			time.Sleep(time.Duration(c.config.Timeout/4) * time.Second)
+			c.logger.Debug("[cluster] leader %s send heartbeat.", c.GetMyName())
 			// 向所有follower节点发送心跳
 			c.sendMsgWhitTimeout(2*time.Second, messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
-		default:
+		} else if c.IsFollower() {
+			time.Sleep(time.Duration(c.config.Timeout/3) * time.Second)
+			// 如果集群不就绪
+			if !c.IsReady() {
+				logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
+				go c.fighting()
+			}
 		}
 	}
 }
@@ -619,6 +650,8 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 }
 
 func (c *Cluster) signLeader(node *Node, term int) {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
 	if c.GetMyTerm() <= term {
 		if node.name == c.curNode.name {
 			c.sate = leader
@@ -632,6 +665,8 @@ func (c *Cluster) signLeader(node *Node, term int) {
 }
 
 func (c *Cluster) releaseLeader() {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
 	c.sate = follower
 	if c.leaderNode != nil {
 		c.lostLeaderTime = time.Now()

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"fmt"
+	"github.com/caiflower/common-tools/pkg/logger"
 	"testing"
 	"time"
 )
@@ -42,7 +43,9 @@ func TestCluster(t *testing.T) {
 		})
 
 	c.Nodes[0].Local = true
-	cluster1, err := NewCluster(c)
+	cluster1, err := NewClusterWithArgs(c, logger.NewLogger(&logger.Config{
+		Level: "DebugLevel",
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -51,7 +54,9 @@ func TestCluster(t *testing.T) {
 
 	c.Nodes[0].Local = false
 	c.Nodes[1].Local = true
-	cluster2, err := NewCluster(c)
+	cluster2, err := NewClusterWithArgs(c, logger.NewLogger(&logger.Config{
+		Level: "DebugLevel",
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -61,7 +66,9 @@ func TestCluster(t *testing.T) {
 	c.Nodes[0].Local = false
 	c.Nodes[1].Local = false
 	c.Nodes[2].Local = true
-	cluster3, err := NewCluster(c)
+	cluster3, err := NewClusterWithArgs(c, logger.NewLogger(&logger.Config{
+		Level: "DebugLevel",
+	}))
 	if err != nil {
 		panic(err)
 	}
@@ -70,7 +77,7 @@ func TestCluster(t *testing.T) {
 
 	time.Sleep(50 * time.Second)
 
-	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderNode().name)
-	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderNode().name)
-	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderNode().name)
+	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName())
+	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName())
+	fmt.Printf("clusterName: %s term:%d leader: %s\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName())
 }
