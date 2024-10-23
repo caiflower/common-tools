@@ -66,7 +66,7 @@ func (c *Client) Connect() error {
 	c.logger.Info("[client] Connect to server %s ...", c.addr)
 
 	// 连接
-	connection, err := net.DialTimeout("tcp", c.addr, 10*time.Second)
+	connection, err := net.DialTimeout("tcp", c.addr, time.Duration(c.timeout)*time.Second)
 	if err != nil {
 		c.logger.Error("[client] Connect to server %s err: %s", c.addr, err.Error())
 		return err

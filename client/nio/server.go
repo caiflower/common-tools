@@ -82,7 +82,7 @@ func (s *Server) Open() error {
 
 	listen, err := net.Listen("tcp", s.socket.addr)
 	if err != nil {
-		s.logger.Info("[server] Open socket %s err: %s .", s.addr, err.Error())
+		s.logger.Error("[server] Open socket %s err: %s .", s.addr, err.Error())
 		return err
 	}
 

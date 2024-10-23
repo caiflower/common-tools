@@ -64,11 +64,12 @@ type Config struct {
 }
 
 type Cluster struct {
-	lock           sync.Locker
-	config         *Config
-	curNode        *Node // 当前节点
-	leaderNode     *Node // 领导节点
-	leaderLock     sync.Locker
+	lock           sync.Locker    // 启动关闭锁
+	fightingLock   sync.Locker    // 竞争锁
+	config         *Config        // 配置文件
+	curNode        *Node          // 当前节点
+	leaderNode     *Node          // 领导节点
+	leaderLock     sync.Locker    // leader锁
 	lostLeaderTime time.Time      // 没有leader的时间
 	allNode        *sync.Map      // 所有的节点
 	aliveNodes     *sync.Map      // 所有存活的节点
@@ -78,7 +79,9 @@ type Cluster struct {
 	logger         logger.ILog    // 日志框架
 	msgChan        chan *Message  // 消息通信chan
 	votesMap       map[int]string // 投票map term->nodeName
-	votesLock      sync.Locker
+	votesLock      sync.Locker    // 投票锁
+	ctx            context.Context
+	cancelFunc     context.CancelFunc
 }
 
 func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
@@ -96,17 +99,18 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	}
 
 	cluster := &Cluster{
-		config:     config,
-		allNode:    &sync.Map{},
-		aliveNodes: &sync.Map{},
-		term:       0,
-		sate:       _init,
-		logger:     logger,
-		lock:       syncx.NewSpinLock(),
-		votesMap:   make(map[int]string),
-		votesLock:  syncx.NewSpinLock(),
-		leaderLock: syncx.NewSpinLock(),
-		msgChan:    make(chan *Message, 100),
+		config:       config,
+		allNode:      &sync.Map{},
+		aliveNodes:   &sync.Map{},
+		term:         0,
+		sate:         _init,
+		logger:       logger,
+		lock:         syncx.NewSpinLock(),
+		fightingLock: syncx.NewSpinLock(),
+		votesMap:     make(map[int]string),
+		votesLock:    syncx.NewSpinLock(),
+		leaderLock:   syncx.NewSpinLock(),
+		msgChan:      make(chan *Message, 100),
 	}
 
 	// 初始化节点信息
@@ -134,9 +138,15 @@ func (c *Cluster) StartUp() {
 	defer c.lock.Unlock()
 
 	// 只允许启动一次
-	if c.sate > _init {
+	if c.sate > _init && c.sate != closed {
 		return
 	}
+	c.term = 0
+	c.sate = _init
+
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	c.cancelFunc = cancelFunc
+	c.ctx = ctx
 
 	// 开启服务监听端口
 	c.listen()
@@ -148,46 +158,66 @@ func (c *Cluster) StartUp() {
 	go c.fighting()
 
 	// 开始心跳
-	go c.heartbeat()
+	go c.heartbeat(c.ctx)
+
+	c.logger.Info("[cluster] startup success. ")
 }
 
 func (c *Cluster) Close() {
+	if c.IsClosed() {
+		return
+	}
 
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if c.IsClosed() {
+		return
+	}
+
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+	}
+	c.curNode.clean()
+	c.releaseLeader()
+
+	c.aliveNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		if node.connection != nil {
+			go node.connection.Close()
+		}
+		return true
+	})
+
+	if c.server != nil {
+		go c.server.Close()
+	}
+
+	c.sate = closed
+	c.logger.Info("[cluster] close success. ")
 }
 
 func (c *Cluster) IsFighting() bool {
-	c.leaderLock.Lock()
-	c.leaderLock.Unlock()
 	return c.sate == fighting
 }
 
 func (c *Cluster) IsClosed() bool {
-	c.leaderLock.Lock()
-	c.leaderLock.Unlock()
 	return c.sate == closed
 }
 
 func (c *Cluster) IsReady() bool {
-	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
 	return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
 }
 
 func (c *Cluster) IsLeader() bool {
-	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
 	return c.sate == leader
 }
 
 func (c *Cluster) IsCandidate() bool {
-	c.leaderLock.Lock()
-	c.leaderLock.Unlock()
 	return c.sate == candidate
 }
 
 func (c *Cluster) IsFollower() bool {
-	c.leaderLock.Lock()
-	c.leaderLock.Unlock()
 	return c.sate == follower
 }
 
@@ -326,11 +356,7 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 					return
 				}
 
-				if v, ok := c.aliveNodes.Load(nodeMsg.LeaderNodeName); nodeMsg.LeaderNodeName != "" && ok {
-					node := v.(*Node)
-					// 标记leader节点
-					c.signLeader(node, nodeMsg.Term)
-				}
+				c.msgChan <- nodeMsg
 			}
 		case messageAskVoteRes:
 			c.logger.Debug("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for %s", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
@@ -342,9 +368,7 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 			}
 			c.msgChan <- nodeMsg
 		case messageHeartbeatRes:
-			if !nodeMsg.Success {
-				c.releaseLeader()
-			}
+			c.msgChan <- nodeMsg
 		default:
 			c.logger.Warn("[cluster] unknown message type: %s", message.Flag())
 		}
@@ -369,10 +393,15 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
 			msg.Success = false
+
 			if c.IsReady() && nodeMsg.Term <= c.GetMyTerm() {
 				msg.Term = c.GetMyTerm()
 				msg.LeaderNodeName = c.GetLeaderName()
 				msg.Success = true
+			}
+			if _, ok := c.aliveNodes.Load(nodeMsg.NodeName); !ok {
+				// 重新建立集群连接
+				go c.reconnect()
 			}
 
 			if err := session.WriteMsg(nio.NewMsg(messageAskLeaderRes, msg)); err != nil {
@@ -383,6 +412,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
 			msg.Success = true
+
 			if !c.IsReady() || nodeMsg.Term > c.GetMyTerm() {
 				c.releaseLeader()
 			}
@@ -396,6 +426,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
 			msg.Success = true
+
 			if c.GetMyTerm() > nodeMsg.Term {
 				msg.Term = c.GetMyTerm()
 				msg.Success = false
@@ -417,11 +448,17 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
 			msg.Success = true
+
 			if c.GetMyTerm() > nodeMsg.Term {
 				msg.Term = c.GetMyTerm()
 				msg.Success = false
 			} else if c.GetLeaderName() == nodeMsg.NodeName {
-				c.curNode.heartbeat = time.Now()
+				if !c.curNode.heartbeat.IsZero() {
+					c.curNode.heartbeat = time.Now()
+				} else {
+					// 说明follower已经开始竞选了
+					msg.Success = false
+				}
 			}
 
 			if err := session.WriteMsg(nio.NewMsg(messageHeartbeatRes, msg)); err != nil {
@@ -456,7 +493,7 @@ func (c *Cluster) reconnect() {
 			node := value.(*Node)
 			client := nio.NewClient(&nio.Config{
 				Addr:    node.address,
-				Timeout: c.config.Timeout,
+				Timeout: 1,
 			}, c.getClientHandler(nodeName))
 
 			if err := client.Connect(); err != nil {
@@ -482,19 +519,27 @@ func (c *Cluster) listen() {
 }
 
 func (c *Cluster) fighting() {
-	if c.IsFighting() {
+	if c.IsFighting() || c.IsReady() || c.IsClose() {
 		return
 	}
+
 	// 保证同时只有一个竞选过程在执行
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.fightingLock.Lock()
+	defer c.fightingLock.Unlock()
+
+	// 如果集群已经就绪或者关闭了，那么直接返回即可
+	if c.IsReady() || c.IsClose() {
+		return
+	}
 	c.sate = fighting
 
 	defer func() {
 		if c.leaderNode != nil {
 			logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderNode.name)
 		} else {
-			c.sate = follower
+			if !c.IsClose() {
+				c.sate = follower
+			}
 			// 没有找到主节点，自动开启新一轮竞选
 			go c.fighting()
 		}
@@ -518,9 +563,46 @@ func (c *Cluster) fighting() {
 			return
 		}
 
-		count := c.GetAliveNodeCount()
+		count := c.GetAliveNodeCount() + 1 // 包括自己
 		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
-			c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
+			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
+			if len(messages)+1 < count/2 {
+				// 再问一遍
+				continue
+			}
+			leaderNode := ""
+			term := 0
+			ansCount := 0
+			for _, message := range messages {
+				if message.Success {
+					if leaderNode == "" {
+						leaderNode = message.LeaderNodeName
+						term = message.Term
+						ansCount++
+					} else {
+						if message.LeaderNodeName != leaderNode || message.Term != term {
+							leaderNode = ""
+							break
+						} else {
+							ansCount++
+						}
+					}
+				}
+			}
+			if leaderNode != "" && ansCount+1 > count/2 {
+				if v, ok := c.aliveNodes.Load(leaderNode); ok {
+					node := v.(*Node)
+					c.curNode.heartbeat = time.Now()
+					// 标记leader节点
+					c.signLeader(node, term)
+				} else if leaderNode == c.curNode.name {
+					c.signLeader(c.curNode, term)
+				}
+			}
+			if term > c.GetMyTerm() {
+				// 加速周期
+				c.term = term
+			}
 			break
 		} else {
 			if sleepTimes%10 == 0 {
@@ -531,7 +613,7 @@ func (c *Cluster) fighting() {
 		// 重新加载在线节点
 		c.reconnect()
 		sleepTimes++
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 
 	// 等待查询结果
@@ -543,9 +625,7 @@ func (c *Cluster) fighting() {
 	}
 
 	nextTerm := c.term + 1
-	c.leaderLock.Lock()
 	c.term = nextTerm
-	c.leaderLock.Unlock()
 	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
 
 	// 开始获取选票
@@ -554,7 +634,7 @@ func (c *Cluster) fighting() {
 			return
 		}
 
-		count := c.GetAliveNodeCount()
+		count := c.GetAliveNodeCount() + 1 // 包括自己
 		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
 			c.sate = candidate
 			// 先给自己投一票
@@ -564,6 +644,10 @@ func (c *Cluster) fighting() {
 			}
 			// 向其他节点获取投票
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskVoteReq, &Message{NodeName: c.curNode.name, Term: nextTerm})
+			if len(messages)+1 < count/2 {
+				// 说明没有同步成功，进入下一个周期
+				return
+			}
 			votesCount := 0
 			for _, message := range messages {
 				if message.VoteNodeName == c.curNode.name {
@@ -573,7 +657,8 @@ func (c *Cluster) fighting() {
 			if votesCount+1 > count/2 {
 				// 开始广播自己为leader
 				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: c.curNode.name, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				if len(messages1) != c.GetAliveNodeCount() {
+				if len(messages1) < count/2 {
+					// 说明没有同步成功，进入下一个周期
 					return
 				}
 				sign := true
@@ -597,24 +682,46 @@ func (c *Cluster) fighting() {
 		// 重新加载在线节点
 		c.reconnect()
 		sleepTimes++
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }
 
-func (c *Cluster) heartbeat() {
+func (c *Cluster) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(time.Second * time.Duration(c.config.Timeout/4))
 	for {
-		if c.IsLeader() {
-			time.Sleep(time.Duration(c.config.Timeout/4) * time.Second)
-			c.logger.Debug("[cluster] leader %s send heartbeat.", c.GetMyName())
-			// 向所有follower节点发送心跳
-			c.sendMsgWhitTimeout(2*time.Second, messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
-		} else if c.IsFollower() {
-			time.Sleep(time.Duration(c.config.Timeout/3) * time.Second)
-			// 如果集群不就绪
-			if !c.IsReady() {
-				logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
-				go c.fighting()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if c.IsLeader() {
+				c.logger.Debug("[cluster] leader %s send heartbeat.", c.GetMyName())
+				// 向所有follower节点发送心跳
+				messages := c.sendMsgWhitTimeout(2*time.Second, messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
+				count := c.GetAllNodeCount()
+				leastCnt := (count - 1) / 2 // 去掉自己
+				if len(messages) < leastCnt {
+					c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", len(messages), leastCnt, c.GetMyName())
+					c.releaseLeader()
+				} else {
+					success := 0
+					for _, message := range messages {
+						if message.Success {
+							success++
+						}
+					}
+					if success < leastCnt {
+						c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", success, leastCnt, c.GetMyName())
+						c.releaseLeader()
+					}
+				}
+			} else if c.IsFollower() {
+				// 如果集群不就绪
+				if !c.IsReady() || c.leaderNode == nil {
+					logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
+					go c.fighting()
+				}
 			}
+		default:
 		}
 	}
 }
@@ -667,7 +774,9 @@ func (c *Cluster) signLeader(node *Node, term int) {
 func (c *Cluster) releaseLeader() {
 	c.leaderLock.Lock()
 	defer c.leaderLock.Unlock()
-	c.sate = follower
+	if c.sate != closed {
+		c.sate = follower
+	}
 	if c.leaderNode != nil {
 		c.lostLeaderTime = time.Now()
 	}
