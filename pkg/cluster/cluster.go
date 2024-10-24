@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/client/nio"
-	"github.com/caiflower/common-tools/pkg/env"
+	"github.com/caiflower/common-tools/pkg/global/env"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
 	"github.com/caiflower/common-tools/pkg/tools"

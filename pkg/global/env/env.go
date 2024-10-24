@@ -8,10 +8,19 @@ import (
 
 var (
 	LocalhostIP string
+	ConfigPath  string
 )
 
 func init() {
 	findLocalHostIP()
+	initConfigPath()
+}
+
+func initConfigPath() {
+	ConfigPath = os.Getenv("CONFIG_PATH")
+	if ConfigPath == "" {
+		ConfigPath = "/etc"
+	}
 }
 
 func findLocalHostIP() {
@@ -34,4 +43,8 @@ func findLocalHostIP() {
 
 func GetLocalHostIP() string {
 	return LocalhostIP
+}
+
+func SetDefaultConfigPath(path string) {
+	ConfigPath = path
 }
