@@ -7,13 +7,16 @@ import (
 )
 
 type TestConfig struct {
-	Name  string  `yaml:"name" default:"test"`
-	Age   int     `yaml:"age" default:"30"`
-	Age2  int8    `yaml:"age2" default:"1"`
-	Money float64 `yaml:"money" default:"1.231321"`
-	//Test   *TestConfig1 `yaml:"test1"`
-	Test2  TestConfig1 `yaml:"test2"`
-	ptrInt *int        `yaml:"ptrInt" default:"1"`
+	Name   string       `yaml:"name" default:"test"`
+	Age    int          `yaml:"age" default:"30"`
+	Age2   int8         `yaml:"age2" default:"1"`
+	Money  float64      `yaml:"money" default:"1.231321"`
+	Test   *TestConfig1 `yaml:"test1"`
+	Test2  TestConfig1  `yaml:"test2"`
+	PtrInt *int         `yaml:"ptrInt" default:"1"`
+	Str1   *string      `yaml:"str1" default:"test"`
+	Float1 *float64     `yaml:"str2" default:"1.24"`
+	B      *bool        `yaml:"b" default:"true"`
 }
 
 type TestConfig1 struct {
