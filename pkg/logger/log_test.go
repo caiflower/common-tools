@@ -44,11 +44,11 @@ func TestLoggerFileOut(t *testing.T) {
 		RollingPolicy: RollingPolicySize,
 		MaxSize:       "10KB",
 		Compress:      "False",
-		AppenderNum:   10,
+		AppenderNum:   100,
 	})
 	group := sync.WaitGroup{}
 
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 1000; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()

@@ -306,7 +306,13 @@ func (appender *logAppender) loadLoggerFiles() {
 			b := strings.Split(strings.Replace(strings.Replace(appender.backLoggerFiles[j], appender.fileName+"-", "", 1), gz, "", 1), "-")
 			if a[0] == b[0] {
 				if len(a) == len(b) {
-					return a[1] < b[1]
+					if len(a) == 2 {
+						num1, _ := strconv.Atoi(a[1])
+						num2, _ := strconv.Atoi(b[1])
+						return num1 < num2
+					} else {
+						return true
+					}
 				} else {
 					return len(a) < len(b)
 				}
@@ -330,27 +336,40 @@ func (appender *logAppender) compressLog() {
 				filepath := appender.dir + "/" + v
 				if tools.FileExist(filepath) {
 					fmt.Println(time.Now().Format(_timeFormat), "[LOG] compress log ->", filepath)
-					os.Remove(filepath + gz)
-					// 源文件
-					fromFile, _ := os.Open(filepath)
-					defer fromFile.Close()
+					if tools.FileExist(filepath + gz) {
+						size, _ := tools.FileSize(filepath + gz)
+						appender.backLoggerFilesSize -= size
+						if err := os.Remove(filepath + gz); err != nil {
+							fmt.Printf("[logger compress] remove log file err: %s\n", err)
+						}
+					}
 
-					// 目标文件
-					targetFile, _ := os.Create(filepath + gz)
-					defer targetFile.Close()
-
-					// gzip
-					gzipWriter := gzip.NewWriter(targetFile)
-					defer gzipWriter.Close()
-
-					io.Copy(gzipWriter, fromFile)
-					os.Remove(filepath)
+					appender.compressFile(v)
 				}
 			}
 		}
 
 		appender.loadLoggerFiles()
 	}
+}
+
+func (appender *logAppender) compressFile(fName string) {
+	filepath := fmt.Sprint(appender.dir, "/", fName)
+
+	// 源文件
+	fromFile, _ := os.Open(filepath)
+	defer fromFile.Close()
+
+	// 目标文件
+	targetFile, _ := os.Create(filepath + gz)
+	defer targetFile.Close()
+
+	// gzip
+	gzipWriter := gzip.NewWriter(targetFile)
+	defer gzipWriter.Close()
+
+	io.Copy(gzipWriter, fromFile)
+	os.Remove(filepath)
 }
 
 func (appender *logAppender) cleanLog() {
@@ -362,14 +381,13 @@ func (appender *logAppender) cleanLog() {
 		var removeSize int64
 		for len(appender.backLoggerFiles)-i > appender.backupMaxCount || appender.backLoggerFilesSize-removeSize > appender.backupMaxDiskSize {
 			fileName := appender.backLoggerFiles[i]
-			if strings.HasSuffix(fileName, gz) {
-				filepath := appender.dir + "/" + fileName
-				fmt.Println(time.Now().Format(_timeFormat), "[LOG] clean log ->", filepath)
-				size, _ := tools.FileSize(filepath)
-				removeSize += size
-				os.Remove(filepath)
-				i++
-			}
+
+			filepath := appender.dir + "/" + fileName
+			fmt.Println(time.Now().Format(_timeFormat), "[LOG] clean log ->", filepath)
+			size, _ := tools.FileSize(filepath)
+			removeSize += size
+			os.Remove(filepath)
+			i++
 		}
 
 		appender.loadLoggerFiles()
