@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/global"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/syncx"
 )
@@ -74,7 +73,7 @@ func Fatal(text string, v ...interface{}) {
 	defaultLogger.log(FatalLevel, text, v...)
 }
 
-type loggerHandler struct {
+type LoggerHandler struct {
 	lock        sync.Locker
 	level       int
 	dataQueue   chan data
@@ -99,7 +98,7 @@ type Config struct {
 	BackupMaxDisk  string `yaml:"log.backupMaxDiskSize"` // 保留备份日志文件磁盘最大大小, 1MB, 10KB, 1GB。log.cleanBackup=true生效，默认1GB
 }
 
-func (lh *loggerHandler) Close() {
+func (lh *LoggerHandler) Close() {
 	lh.lock.Lock()
 	defer lh.lock.Unlock()
 	if lh.dataQueue != nil {
@@ -116,15 +115,15 @@ func (lh *loggerHandler) Close() {
 	}
 }
 
-func DefaultLogger() *loggerHandler {
+func DefaultLogger() *LoggerHandler {
 	return defaultLogger
 }
 
-func NewLogger(config *Config) *loggerHandler {
+func NewLogger(config *Config) *LoggerHandler {
 	return newLoggerHandler(config)
 }
 
-func newLoggerHandler(config *Config) *loggerHandler {
+func newLoggerHandler(config *Config) *LoggerHandler {
 	if config.Level == "" {
 		config.Level = InfoLevel
 	}
@@ -168,7 +167,7 @@ func newLoggerHandler(config *Config) *loggerHandler {
 		enableCleanBackup, _ = strconv.ParseBool(config.CleanBackup)
 	}
 
-	logger := &loggerHandler{
+	logger := &LoggerHandler{
 		level:       getLevel(config.Level),
 		lock:        syncx.NewSpinLock(),
 		dataQueue:   make(chan data, config.QueueLength),
@@ -185,31 +184,30 @@ func newLoggerHandler(config *Config) *loggerHandler {
 		}()
 	}
 
-	global.DefaultResourceManger.Add(logger)
 	return logger
 }
 
-func (lh *loggerHandler) Trace(text string, v ...interface{}) {
+func (lh *LoggerHandler) Trace(text string, v ...interface{}) {
 	lh.log(TraceLevel, text, v...)
 }
 
-func (lh *loggerHandler) Debug(text string, v ...interface{}) {
+func (lh *LoggerHandler) Debug(text string, v ...interface{}) {
 	lh.log(DebugLevel, text, v...)
 }
 
-func (lh *loggerHandler) Info(text string, v ...interface{}) {
+func (lh *LoggerHandler) Info(text string, v ...interface{}) {
 	lh.log(InfoLevel, text, v...)
 }
 
-func (lh *loggerHandler) Warn(text string, v ...interface{}) {
+func (lh *LoggerHandler) Warn(text string, v ...interface{}) {
 	lh.log(WarnLevel, text, v...)
 }
 
-func (lh *loggerHandler) Error(text string, v ...interface{}) {
+func (lh *LoggerHandler) Error(text string, v ...interface{}) {
 	lh.log(ErrorLevel, text, v...)
 }
 
-func (lh *loggerHandler) Fatal(text string, v ...interface{}) {
+func (lh *LoggerHandler) Fatal(text string, v ...interface{}) {
 	lh.log(FatalLevel, text, v...)
 }
 
@@ -232,7 +230,7 @@ func getLevel(level string) int {
 	}
 }
 
-func (lh *loggerHandler) log(level string, text string, v ...interface{}) {
+func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 	if lh.level > getLevel(level) {
 		return
 	}
