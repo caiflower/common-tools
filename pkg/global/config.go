@@ -3,23 +3,13 @@ package global
 import (
 	"reflect"
 
+	"github.com/caiflower/common-tools/pkg/global/env"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
 
-func LoadDefaultConfig() {
-
-}
-
-func LoadWebConfig() {
-
-}
-
-func LoadDBConfig() {
-
-}
-
-func LoadRedisConfig() {
-
+func LoadDefaultConfig(v interface{}) (err error) {
+	err = LoadConfig(env.ConfigPath+"/default.yaml", v)
+	return
 }
 
 func LoadConfig(filename string, v interface{}) error {
@@ -28,6 +18,9 @@ func LoadConfig(filename string, v interface{}) error {
 		return err
 	}
 
-	tools.DoTagFunc(v, []func(reflect.StructField, reflect.Value){tools.SetDefaultValueIfNil})
+	if err = tools.DoTagFunc(v, []func(reflect.StructField, reflect.Value) error{tools.SetDefaultValueIfNil}); err != nil {
+		return err
+	}
+
 	return nil
 }

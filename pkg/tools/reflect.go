@@ -9,7 +9,7 @@ import (
 	"github.com/modern-go/reflect2"
 )
 
-func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value)) {
+func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value) error) (err error) {
 	if reflect2.IsNil(v) {
 		return
 	}
@@ -31,13 +31,19 @@ func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value)) {
 		fieldStruct := vType1.Elem().Field(i)
 
 		for _, f := range fn {
-			f(fieldStruct, field)
+			if err = f(fieldStruct, field); err != nil {
+				return
+			}
 		}
 	}
 
+	return
 }
 
-func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value) {
+func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value) (err error) {
+	if !vValue.CanSet() {
+		return
+	}
 	structTag := structField.Tag
 	if containTag(structTag, "default") || vValue.Kind() == reflect.Struct || vValue.Kind() == reflect.Ptr {
 		switch vValue.Kind() {
@@ -64,7 +70,9 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 			t := structField.Type
 			for i := 0; i < t.NumField(); i++ {
 				fieldStruct := t.Field(i)
-				SetDefaultValueIfNil(fieldStruct, vValue.Field(i))
+				if err = SetDefaultValueIfNil(fieldStruct, vValue.Field(i)); err != nil {
+					return
+				}
 			}
 		case reflect.Ptr:
 			pValue := reflect.New(structField.Type.Elem()).Elem()
@@ -100,7 +108,9 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 				for i := 0; i < pValue.NumField(); i++ {
 					field := vValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
-					SetDefaultValueIfNil(fieldStruct, field)
+					if err = SetDefaultValueIfNil(fieldStruct, field); err != nil {
+						return
+					}
 				}
 			default:
 			}
@@ -110,6 +120,8 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 
 		}
 	}
+
+	return
 }
 
 func containTag(tag reflect.StructTag, tagName string) bool {

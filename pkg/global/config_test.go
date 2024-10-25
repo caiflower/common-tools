@@ -2,6 +2,7 @@ package global
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -17,6 +18,7 @@ type TestConfig struct {
 	Str1   *string      `yaml:"str1" default:"test"`
 	Float1 *float64     `yaml:"str2" default:"1.24"`
 	B      *bool        `yaml:"b" default:"true"`
+	d      string       `yaml:"d" default:"test"` // test case: no can set
 }
 
 type TestConfig1 struct {
@@ -28,7 +30,7 @@ type TestConfig1 struct {
 
 func TestLoadConfig(t *testing.T) {
 	config := &TestConfig{}
-	err := LoadConfig("./test.yaml", config)
+	err := LoadConfig(os.Getenv("HOME")+"/common-tools/config/test.yaml", config)
 	if err != nil {
 		panic(err)
 	}
@@ -51,4 +53,20 @@ func TestLoadConfig2(t *testing.T) {
 
 	tagValue := testConfig1Field.Tag.Get("yaml")
 	fmt.Println("Tag for Name1 in TestConfig1:", tagValue)
+}
+
+type DefaultConfig struct {
+	Name string `yaml:"name" default:"myTest"`
+	Age  int    `yaml:"age" default:"30"`
+	Test *bool  `yaml:"test" default:"true"`
+}
+
+func TestLoadDefaultConfig(t *testing.T) {
+	defaultConfig := DefaultConfig{}
+	err := LoadDefaultConfig(&defaultConfig)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%+v\n", defaultConfig)
 }
