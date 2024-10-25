@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/global"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/syncx"
 )
@@ -183,6 +184,8 @@ func newLoggerHandler(config *Config) *loggerHandler {
 			}
 		}()
 	}
+
+	global.DefaultResourceManger.Add(logger)
 	return logger
 }
 

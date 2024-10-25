@@ -25,6 +25,7 @@ type Client struct {
 	socket
 	session *Session
 	logger  logger.ILog
+	lock    sync.Locker
 }
 
 func NewClientWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog, handler *Handler) *Client {
@@ -55,6 +56,7 @@ func NewClientWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog
 			timeout: config.Timeout,
 		},
 		logger: logger,
+		lock:   locker,
 	}
 }
 
@@ -140,18 +142,24 @@ func (c *Client) Write(flag uint8, data interface{}) error {
 }
 
 func (c *Client) Close() {
-	err := c.session.connection.Close()
-	if err != nil {
-		if strings.Contains(err.Error(), "use of closed network") {
-			return
-		} else {
-			c.logger.Warn("[client] [%d] close connection err: %s", c.session.id, err.Error())
-			return
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if c.closed == false {
+		c.closed = true
+		err := c.session.connection.Close()
+		if err != nil {
+			if strings.Contains(err.Error(), "use of closed network") {
+				return
+			} else {
+				c.logger.Warn("[client] [%d] close connection err: %s", c.session.id, err.Error())
+				return
+			}
 		}
+		if c.handler.OnSessionClosed != nil {
+			defer e.OnError("")
+			c.handler.OnSessionClosed(c.session)
+		}
+		c.session = nil
 	}
-	if c.handler.OnSessionClosed != nil {
-		defer e.OnError("")
-		c.handler.OnSessionClosed(c.session)
-	}
-	c.closed = true
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 )
 
@@ -211,4 +212,10 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 	return cluster1, cluster2, cluster3
+}
+
+func TestSignalCluster(t *testing.T) {
+	common()
+
+	global.DefaultResourceManger.Signal()
 }

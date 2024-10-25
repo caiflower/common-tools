@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/client/nio"
+	"github.com/caiflower/common-tools/pkg/global"
 	"github.com/caiflower/common-tools/pkg/global/env"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
@@ -161,6 +162,8 @@ func (c *Cluster) StartUp() {
 	go c.heartbeat(c.ctx)
 
 	c.logger.Info("[cluster] startup success. ")
+
+	global.DefaultResourceManger.Add(c)
 }
 
 func (c *Cluster) Close() {
