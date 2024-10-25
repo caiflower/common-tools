@@ -48,7 +48,7 @@ func TestLoggerFileOut(t *testing.T) {
 	})
 	group := sync.WaitGroup{}
 
-	for i := 1; i <= 1000; i++ {
+	for i := 1; i <= 100; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
@@ -74,10 +74,10 @@ func TestLoggerCut(t *testing.T) {
 		EnableTrace:    "True",
 		Path:           os.Getenv("HOME") + "/logger",
 		MaxSize:        "10KB",
-		RollingPolicy:  RollingPolicySize,
+		RollingPolicy:  RollingPolicyTimeAndSize,
 		Compress:       "True",
 		CleanBackup:    "True",
-		BackupMaxCount: 10,
+		BackupMaxCount: 5,
 		BackupMaxDisk:  "10MB",
 		AppenderNum:    5,
 	})

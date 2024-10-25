@@ -44,6 +44,7 @@ type logAppender struct {
 	maxSize           int64
 	backupMaxCount    int
 	backupMaxDiskSize int64
+	enableColor       bool
 
 	bufPool             sync.Pool
 	log                 *log.Logger
@@ -56,7 +57,7 @@ type logAppender struct {
 	backLoggerFilesSize int64
 }
 
-func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize, backupMaxSize string, backupMaxCount int, enableTrace, enableCompress, enableCleanBackup bool) Appender {
+func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize, backupMaxSize string, backupMaxCount int, enableTrace, enableCompress, enableCleanBackup, enableColor bool) Appender {
 	appender := &logAppender{
 		timeFormat: timeFormat,
 		bufPool: sync.Pool{
@@ -76,6 +77,7 @@ func newLogAppender(timeFormat, path, fileName, rollingPolicy, maxTime, maxSize,
 		maxTime:           getMaxTime(maxTime),
 		backupMaxCount:    backupMaxCount,
 		backupMaxDiskSize: getMaxSize(backupMaxSize),
+		enableColor:       enableColor,
 	}
 
 	if appender.maxSize == 0 && appender.maxTime == 0 {
@@ -193,10 +195,17 @@ func (appender *logAppender) write(data data) {
 
 	appender.rollingCutLog()
 
+	timeFormat := data.timestamp.Format(appender.timeFormat)
+	if appender.enableColor {
+		data.level = getLevelColor(data.level)
+	}
 	buf := appender.bufPool.Get().(*strings.Builder)
 	buf.Reset()
-	buf.WriteString(data.timestamp.Format(appender.timeFormat))
+	buf.WriteString(timeFormat)
 	if appender.enableTrace && data.traceID != "" {
+		if appender.enableColor {
+			data.traceID = fmt.Sprintf("\033[1;35m%s\033[0m", data.traceID)
+		}
 		buf.WriteString(" [")
 		buf.WriteString(data.traceID)
 		buf.WriteString("]")
