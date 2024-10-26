@@ -2,10 +2,10 @@ package cluster
 
 import (
 	"fmt"
+	"github.com/caiflower/common-tools/global"
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 )
 
@@ -79,9 +79,9 @@ func Test2(t *testing.T) {
 }
 
 func common() (cluster1, cluster2, cluster3 *Cluster) {
-	c1 := &Config{}
-	c2 := &Config{}
-	c3 := &Config{}
+	c1 := &Config{Enable: "true"}
+	c2 := &Config{Enable: "true"}
+	c3 := &Config{Enable: "true"}
 
 	c1.Nodes = append(c1.Nodes,
 		&struct {
@@ -218,4 +218,22 @@ func TestSignalCluster(t *testing.T) {
 	common()
 
 	global.DefaultResourceManger.Signal()
+}
+
+func TestSingleCluster(t *testing.T) {
+	c1 := &Config{Enable: "true", Mode: modeSingle}
+
+	if cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+		Level: "Debug",
+	})); err != nil {
+		panic(err)
+	} else {
+		cluster.StartUp()
+		time.Sleep(20 * time.Second)
+
+		cluster.Close()
+
+		time.Sleep(10 * time.Second)
+	}
+
 }

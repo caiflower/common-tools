@@ -3,14 +3,15 @@ package cluster
 import (
 	"context"
 	"errors"
+	"github.com/caiflower/common-tools/global"
+	"github.com/caiflower/common-tools/global/env"
+	"github.com/caiflower/common-tools/pkg/nio"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/client/nio"
-	"github.com/caiflower/common-tools/pkg/global"
-	"github.com/caiflower/common-tools/pkg/global/env"
+	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -37,6 +38,8 @@ type ICluster interface {
 	GetAliveNodeNames() []string     // 获取所有活着的节点名称
 	GetAliveNodeCount() int          // 获取在线节点数量
 	GetLostNodeNames() []string      // 获取所有失联节点名称
+	AddJobTracker()                  // add scheduler
+	RemoveJobTracker()               // remove scheduler
 }
 
 type stat uint8
@@ -54,8 +57,9 @@ const (
 )
 
 type Config struct {
-	Mode    string `yaml:"mode"`
-	Timeout int    `yaml:"timeout"`
+	Mode    string `yaml:"mode" default:"cluster"`
+	Timeout int    `yaml:"timeout" default:"10"`
+	Enable  string `yaml:"enable" default:"true"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string
@@ -83,11 +87,16 @@ type Cluster struct {
 	votesLock      sync.Locker    // 投票锁
 	ctx            context.Context
 	cancelFunc     context.CancelFunc
+	events         chan *event
+	jobTrackers    []JobTracker
 }
 
 func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 10
+	}
+	if config.Enable == "" {
+		config.Enable = "True"
 	}
 	if logger == nil {
 		return nil, errors.New("logger required")
@@ -96,7 +105,7 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	switch config.Mode {
 	case modeCluster, modeSingle:
 	default:
-		config.Mode = modeSingle
+		config.Mode = modeCluster
 	}
 
 	cluster := &Cluster{
@@ -111,12 +120,15 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 		votesMap:     make(map[int]string),
 		votesLock:    syncx.NewSpinLock(),
 		leaderLock:   syncx.NewSpinLock(),
-		msgChan:      make(chan *Message, 100),
+		events:       make(chan *event, 20),
 	}
 
 	// 初始化节点信息
 	cluster.loadNodes()
-	cluster.logger.Info("[cluster] loadNodes success, nodes = %+v", cluster.GetAllNodeNames())
+	enable, _ := strconv.ParseBool(config.Enable)
+	if enable {
+		cluster.logger.Info("[cluster] loadNodes success, nodes = %+v", cluster.GetAllNodeNames())
+	}
 
 	// find curNode
 	cluster.findCurNode()
@@ -124,7 +136,9 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	if cluster.curNode == nil {
 		return nil, errors.New("can not find current node")
 	} else {
-		cluster.logger.Info("[cluster] curNode address: %s", cluster.curNode.address)
+		if enable {
+			cluster.logger.Info("[cluster] curNode address: %s", cluster.curNode.address)
+		}
 	}
 
 	return cluster, nil
@@ -139,7 +153,8 @@ func (c *Cluster) StartUp() {
 	defer c.lock.Unlock()
 
 	// 只允许启动一次
-	if c.sate > _init && c.sate != closed {
+	enable, _ := strconv.ParseBool(c.config.Enable)
+	if !enable || (c.sate > _init && c.sate != closed) {
 		return
 	}
 	c.term = 0
@@ -159,9 +174,14 @@ func (c *Cluster) StartUp() {
 	go c.fighting()
 
 	// 开始心跳
-	go c.heartbeat(c.ctx)
+	go c.heartbeat()
+
+	// 开始消费事件
+	go c.consumeEvent()
 
 	c.logger.Info("[cluster] startup success. ")
+
+	go c.createEvent(eventNameStartUp)
 
 	global.DefaultResourceManger.Add(c)
 }
@@ -196,6 +216,7 @@ func (c *Cluster) Close() {
 		go c.server.Close()
 	}
 
+	c.createEvent(eventNameClose)
 	c.sate = closed
 	c.logger.Info("[cluster] close success. ")
 }
@@ -303,6 +324,14 @@ func (c *Cluster) GetNodeByName(name string) (node *Node) {
 	return
 }
 
+func (c *Cluster) AddJobTracker() {
+
+}
+
+func (c *Cluster) RemoveJobTracker() {
+
+}
+
 func (c *Cluster) loadNodes() {
 	for _, n := range c.config.Nodes {
 		node := newNode(n.Ip+":"+strconv.Itoa(n.Port), n.Name)
@@ -311,6 +340,11 @@ func (c *Cluster) loadNodes() {
 		// 如果开启了调试
 		if n.Local {
 			c.curNode = node
+		}
+	}
+	if c.config.Mode == modeSingle {
+		if c.curNode == nil {
+			c.curNode = newNode("127.0.0.1:10000", "127.0.0.1")
 		}
 	}
 }
@@ -477,7 +511,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 
 func (c *Cluster) needReconnect() (need bool) {
 	c.allNode.Range(func(key, value interface{}) bool {
-		if _, e := c.aliveNodes.Load(key); !e {
+		if _, ex := c.aliveNodes.Load(key); !ex {
 			need = true
 			return false
 		}
@@ -492,7 +526,7 @@ func (c *Cluster) reconnect() {
 	c.allNode.Range(func(key, value interface{}) bool {
 		// 排除自己
 		nodeName := key.(string)
-		if _, e := c.aliveNodes.Load(nodeName); c.curNode.name != nodeName && !e {
+		if _, ex := c.aliveNodes.Load(nodeName); c.curNode.name != nodeName && !ex {
 			node := value.(*Node)
 			client := nio.NewClient(&nio.Config{
 				Addr:    node.address,
@@ -522,6 +556,15 @@ func (c *Cluster) listen() {
 }
 
 func (c *Cluster) fighting() {
+	defer func() {
+		e.OnError("fighting")
+	}()
+
+	if c.config.Mode == modeSingle {
+		c.signLeader(c.curNode, 0)
+		return
+	}
+
 	if c.IsFighting() || c.IsReady() || c.IsClose() {
 		return
 	}
@@ -630,6 +673,10 @@ func (c *Cluster) fighting() {
 	nextTerm := c.term + 1
 	c.term = nextTerm
 	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
+	go c.createEvent(eventNameElectionStart)
+	defer func() {
+		go c.createEvent(eventNameElectionFinish)
+	}()
 
 	// 开始获取选票
 	for {
@@ -689,11 +736,15 @@ func (c *Cluster) fighting() {
 	}
 }
 
-func (c *Cluster) heartbeat(ctx context.Context) {
+func (c *Cluster) heartbeat() {
+	defer func() {
+		e.OnError("heartbeat")
+	}()
+
 	ticker := time.NewTicker(time.Second * time.Duration(c.config.Timeout/4))
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
 			if c.IsLeader() {
@@ -765,8 +816,10 @@ func (c *Cluster) signLeader(node *Node, term int) {
 	if c.GetMyTerm() <= term {
 		if node.name == c.curNode.name {
 			c.sate = leader
+			go c.createEvent(eventNameSignMaster)
 		} else {
 			c.sate = follower
+			go c.createEvent(eventNameSignFollower)
 		}
 		c.lostLeaderTime = time.Time{}
 		c.leaderNode = node
@@ -781,6 +834,7 @@ func (c *Cluster) releaseLeader() {
 		c.sate = follower
 	}
 	if c.leaderNode != nil {
+		go c.createEvent(eventNameReleaseMaster)
 		c.lostLeaderTime = time.Now()
 	}
 	c.leaderNode = nil
@@ -808,5 +862,67 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 		return true
 	} else {
 		return false
+	}
+}
+
+func (c *Cluster) createEvent(name string) {
+	if c.sate == closed {
+		return
+	}
+
+	select {
+	case c.events <- &event{name, c.sate}:
+	default:
+	}
+}
+
+func (c *Cluster) consumeEvent() {
+	defer func() {
+		e.OnError("consumeEvent")
+	}()
+
+	for {
+		select {
+		case ev := <-c.events:
+			switch ev.name {
+			case eventNameStartUp:
+				c.logger.Debug("[cluster] start up event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameSignFollower:
+				c.logger.Debug("[cluster] sign follower event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameSignMaster:
+				c.logger.Debug("[cluster] sign master event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameElectionStart:
+				c.logger.Debug("[cluster] election start event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameElectionFinish:
+				c.logger.Debug("[cluster] election finish event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameReleaseMaster:
+				c.logger.Debug("[cluster] release master event, cluster status: %s", getStatusName(ev.clusterStat))
+			case eventNameClose:
+				c.logger.Debug("[cluster] close event, cluster status: %s", getStatusName(ev.clusterStat))
+			default:
+				c.logger.Warn("[cluster] unknown type %s event", ev.name)
+			}
+		default:
+
+		}
+	}
+}
+
+func getStatusName(s stat) string {
+	switch s {
+	case closed:
+		return "closed"
+	case _init:
+		return "init"
+	case fighting:
+		return "fighting"
+	case candidate:
+		return "candidate"
+	case follower:
+		return "follower"
+	case leader:
+		return "leader"
+	default:
+		return ""
 	}
 }

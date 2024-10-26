@@ -1,9 +1,8 @@
 package cluster
 
 import (
+	"github.com/caiflower/common-tools/pkg/nio"
 	"time"
-
-	"github.com/caiflower/common-tools/client/nio"
 )
 
 type Node struct {

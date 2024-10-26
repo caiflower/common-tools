@@ -3,13 +3,13 @@ package nio
 import (
 	"bytes"
 	"encoding/binary"
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/caiflower/common-tools/pkg/e"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
 )
