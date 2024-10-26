@@ -160,6 +160,5 @@ func (c *Client) Close() {
 			defer e.OnError("")
 			c.handler.OnSessionClosed(c.session)
 		}
-		c.session = nil
 	}
 }
