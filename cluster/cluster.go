@@ -38,8 +38,8 @@ type ICluster interface {
 	GetAliveNodeNames() []string     // 获取所有活着的节点名称
 	GetAliveNodeCount() int          // 获取在线节点数量
 	GetLostNodeNames() []string      // 获取所有失联节点名称
-	AddJobTracker()                  // add scheduler
-	RemoveJobTracker()               // remove scheduler
+	AddJobTracker(v JobTracker)      // add scheduler
+	RemoveJobTracker(v JobTracker)   // remove scheduler
 }
 
 type stat uint8
@@ -74,6 +74,7 @@ type Cluster struct {
 	config         *Config        // 配置文件
 	curNode        *Node          // 当前节点
 	leaderNode     *Node          // 领导节点
+	leaderName     string         // 领导节点名称
 	leaderLock     sync.Locker    // leader锁
 	lostLeaderTime time.Time      // 没有leader的时间
 	allNode        *sync.Map      // 所有的节点
@@ -88,7 +89,7 @@ type Cluster struct {
 	ctx            context.Context
 	cancelFunc     context.CancelFunc
 	events         chan *event
-	jobTrackers    []JobTracker
+	jobTrackers    *sync.Map
 }
 
 func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
@@ -121,6 +122,7 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 		votesLock:    syncx.NewSpinLock(),
 		leaderLock:   syncx.NewSpinLock(),
 		events:       make(chan *event, 20),
+		jobTrackers:  &sync.Map{},
 	}
 
 	// 初始化节点信息
@@ -181,7 +183,7 @@ func (c *Cluster) StartUp() {
 
 	c.logger.Info("[cluster] startup success. ")
 
-	go c.createEvent(eventNameStartUp)
+	go c.createEvent(eventNameStartUp, "")
 
 	global.DefaultResourceManger.Add(c)
 }
@@ -216,7 +218,7 @@ func (c *Cluster) Close() {
 		go c.server.Close()
 	}
 
-	c.createEvent(eventNameClose)
+	go c.createEvent(eventNameClose, "")
 	c.sate = closed
 	c.logger.Info("[cluster] close success. ")
 }
@@ -262,13 +264,7 @@ func (c *Cluster) GetMyTerm() int {
 }
 
 func (c *Cluster) GetLeaderName() string {
-	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
-	if c.leaderNode != nil {
-		return c.leaderNode.name
-	} else {
-		return ""
-	}
+	return c.leaderName
 }
 
 func (c *Cluster) GetAllNodeNames() (allNames []string) {
@@ -324,12 +320,18 @@ func (c *Cluster) GetNodeByName(name string) (node *Node) {
 	return
 }
 
-func (c *Cluster) AddJobTracker() {
-
+func (c *Cluster) AddJobTracker(v JobTracker) {
+	if v == nil {
+		return
+	}
+	c.jobTrackers.Store(v.Name(), v)
 }
 
-func (c *Cluster) RemoveJobTracker() {
-
+func (c *Cluster) RemoveJobTracker(v JobTracker) {
+	if v == nil {
+		return
+	}
+	c.jobTrackers.Delete(v.Name())
 }
 
 func (c *Cluster) loadNodes() {
@@ -581,7 +583,7 @@ func (c *Cluster) fighting() {
 
 	defer func() {
 		if c.leaderNode != nil {
-			logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderNode.name)
+			logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderName)
 		} else {
 			if !c.IsClose() {
 				c.sate = follower
@@ -673,9 +675,9 @@ func (c *Cluster) fighting() {
 	nextTerm := c.term + 1
 	c.term = nextTerm
 	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
-	go c.createEvent(eventNameElectionStart)
+	go c.createEvent(eventNameElectionStart, "")
 	defer func() {
-		go c.createEvent(eventNameElectionFinish)
+		go c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
 
 	// 开始获取选票
@@ -816,13 +818,14 @@ func (c *Cluster) signLeader(node *Node, term int) {
 	if c.GetMyTerm() <= term {
 		if node.name == c.curNode.name {
 			c.sate = leader
-			go c.createEvent(eventNameSignMaster)
+			go c.createEvent(eventNameSignMaster, node.name)
 		} else {
 			c.sate = follower
-			go c.createEvent(eventNameSignFollower)
+			go c.createEvent(eventNameSignFollower, node.name)
 		}
 		c.lostLeaderTime = time.Time{}
 		c.leaderNode = node
+		c.leaderName = node.name
 		c.term = term
 	}
 }
@@ -834,10 +837,14 @@ func (c *Cluster) releaseLeader() {
 		c.sate = follower
 	}
 	if c.leaderNode != nil {
-		go c.createEvent(eventNameReleaseMaster)
+		go c.createEvent(eventNameReleaseMaster, "")
 		c.lostLeaderTime = time.Now()
+		if c.leaderName == c.GetMyName() {
+			go c.createEvent(eventNameStopMaster, "")
+		}
 	}
 	c.leaderNode = nil
+	c.leaderName = ""
 }
 
 // getVoteNodeName 根据term获取我投票给的节点名称。每个term只能投给一个node
@@ -865,15 +872,8 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 	}
 }
 
-func (c *Cluster) createEvent(name string) {
-	if c.sate == closed {
-		return
-	}
-
-	select {
-	case c.events <- &event{name, c.sate}:
-	default:
-	}
+func (c *Cluster) createEvent(name, leaderName string) {
+	c.events <- &event{name, c.sate, c.GetMyName(), leaderName}
 }
 
 func (c *Cluster) consumeEvent() {
@@ -886,19 +886,41 @@ func (c *Cluster) consumeEvent() {
 		case ev := <-c.events:
 			switch ev.name {
 			case eventNameStartUp:
-				c.logger.Debug("[cluster] start up event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameSignFollower:
-				c.logger.Debug("[cluster] sign follower event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+				c.jobTrackers.Range(func(key, value any) bool {
+					jobTracker := value.(JobTracker)
+					jobTracker.OnNewLeader(ev.leaderName)
+					return true
+				})
 			case eventNameSignMaster:
-				c.logger.Debug("[cluster] sign master event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+				c.jobTrackers.Range(func(key, value any) bool {
+					jobTracker := value.(JobTracker)
+					jobTracker.OnStartedLeading()
+					return true
+				})
+			case eventNameStopMaster:
+				c.logger.Debug("[cluster] %s stop master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+				c.jobTrackers.Range(func(key, value any) bool {
+					jobTracker := value.(JobTracker)
+					jobTracker.OnStoppedLeading()
+					return true
+				})
 			case eventNameElectionStart:
-				c.logger.Debug("[cluster] election start event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s election start event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameElectionFinish:
-				c.logger.Debug("[cluster] election finish event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameReleaseMaster:
-				c.logger.Debug("[cluster] release master event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s release master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+				c.jobTrackers.Range(func(key, value any) bool {
+					tracker := value.(JobTracker)
+					tracker.OnReleaseMaster()
+					return true
+				})
 			case eventNameClose:
-				c.logger.Debug("[cluster] close event, cluster status: %s", getStatusName(ev.clusterStat))
+				c.logger.Debug("[cluster] %s close event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			default:
 				c.logger.Warn("[cluster] unknown type %s event", ev.name)
 			}

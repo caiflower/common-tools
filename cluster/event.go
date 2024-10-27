@@ -4,6 +4,7 @@ const (
 	eventNameStartUp        = "StartUp"
 	eventNameSignMaster     = "SignMaster"
 	eventNameSignFollower   = "SignFollower"
+	eventNameStopMaster     = "StopMaster"
 	eventNameReleaseMaster  = "ReleaseMaster"
 	eventNameElectionStart  = "ElectionStart"
 	eventNameElectionFinish = "ElectionFinish"
@@ -13,4 +14,6 @@ const (
 type event struct {
 	name        string
 	clusterStat stat
+	nodeName    string
+	leaderName  string
 }
