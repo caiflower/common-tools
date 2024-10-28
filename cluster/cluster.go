@@ -3,13 +3,14 @@ package cluster
 import (
 	"context"
 	"errors"
-	"github.com/caiflower/common-tools/global"
-	"github.com/caiflower/common-tools/global/env"
-	"github.com/caiflower/common-tools/pkg/nio"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/caiflower/common-tools/global"
+	"github.com/caiflower/common-tools/global/env"
+	"github.com/caiflower/common-tools/pkg/nio"
 
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -837,10 +838,11 @@ func (c *Cluster) releaseLeader() {
 		c.sate = follower
 	}
 	if c.leaderNode != nil {
-		go c.createEvent(eventNameReleaseMaster, "")
 		c.lostLeaderTime = time.Now()
 		if c.leaderName == c.GetMyName() {
 			go c.createEvent(eventNameStopMaster, "")
+		} else {
+			go c.createEvent(eventNameReleaseMaster, "")
 		}
 	}
 	c.leaderNode = nil
