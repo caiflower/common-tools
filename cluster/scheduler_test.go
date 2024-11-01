@@ -208,3 +208,146 @@ func TestClusterJobTracker(t *testing.T) {
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 }
+
+type TestCaller struct {
+	Name string
+}
+
+func (t *TestCaller) MasterCall() {
+	fmt.Printf("%s MasterCall time: %s \n", t.Name, time.Now().Format("2006-01-02 15:04:05"))
+}
+
+func (t *TestCaller) SlaverCall(leaderName string) {
+	fmt.Printf("%s SlaverCall time: %s \n", t.Name, time.Now().Format("2006-01-02 15:04:05"))
+}
+
+func TestDefaultJobTracker(t *testing.T) {
+	c1 := &Config{Enable: "true"}
+	c2 := &Config{Enable: "true"}
+	c3 := &Config{Enable: "true"}
+
+	c1.Nodes = append(c1.Nodes,
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost1",
+			Port: 8080,
+		},
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost2",
+			Port: 8081,
+		}, &struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost3",
+			Port: 8082,
+		})
+
+	c2.Nodes = append(c2.Nodes,
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost1",
+			Port: 8080,
+		},
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost2",
+			Port: 8081,
+		}, &struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost3",
+			Port: 8082,
+		})
+
+	c3.Nodes = append(c3.Nodes,
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost1",
+			Port: 8080,
+		},
+		&struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost2",
+			Port: 8081,
+		}, &struct {
+			Name  string
+			Ip    string
+			Port  int
+			Local bool
+		}{
+			Ip:   "127.0.0.1",
+			Name: "localhost3",
+			Port: 8082,
+		})
+
+	testCaller1 := &TestCaller{
+		Name: "Localhost1",
+	}
+	c1.Nodes[0].Local = true
+	tracker1, err := NewDefaultJobTracker(10, c1, testCaller1)
+	if err != nil {
+		panic(err)
+	}
+	go tracker1.Start()
+
+	testCaller2 := &TestCaller{
+		Name: "Localhost2",
+	}
+	c2.Nodes[1].Local = true
+	tracker2, err := NewDefaultJobTracker(10, c2, testCaller2)
+	if err != nil {
+		panic(err)
+	}
+	go tracker2.Start()
+
+	testCaller3 := &TestCaller{
+		Name: "Localhost3",
+	}
+	c3.Nodes[2].Local = true
+	tracker3, err := NewDefaultJobTracker(10, c3, testCaller3)
+	if err != nil {
+		panic(err)
+	}
+	go tracker3.Start()
+
+	time.Sleep(60 * time.Second)
+}
