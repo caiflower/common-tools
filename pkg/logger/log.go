@@ -2,12 +2,13 @@ package logger
 
 import (
 	"fmt"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 
 	"github.com/caiflower/common-tools/pkg/syncx"
 )
@@ -119,6 +120,10 @@ func (lh *LoggerHandler) Close() {
 
 func DefaultLogger() *LoggerHandler {
 	return defaultLogger
+}
+
+func InitLogger(config *Config) {
+	defaultLogger = newLoggerHandler(config)
 }
 
 func NewLogger(config *Config) *LoggerHandler {
