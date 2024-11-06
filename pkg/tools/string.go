@@ -1,9 +1,10 @@
 package tools
 
 import (
-	jsoniter "github.com/json-iterator/go"
 	"regexp"
 	"strings"
+
+	jsoniter "github.com/json-iterator/go"
 )
 
 // RegReplace 正则表达式替换
@@ -13,6 +14,11 @@ func RegReplace(str string, reg string, newStr string) string {
 		return str
 	}
 	return pattern.ReplaceAllString(str, newStr)
+}
+
+func MatchReg(s, reg string) bool {
+	pattern := regexp.MustCompile(reg)
+	return pattern.Match([]byte(s))
 }
 
 func StringSliceContains(slice []string, str string) bool {

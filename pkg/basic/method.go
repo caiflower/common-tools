@@ -2,10 +2,11 @@ package basic
 
 import (
 	"fmt"
-	"github.com/caiflower/common-tools/pkg/tools"
 	"reflect"
 	"runtime"
 	"strings"
+
+	"github.com/caiflower/common-tools/pkg/tools"
 )
 
 type Method struct {
@@ -55,7 +56,24 @@ func NewMethod(cls *Class, v interface{}) *Method {
 		}
 		funC = _tm.Interface()
 	} else if reflect.TypeOf(v).Kind() == reflect.Func {
-		panic("Func not iml. ")
+		fullPath := runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
+
+		//说明此方法属于某个类，去掉类信息
+		if tools.MatchReg(path, `[.]\([^()]*\)`) {
+			path = tools.RegReplace(path, `[.]\([^()]*\)`, "")
+		}
+
+		name, _, path = getNameAndPkgNameAndPath(fullPath)
+
+		fType := reflect.TypeOf(v)
+		for i := 0; i < fType.NumIn(); i++ {
+			args = append(args, fType.In(i))
+		}
+		for i := 0; i < fType.NumOut(); i++ {
+			rets = append(rets, fType.Out(i))
+		}
+
+		funC = v
 	} else {
 		panic(fmt.Sprintf("NewMethod not support type %v. ", reflect.TypeOf(v).Kind()))
 	}
@@ -107,9 +125,6 @@ func (m *Method) GetArgs() []reflect.Type {
 func (m *Method) Invoke(args []reflect.Value) []reflect.Value {
 	if m.HasArgs() == false {
 		return reflect.ValueOf(m.funC).Call(nil)
-	}
-	if m.GetArgs()[0].Kind() == reflect.Struct && len(args) > 0 {
-		args[0] = args[0].Elem()
 	}
 	return reflect.ValueOf(m.funC).Call(args)
 }
