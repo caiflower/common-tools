@@ -48,7 +48,10 @@ func (s *HttpServer) AddController(v interface{}) {
 		logger.Warn("[AddController] add error: %s", err.Error())
 		return
 	}
-	s.handler.controllers[c.path] = c
+
+	for _, path := range c.paths {
+		s.handler.controllers[path] = c
+	}
 }
 
 func (s *HttpServer) AddInterceptor() {

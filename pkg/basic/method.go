@@ -92,6 +92,7 @@ func NewMethod(cls *Class, v interface{}) *Method {
 func getNameAndPkgNameAndPath(fullPath string) (name, pkgName, path string) {
 	name = tools.RegReplace(fullPath, ".*/", "")
 	path = strings.Replace(fullPath, name, "", 1)
+	path = path[:len(path)-1]
 	pkgName = tools.RegReplace(name, `[.].*`, "")
 
 	return

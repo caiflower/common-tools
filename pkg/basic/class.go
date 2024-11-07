@@ -16,7 +16,8 @@ type Class struct {
 	mu      sync.RWMutex       //锁
 	cls     interface{}        //目标对象
 	name    string             //类名称
-	pkgPath string             // 包名
+	pkgName string             // 包名
+	path    string             // 包路径
 	methods map[string]*Method //方法集合
 }
 
@@ -50,7 +51,15 @@ func (c *Class) GetAllMethod() []*Method {
 
 // GetPkgPath 获取包的路径
 func (c *Class) GetPkgPath() string {
-	return c.pkgPath
+	return c.path + "/" + c.pkgName
+}
+
+func (c *Class) GetPath() string {
+	return c.path
+}
+
+func (c *Class) GetPkgName() string {
+	return c.pkgName
 }
 
 // **************************************
@@ -64,12 +73,16 @@ func createClass(cls interface{}) *Class {
 	}
 
 	// 实例化
+	pkgPath := reflect.TypeOf(cls).Elem().PkgPath()
+	splits := strings.Split(pkgPath, "/")
 	obj := &Class{
 		methods: make(map[string]*Method),
 		cls:     cls,
 		name:    GetClassName(cls),
-		pkgPath: reflect.TypeOf(cls).Elem().PkgPath(),
+		pkgName: splits[len(splits)-1],
 	}
+	obj.path = strings.TrimSuffix(pkgPath, obj.pkgName)
+	obj.path = obj.path[0 : len(obj.path)-1]
 
 	// 遍历所有方法并实例化并缓存起来
 	ele := reflect.TypeOf(cls)

@@ -1,10 +1,11 @@
 package v1
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
-	"strings"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -55,40 +56,71 @@ type commonResponse struct {
 }
 
 func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
-	splits := strings.Split(r.URL.Path, "/")
-
 	ctx := &RequestCtx{
 		method: r.Method,
 		params: r.URL.Query(),
 		path:   r.URL.Path,
 	}
+
+	// 处理controller的逻辑
+	if h.doController(w, r, ctx) {
+		return
+	}
+
+	// 处理restful的逻辑
+	if h.doRestful(w, r, ctx) {
+		return
+	}
+
+	h.writeError(w, r, ctx, web.NewApiError(web.NotFound, "no such api.", nil))
+}
+
+func (h *handler) doController(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) bool {
 	if len(ctx.params["action"]) > 0 {
-		ctx.action = splits[len(splits)-1] + "." + ctx.params["action"][0]
+		ctx.action = ctx.params["action"][0]
 	} else if len(ctx.params["Action"]) > 0 {
-		ctx.action = splits[len(splits)-1] + "." + ctx.params["Action"][0]
+		ctx.action = ctx.params["Action"][0]
 	}
 
 	c := h.controllers[ctx.path]
 	if c == nil {
-		h.writeError(w, r, ctx, web.NewApiError(web.NotFound, "no such api.", nil))
-		return
+		return false
 	}
 
-	method := c.cls.GetMethod(ctx.action)
+	method := c.cls.GetMethod(c.cls.GetPkgName() + "." + ctx.action)
 	if method == nil {
-		h.writeError(w, r, ctx, web.NewApiError(web.NotFound, "no such api.", nil))
-		return
+		return false
 	}
 
 	args := method.GetArgs()
 	invokeArgs := make([]reflect.Value, len(args))
-	for _, arg := range args {
-		fmt.Println(arg)
+	for i, arg := range args {
+		kind := reflect.TypeOf(arg).Kind()
+		switch kind {
+		case reflect.Pointer:
+			invokeArgs[i] = reflect.New(arg).Elem()
+		case reflect.Struct:
+			invokeArgs[i] = reflect.New(arg)
+		}
 	}
+
+	if len(invokeArgs) > 0 {
+		bytes, _ := io.ReadAll(r.Body)
+		err := json.Unmarshal(bytes, invokeArgs[0].Interface())
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+	}
+
 	invoke := method.Invoke(invokeArgs)
 	ctx.response = invoke[0].Interface()
 
 	h.writeResponse(w, r, ctx)
+	return true
+}
+
+func (h *handler) doRestful(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) bool {
+	return false
 }
 
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e *web.ApiError) {

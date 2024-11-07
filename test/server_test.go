@@ -18,7 +18,7 @@ func TestHttpServer(t *testing.T) {
 	}
 
 	server := v1.NewHttpServer(config)
-	server.AddController(&testv1.Struct{})
+	server.AddController(&testv1.StructService{})
 	server.StartUp()
 
 	time.Sleep(1 * time.Hour)
