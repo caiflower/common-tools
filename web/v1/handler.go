@@ -1,7 +1,6 @@
 package v1
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -95,10 +94,10 @@ func (h *handler) doController(w http.ResponseWriter, r *http.Request, ctx *Requ
 	args := method.GetArgs()
 	invokeArgs := make([]reflect.Value, len(args))
 	for i, arg := range args {
-		kind := reflect.TypeOf(arg).Kind()
+		kind := arg.Kind()
 		switch kind {
 		case reflect.Pointer:
-			invokeArgs[i] = reflect.New(arg).Elem()
+			invokeArgs[i] = reflect.New(arg.Elem())
 		case reflect.Struct:
 			invokeArgs[i] = reflect.New(arg)
 		}
@@ -106,9 +105,13 @@ func (h *handler) doController(w http.ResponseWriter, r *http.Request, ctx *Requ
 
 	if len(invokeArgs) > 0 {
 		bytes, _ := io.ReadAll(r.Body)
-		err := json.Unmarshal(bytes, invokeArgs[0].Interface())
+		err := tools.Unmarshal(bytes, invokeArgs[0].Interface())
 		if err != nil {
 			fmt.Println(err.Error())
+		}
+
+		if args[0].Kind() == reflect.Struct {
+			invokeArgs[0] = invokeArgs[0].Elem()
 		}
 	}
 
