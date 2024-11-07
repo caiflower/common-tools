@@ -59,11 +59,11 @@ func NewMethod(cls *Class, v interface{}) *Method {
 		fullPath := runtime.FuncForPC(reflect.ValueOf(v).Pointer()).Name()
 
 		//说明此方法属于某个类，去掉类信息
-		if tools.MatchReg(path, `[.]\([^()]*\)`) {
-			path = tools.RegReplace(path, `[.]\([^()]*\)`, "")
+		if tools.MatchReg(fullPath, `[.]\([^()]*\)`) {
+			fullPath = tools.RegReplace(fullPath, `[.]\([^()]*\)`, "")
 		}
 
-		name, _, path = getNameAndPkgNameAndPath(fullPath)
+		name, pkgName, path = getNameAndPkgNameAndPath(fullPath)
 
 		fType := reflect.TypeOf(v)
 		for i := 0; i < fType.NumIn(); i++ {
@@ -119,6 +119,14 @@ func (m *Method) HasArgs() bool {
 
 func (m *Method) GetArgs() []reflect.Type {
 	return m.args
+}
+
+func (m *Method) GetRets() []reflect.Type {
+	return m.rets
+}
+
+func (m *Method) HasRets() bool {
+	return len(m.rets) > 0
 }
 
 // Invoke 反射调用方法

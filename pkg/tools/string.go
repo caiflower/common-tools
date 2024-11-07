@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	jsoniter "github.com/json-iterator/go"
 )
 
@@ -64,4 +65,9 @@ func Unmarshal(bytes []byte, v interface{}) (err error) {
 		return
 	}
 	return jsoniter.ConfigFastest.Unmarshal(bytes, v)
+}
+
+func UUID() string {
+	u, _ := uuid.NewUUID()
+	return u.String()
 }
