@@ -69,6 +69,13 @@ func writeBean(name string, bean interface{}) {
 			fieldBean = GetBean(fieldType.Name)
 		}
 		if fieldBean == nil {
+			pkgPath := fieldType.Type.Elem().PkgPath()
+			splits := strings.Split(pkgPath, "/")
+			path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
+			name = path + strings.Replace(fieldType.Type.String(), "*", "", 1)
+			fieldBean = GetBean(name)
+		}
+		if fieldBean == nil {
 			fieldBean = GetBean(strings.Replace(fieldType.Type.String(), "*", "", 1))
 		}
 		if fieldBean == nil {
@@ -100,7 +107,10 @@ func AddBean(bean interface{}) {
 	var name string
 	kind := reflect.TypeOf(bean).Kind()
 	if kind == reflect.Pointer || kind == reflect.Interface {
-		name = strings.Replace(reflect.TypeOf(bean).String(), "*", "", 1)
+		pkgPath := reflect.TypeOf(bean).Elem().PkgPath()
+		splits := strings.Split(pkgPath, "/")
+		path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
+		name = path + strings.Replace(reflect.TypeOf(bean).String(), "*", "", 1)
 	} else {
 		panic("Class must be interface or ptr. ")
 	}

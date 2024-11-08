@@ -27,6 +27,8 @@ func newController(v interface{}, rootPath string) (*controller, error) {
 		}
 
 		var paths []string
+		paths = append(paths, cls.GetName())
+
 		clsName := strings.Replace(cls.GetName(), ".", "/", 1)
 		paths = append(paths, "/"+path+"/"+clsName)
 
