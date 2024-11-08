@@ -10,7 +10,7 @@ func LoadConfig(filename string, v interface{}) error {
 		return err
 	}
 
-	if err = DoTagFunc(v, []func(reflect.StructField, reflect.Value) error{SetDefaultValueIfNil}); err != nil {
+	if err = DoTagFunc(v, nil, []func(reflect.StructField, reflect.Value, interface{}) error{SetDefaultValueIfNil}); err != nil {
 		return err
 	}
 

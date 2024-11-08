@@ -8,6 +8,6 @@ import (
 
 func OnError(txt string) {
 	if r := recover(); r != nil {
-		fmt.Println(time.Now().Format("2006-01-02 15:04:05"), "[ERROR] -", "Got a runtime error %s. %s\n%s", txt, r, string(debug.Stack()))
+		fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, r, string(debug.Stack()))
 	}
 }

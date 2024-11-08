@@ -9,7 +9,7 @@ import (
 	"github.com/modern-go/reflect2"
 )
 
-func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value) error) (err error) {
+func DoTagFunc(v interface{}, data interface{}, fn []func(reflect.StructField, reflect.Value, interface{}) error) (err error) {
 	if reflect2.IsNil(v) {
 		return
 	}
@@ -31,7 +31,7 @@ func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value) erro
 		fieldStruct := vType1.Elem().Field(i)
 
 		for _, f := range fn {
-			if err = f(fieldStruct, field); err != nil {
+			if err = f(fieldStruct, field, data); err != nil {
 				return
 			}
 		}
@@ -40,7 +40,7 @@ func DoTagFunc(v interface{}, fn []func(reflect.StructField, reflect.Value) erro
 	return
 }
 
-func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value) (err error) {
+func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	if !vValue.CanSet() {
 		return
 	}
@@ -70,14 +70,14 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 			t := structField.Type
 			for i := 0; i < t.NumField(); i++ {
 				fieldStruct := t.Field(i)
-				if err = SetDefaultValueIfNil(fieldStruct, vValue.Field(i)); err != nil {
+				if err = SetDefaultValueIfNil(fieldStruct, vValue.Field(i), data); err != nil {
 					return
 				}
 			}
 		case reflect.Ptr:
 			pValue := reflect.New(structField.Type.Elem()).Elem()
 			switch pValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				if vValue.IsNil() {
 					v, _ := strconv.Atoi(structTag.Get("default"))
 					vValue.Set(reflect.ValueOf(&v))
@@ -108,7 +108,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 				for i := 0; i < pValue.NumField(); i++ {
 					field := vValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
-					if err = SetDefaultValueIfNil(fieldStruct, field); err != nil {
+					if err = SetDefaultValueIfNil(fieldStruct, field, data); err != nil {
 						return
 					}
 				}
@@ -118,6 +118,60 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value)
 			fmt.Println("bool no support Func[SetDefaultValueIfNil]")
 		default:
 
+		}
+	}
+
+	return
+}
+
+func SetParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+	if !vValue.CanSet() {
+		return
+	}
+	structTag := structField.Tag
+	if containTag(structTag, "param") {
+		m := data.(map[string][]string)
+		params := m[structTag.Get("param")]
+		switch vValue.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			if len(params) > 0 {
+				v, _ := strconv.Atoi(params[0])
+				vValue.SetInt(int64(v))
+			}
+		case reflect.Float32, reflect.Float64:
+			if len(params) > 0 {
+				v, _ := strconv.ParseFloat(params[0], 64)
+				vValue.SetFloat(v)
+			}
+		case reflect.String:
+			if len(params) > 0 {
+				vValue.SetString(params[0])
+			}
+		case reflect.Slice:
+			if len(params) > 0 {
+				elemType := vValue.Type().Elem()
+				slice := reflect.MakeSlice(reflect.SliceOf(elemType), len(params), len(params))
+				for i, param := range params {
+					switch elemType.Kind() {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						v, _ := strconv.ParseInt(param, 10, 64)
+						slice.Index(i).SetInt(v)
+					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+						v, _ := strconv.ParseUint(param, 10, 64)
+						slice.Index(i).SetUint(v)
+					case reflect.Float32, reflect.Float64:
+						v, _ := strconv.ParseFloat(param, 64)
+						slice.Index(i).SetFloat(v)
+					case reflect.String:
+						slice.Index(i).SetString(param)
+					default:
+						return fmt.Errorf("unsupported tag param:'%s'", structTag.Get("param"))
+					}
+				}
+				vValue.Set(slice)
+			}
+		default:
+			return fmt.Errorf("unsupported tag param:'%s'", structTag.Get("param"))
 		}
 	}
 

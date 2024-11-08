@@ -12,7 +12,7 @@ import (
 
 func TestHttpServer(t *testing.T) {
 	config := v1.Config{}
-	err := tools.DoTagFunc(&config, []func(reflect.StructField, reflect.Value) error{tools.SetDefaultValueIfNil})
+	err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 	if err != nil {
 		panic(err)
 	}

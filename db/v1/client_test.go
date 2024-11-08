@@ -36,13 +36,13 @@ func TestNewDBClient(t *testing.T) {
 		Level: logger.DebugLevel,
 	}
 
-	err := tools.DoTagFunc(&l, []func(reflect.StructField, reflect.Value) error{tools.SetDefaultValueIfNil})
+	err := tools.DoTagFunc(&l, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 	if err != nil {
 		panic(err)
 	}
 	logger.InitLogger(&l)
 
-	err = tools.DoTagFunc(&config, []func(reflect.StructField, reflect.Value) error{tools.SetDefaultValueIfNil})
+	err = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 	if err != nil {
 		panic(err)
 	}
