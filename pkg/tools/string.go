@@ -22,6 +22,11 @@ func MatchReg(s, reg string) bool {
 	return pattern.Match([]byte(s))
 }
 
+func RegFind(s, reg string) []string {
+	pattern := regexp.MustCompile(reg)
+	return pattern.FindAllString(s, -1)
+}
+
 func StringSliceContains(slice []string, str string) bool {
 	for _, v := range slice {
 		if v == str {

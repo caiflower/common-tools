@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	crash "github.com/caiflower/common-tools/pkg/e"
@@ -49,6 +50,7 @@ type RequestCtx struct {
 	method       string
 	params       map[string][]string
 	path         string
+	version      string
 	action       string
 	restful      bool
 	args         []reflect.Value
@@ -114,6 +116,10 @@ func (h *handler) setAction(ctx *RequestCtx) {
 	} else if len(ctx.params["Action"]) > 0 {
 		ctx.action = ctx.params["Action"][0]
 	}
+}
+
+func (h *handler) setVersion(ctx *RequestCtx) {
+	ctx.version = strings.Split(ctx.path, "/")[0]
 }
 
 func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
