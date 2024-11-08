@@ -21,11 +21,21 @@ type Config struct {
 	ControllerRootPkgName string `yaml:"controller_root_pkg_name" default:"controller"`
 }
 
+var defaultHttpServer *HttpServer
+
 type HttpServer struct {
 	config  *Config
 	logger  logger.ILog
 	server  *http.Server
 	handler *handler
+}
+
+func InitDefaultHttpServer(config Config) *HttpServer {
+	if defaultHttpServer != nil {
+		return defaultHttpServer
+	}
+	defaultHttpServer = NewHttpServer(config)
+	return defaultHttpServer
 }
 
 func NewHttpServer(config Config) *HttpServer {
@@ -41,6 +51,10 @@ func NewHttpServer(config Config) *HttpServer {
 	return httpServer
 }
 
+func AddController(v interface{}) {
+	defaultHttpServer.AddController(v)
+}
+
 // AddController 只能增加func、point和interface，其他类型直接忽略
 func (s *HttpServer) AddController(v interface{}) {
 	c, err := newController(v, s.config.ControllerRootPkgName)
@@ -51,6 +65,27 @@ func (s *HttpServer) AddController(v interface{}) {
 
 	for _, path := range c.paths {
 		s.handler.controllers[path] = c
+	}
+}
+
+func Register(controller *RestfulController) {
+	defaultHttpServer.AddController(controller)
+}
+
+// Register 注册restfulController
+func (s *HttpServer) Register(controller *RestfulController) {
+	path := "method:" + controller.method + "version:" + controller.version + "path:" + controller.path
+	if _, e := s.handler.restfulPaths[path]; e {
+		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exsit. ", controller.method, controller.version, controller.originPath))
+	}
+	c := s.handler.controllers[controller.controllerName]
+	if c != nil {
+		controller.targetMethod = c.cls.GetMethod(c.cls.GetPkgName() + "." + controller.action)
+		s.handler.restfulPaths[path] = struct{}{}
+		s.handler.restfulControllers = append(s.handler.restfulControllers, controller)
+	}
+	if controller.targetMethod == nil {
+		panic(fmt.Sprintf("Register restfulApi failed. Not found controller[%s] action[%s]. ", controller.controllerName, controller.action))
 	}
 }
 

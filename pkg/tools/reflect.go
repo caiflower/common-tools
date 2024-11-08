@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/modern-go/reflect2"
 )
@@ -128,48 +129,55 @@ func SetParam(structField reflect.StructField, vValue reflect.Value, data interf
 	if !vValue.CanSet() {
 		return
 	}
+
+	var params []string
+	m := data.(map[string][]string)
 	structTag := structField.Tag
 	if containTag(structTag, "param") {
-		m := data.(map[string][]string)
-		params := m[structTag.Get("param")]
+		params = m[structTag.Get("param")]
+	} else {
+		name := structField.Name
+		// 首字母变小
+		lName := strings.ToLower(name[:1]) + name[1:]
+		for k, v := range m {
+			if ToCamel(k) == lName || name == k {
+				params = v
+				break
+			}
+		}
+	}
+
+	if len(params) > 0 {
 		switch vValue.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			if len(params) > 0 {
-				v, _ := strconv.Atoi(params[0])
-				vValue.SetInt(int64(v))
-			}
+			v, _ := strconv.Atoi(params[0])
+			vValue.SetInt(int64(v))
 		case reflect.Float32, reflect.Float64:
-			if len(params) > 0 {
-				v, _ := strconv.ParseFloat(params[0], 64)
-				vValue.SetFloat(v)
-			}
+			v, _ := strconv.ParseFloat(params[0], 64)
+			vValue.SetFloat(v)
 		case reflect.String:
-			if len(params) > 0 {
-				vValue.SetString(params[0])
-			}
+			vValue.SetString(params[0])
 		case reflect.Slice:
-			if len(params) > 0 {
-				elemType := vValue.Type().Elem()
-				slice := reflect.MakeSlice(reflect.SliceOf(elemType), len(params), len(params))
-				for i, param := range params {
-					switch elemType.Kind() {
-					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-						v, _ := strconv.ParseInt(param, 10, 64)
-						slice.Index(i).SetInt(v)
-					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-						v, _ := strconv.ParseUint(param, 10, 64)
-						slice.Index(i).SetUint(v)
-					case reflect.Float32, reflect.Float64:
-						v, _ := strconv.ParseFloat(param, 64)
-						slice.Index(i).SetFloat(v)
-					case reflect.String:
-						slice.Index(i).SetString(param)
-					default:
-						return fmt.Errorf("unsupported tag param:'%s'", structTag.Get("param"))
-					}
+			elemType := vValue.Type().Elem()
+			slice := reflect.MakeSlice(reflect.SliceOf(elemType), len(params), len(params))
+			for i, param := range params {
+				switch elemType.Kind() {
+				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+					v, _ := strconv.ParseInt(param, 10, 64)
+					slice.Index(i).SetInt(v)
+				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+					v, _ := strconv.ParseUint(param, 10, 64)
+					slice.Index(i).SetUint(v)
+				case reflect.Float32, reflect.Float64:
+					v, _ := strconv.ParseFloat(param, 64)
+					slice.Index(i).SetFloat(v)
+				case reflect.String:
+					slice.Index(i).SetString(param)
+				default:
+					return fmt.Errorf("unsupported tag param:'%s'", structTag.Get("param"))
 				}
-				vValue.Set(slice)
 			}
+			vValue.Set(slice)
 		default:
 			return fmt.Errorf("unsupported tag param:'%s'", structTag.Get("param"))
 		}

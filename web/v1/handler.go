@@ -19,16 +19,19 @@ var commonHandler *handler
 
 func initHandler(config *Config, logger logger.ILog) {
 	commonHandler = &handler{
-		config:      config,
-		controllers: make(map[string]*controller),
-		logger:      logger,
+		config:       config,
+		controllers:  make(map[string]*controller),
+		restfulPaths: make(map[string]struct{}),
+		logger:       logger,
 	}
 }
 
 type handler struct {
-	config      *Config
-	controllers map[string]*controller
-	logger      logger.ILog
+	config             *Config
+	controllers        map[string]*controller
+	restfulControllers []*RestfulController
+	restfulPaths       map[string]struct{}
+	logger             logger.ILog
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +54,7 @@ type RequestCtx struct {
 	params       map[string][]string
 	path         string
 	version      string
+	paths        map[string]string
 	action       string
 	restful      bool
 	args         []reflect.Value
@@ -75,6 +79,7 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	ctx := &RequestCtx{
 		method:  r.Method,
 		params:  r.URL.Query(),
+		paths:   make(map[string]string),
 		path:    r.URL.Path,
 		success: 500,
 	}
@@ -118,10 +123,6 @@ func (h *handler) setAction(ctx *RequestCtx) {
 	}
 }
 
-func (h *handler) setVersion(ctx *RequestCtx) {
-	ctx.version = strings.Split(ctx.path, "/")[0]
-}
-
 func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 	if ctx.action != "" {
 		// action风格
@@ -134,7 +135,40 @@ func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 	} else {
 		// 根据restful风格查询method
 		ctx.restful = true
+		for _, c := range h.restfulControllers {
+			if c.method == ctx.method && tools.MatchReg(ctx.path, "/"+c.version+c.path) {
+				ctx.version = c.version
+				ctx.targetMethod = c.targetMethod
 
+				path := strings.TrimPrefix(ctx.path, "/"+c.version)
+				k := 0
+				for i, cur := range c.otherPaths {
+					next := ""
+					if i+1 < len(c.otherPaths) {
+						next = c.otherPaths[i+1]
+					}
+					path = strings.TrimPrefix(path, "/"+cur+"/")
+					pathValue := ""
+					for j := 0; j < len(path); j++ {
+						if next != "" && strings.HasPrefix(path[j:], "/"+next+"/") {
+							pathValue = path[:j]
+							path = path[j:]
+							break
+						} else if next == "" {
+							pathValue = path[j:]
+							break
+						}
+					}
+
+					if pathValue != "" {
+						ctx.paths[c.pathParams[k]] = pathValue
+						k++
+					}
+				}
+
+				break
+			}
+		}
 	}
 
 	return ctx.targetMethod != nil
@@ -143,18 +177,22 @@ func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 	method := ctx.targetMethod
 
+	if !method.HasArgs() {
+		return nil
+	}
+
+	arg := method.GetArgs()[0]
+	switch arg.Kind() {
+	case reflect.Ptr:
+		ctx.args = append(ctx.args, reflect.New(arg.Elem()))
+	case reflect.Struct:
+		ctx.args = append(ctx.args, reflect.New(arg))
+	default:
+		return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
+	}
+
 	// 非restful风格
 	if !ctx.restful {
-		arg := method.GetArgs()[0]
-		switch arg.Kind() {
-		case reflect.Ptr:
-			ctx.args = append(ctx.args, reflect.New(arg.Elem()))
-		case reflect.Struct:
-			ctx.args = append(ctx.args, reflect.New(arg))
-		default:
-			return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
-		}
-
 		// 先解析body，解析param
 		var bytes []byte
 		if r.ContentLength != 0 {
@@ -172,11 +210,33 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			}
 		}
 
-		if arg.Kind() == reflect.Struct {
-			ctx.args[0] = ctx.args[0].Elem()
-		}
 	} else {
+		switch ctx.method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			// 先解析body，解析param
+			var bytes []byte
+			if r.ContentLength != 0 {
+				bytes, _ = io.ReadAll(r.Body)
+			} else {
+				bytes = []byte("{}")
+			}
+			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
+				h.logger.Warn("unmarshal failed. error: %s", err.Error())
+			}
+		case http.MethodGet:
+			if ctx.params != nil && len(ctx.params) > 0 {
+				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
+					return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param tag failed. detail: %s", err.Error()), err)
+				}
+			}
+		}
 
+		// 解析path
+
+	}
+
+	if arg.Kind() == reflect.Struct {
+		ctx.args[0] = ctx.args[0].Elem()
 	}
 
 	return nil

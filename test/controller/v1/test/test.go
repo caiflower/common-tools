@@ -14,8 +14,9 @@ func (t *StructService) Test() string {
 }
 
 type Param struct {
-	Args string `json:"args"`
-	Name string `json:"name"`
+	Args   string `json:"args"`
+	Name   string `json:"name"`
+	MyName string `json:"myName"`
 }
 
 type Param2 struct {

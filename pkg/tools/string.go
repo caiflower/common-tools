@@ -76,3 +76,24 @@ func UUID() string {
 	u, _ := uuid.NewUUID()
 	return u.String()
 }
+
+func ToCamel(str string) (camel string) {
+	parts := strings.Split(str, "_")
+	for _, v := range parts {
+		if v != "" {
+			if len(v) > 1 {
+				camel += strings.ToUpper(v[:1]) + v[1:]
+			} else {
+				camel += strings.ToTitle(v)
+			}
+		}
+	}
+
+	if len(camel) > 1 {
+		camel = strings.ToLower(camel[:1]) + camel[1:]
+	} else {
+		camel = strings.ToLower(camel)
+	}
+
+	return
+}
