@@ -50,6 +50,8 @@ var (
 	NotAcceptable = &ErrorCode{Code: http.StatusNotAcceptable, Type: "NotAcceptable"}
 	Unknown       = &ErrorCode{Code: http.StatusInternalServerError, Type: "Unknown"}
 	Internal      = &ErrorCode{Code: http.StatusInternalServerError, Type: "InternalError"}
+
+	InvalidArgument = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
 )
 
 func NewApiError(errCode *ErrorCode, msg string, err error) ApiError {

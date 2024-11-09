@@ -5,10 +5,11 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/basic"
-	crash "github.com/caiflower/common-tools/pkg/e"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -77,12 +78,13 @@ type commonResponse struct {
 
 func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	ctx := &RequestCtx{
-		method:  r.Method,
-		params:  r.URL.Query(),
-		paths:   make(map[string]string),
-		path:    r.URL.Path,
-		success: 500,
+		method: r.Method,
+		params: r.URL.Query(),
+		paths:  make(map[string]string),
+		path:   r.URL.Path,
 	}
+
+	defer h.onCrash("dispatch", w, r, ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// 设置action
 	h.setAction(ctx)
@@ -206,13 +208,13 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 
 		if ctx.params != nil && len(ctx.params) > 0 {
 			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
-				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param tag failed. detail: %s", err.Error()), err)
+				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 			}
 		}
 
 	} else {
 		switch ctx.method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch:
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			// 先解析body，解析param
 			var bytes []byte
 			if r.ContentLength != 0 {
@@ -226,28 +228,44 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 		case http.MethodGet:
 			if ctx.params != nil && len(ctx.params) > 0 {
 				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
-					return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param tag failed. detail: %s", err.Error()), err)
+					return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 				}
 			}
 		}
 
-		// 解析path
-
+		// 设置paths
+		if ctx.paths != nil && len(ctx.paths) > 0 {
+			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetPath}); err != nil {
+				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
+			}
+		}
 	}
 
-	if arg.Kind() == reflect.Struct {
-		ctx.args[0] = ctx.args[0].Elem()
+	// 设置默认值
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
+		return e.NewApiError(e.Internal, fmt.Sprintf("set default value failed. detail: %s", err.Error()), err)
 	}
 
 	return nil
 }
 
 func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
+	method := ctx.targetMethod
+	if !method.HasArgs() {
+		return nil
+	}
+
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp}); err != nil {
+		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
+	}
+
 	return nil
 }
 
 func (h *handler) doTargetMethod(ctx *RequestCtx) e.ApiError {
-	defer crash.OnError("doTargetMethod failed!")
+	if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
+		ctx.args[0] = ctx.args[0].Elem()
+	}
 
 	results := ctx.targetMethod.Invoke(ctx.args)
 	rets := ctx.targetMethod.GetRets()
@@ -308,6 +326,13 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 			h.logger.Error("writeResponse Error: %s", err.Error())
 		}
 	} else {
-		h.writeError(w, r, ctx, e.NewApiError(e.Internal, "unknown error", nil))
+
+	}
+}
+
+func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
+	if err := recover(); err != nil {
+		fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, r, string(debug.Stack()))
+		h.writeError(w, r, ctx, e)
 	}
 }

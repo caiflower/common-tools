@@ -42,7 +42,7 @@ func (c *RestfulController) Path(path string) *RestfulController {
 		clean := tools.RegReplace(path, pathParamReg, "")
 		c.otherPaths = strings.Split(clean, "/")[1:]
 
-		c.path = tools.RegReplace(path, pathParamReg, `/([a-zA-Z0-9_-]+/?)`)
+		c.path = tools.RegReplace(path, pathParamReg, `/[a-zA-Z0-9_-]+`) + "/?$"
 	} else {
 		c.path = path
 	}

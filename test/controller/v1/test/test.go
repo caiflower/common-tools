@@ -13,10 +13,16 @@ func (t *StructService) Test() string {
 	return "testResponse"
 }
 
+type InnerParam struct {
+	TestId string
+}
+
 type Param struct {
-	Args   string `json:"args"`
-	Name   string `json:"name"`
-	MyName string `json:"myName"`
+	TestId string
+	Args   string   `json:"args" param:"args" default:"testDefault"`
+	Name   string   `json:"name"`
+	Name1  *string  `verf:"nilable"`
+	MyName []string `json:"myName"`
 }
 
 type Param2 struct {

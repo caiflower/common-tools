@@ -21,7 +21,9 @@ func TestHttpServer(t *testing.T) {
 	server := v1.NewHttpServer(config)
 	server.AddController(&testv1.StructService{})
 	server.Register(v1.NewRestFul().Method(http.MethodPost).Version("v1").Controller("test.StructService").Path("/tests/{testId}").Action("Test1"))
+	server.Register(v1.NewRestFul().Method(http.MethodGet).Version("v1").Controller("test.StructService").Path("/tests/{testId}").Action("Test1"))
 	server.Register(v1.NewRestFul().Method(http.MethodPost).Version("v1").Controller("test.StructService").Path("/tests/{testId}/test2s/{test2Id}").Action("Test2"))
+	server.Register(v1.NewRestFul().Method(http.MethodPost).Version("v1").Controller("test.StructService").Path("/tests/{testId}/test2s/{test2Id}/test").Action("Test2"))
 	server.StartUp()
 
 	time.Sleep(1 * time.Hour)
