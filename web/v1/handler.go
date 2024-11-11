@@ -224,6 +224,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			}
 			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
 				h.logger.Warn("unmarshal failed. error: %s", err.Error())
+				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse json failed."), err)
 			}
 		case http.MethodGet:
 			if ctx.params != nil && len(ctx.params) > 0 {
@@ -255,7 +256,7 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 		return nil
 	}
 
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp}); err != nil {
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp, tools.Between}); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
 	}
 

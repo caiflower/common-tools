@@ -14,15 +14,17 @@ func (t *StructService) Test() string {
 }
 
 type InnerParam struct {
-	TestId string
+	TestId string `json:"testId" inList:"testId1"`
 }
 
 type Param struct {
-	TestId string
-	Args   string   `json:"args" param:"args" default:"testDefault"`
-	Name   string   `json:"name"`
-	Name1  *string  `verf:"nilable"`
-	MyName []string `json:"myName"`
+	TestId     string
+	Args       string   `json:"args" param:"args" default:"testDefault"`
+	Name       string   `json:"name"`
+	Name1      *string  `verf:"nilable" inList:"name,name1"`
+	MyName     []string `json:"myName" inList:"myName,myName1" reg:"[0-9a-zA-Z]+"`
+	TestInt    []int    `json:"testInt" inList:"0,1,2,3,4,5" reg:"[0-4]+" between:"1,3"`
+	InnerParam *InnerParam
 }
 
 type Param2 struct {
