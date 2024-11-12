@@ -45,6 +45,8 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 	if !vValue.CanSet() {
 		return
 	}
+
+	flag := false
 	structTag := structField.Tag
 	if containTag(structTag, "default") || vValue.Kind() == reflect.Struct || vValue.Kind() == reflect.Ptr {
 		switch vValue.Kind() {
@@ -52,20 +54,24 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 			if vValue.Int() == 0 {
 				v, _ := strconv.Atoi(structTag.Get("default"))
 				vValue.SetInt(int64(v))
+				flag = true
 			}
 		case reflect.String:
 			if vValue.String() == "" {
 				vValue.SetString(structTag.Get("default"))
+				flag = true
 			}
 		case reflect.Float32:
 			if vValue.Float() == 0 {
 				v, _ := strconv.ParseFloat(structTag.Get("default"), 32)
 				vValue.SetFloat(v)
+				flag = true
 			}
 		case reflect.Float64:
 			if vValue.Float() == 0 {
 				v, _ := strconv.ParseFloat(structTag.Get("default"), 64)
 				vValue.SetFloat(v)
+				flag = true
 			}
 		case reflect.Struct:
 			t := structField.Type
@@ -83,12 +89,14 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 					if v := structTag.Get("default"); v != "" {
 						i, _ := strconv.Atoi(v)
 						vValue.Set(reflect.ValueOf(&i))
+						flag = true
 					}
 				}
 			case reflect.String:
 				if vValue.IsNil() {
 					if v := structTag.Get("default"); v != "" {
 						vValue.Set(reflect.ValueOf(&v))
+						flag = true
 					}
 				}
 			case reflect.Float32, reflect.Float64:
@@ -96,6 +104,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 					if v := structTag.Get("default"); v != "" {
 						f, _ := strconv.ParseFloat(v, 64)
 						vValue.Set(reflect.ValueOf(&f))
+						flag = true
 					}
 				}
 			case reflect.Bool:
@@ -103,28 +112,38 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 					if v := structTag.Get("default"); v != "" {
 						b, _ := strconv.ParseBool(v)
 						vValue.Set(reflect.ValueOf(&b))
+						flag = true
 					}
 				}
 			case reflect.Ptr:
 				fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
 			case reflect.Struct:
+				newValue := vValue
 				if vValue.IsZero() {
-					return
+					newValue = reflect.New(structField.Type.Elem())
 				}
+
+				m := make(map[string]string)
 				for i := 0; i < pValue.NumField(); i++ {
-					field := vValue.Elem().Field(i)
+					field := newValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
-					if err = SetDefaultValueIfNil(fieldStruct, field, data); err != nil {
+					if err = SetDefaultValueIfNil(fieldStruct, field, m); err != nil {
 						return
 					}
 				}
+				if len(m) != 0 {
+					vValue.Set(newValue)
+				}
 			default:
+
 			}
-		case reflect.Bool:
-			fmt.Println("bool no support Func[SetDefaultValueIfNil]")
 		default:
 
 		}
+	}
+
+	if flag && data != nil {
+		data.(map[string]string)["flag"] = "true"
 	}
 
 	return
