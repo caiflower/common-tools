@@ -402,11 +402,90 @@ func CheckRegxp(structField reflect.StructField, vValue reflect.Value, data inte
 
 	tagName := "reg"
 	reg := structField.Tag.Get(tagName)
-	if reg == "" {
+
+	var values []string
+	switch vValue.Kind() {
+	case reflect.Ptr:
+		// 获取指针指向的值
+		indirectValue := vValue.Elem()
+
+		// 递归处理指针指向的值
+		switch indirectValue.Kind() {
+		case reflect.Struct:
+			t := indirectValue.Type()
+			for i := 0; i < t.NumField(); i++ {
+				fieldStruct := t.Field(i)
+				if err = CheckRegxp(fieldStruct, indirectValue.Field(i), data); err != nil {
+					return
+				}
+			}
+			return
+		default:
+			return CheckRegxp(structField, indirectValue, data)
+		}
+	case reflect.Struct:
+		t := structField.Type
+		for i := 0; i < t.NumField(); i++ {
+			fieldStruct := t.Field(i)
+			if err = CheckRegxp(fieldStruct, vValue.Field(i), data); err != nil {
+				return
+			}
+		}
+		return
+	case reflect.Slice:
+		if !containTag(structField.Tag, tagName) {
+			return
+		}
+		for i := 0; i < vValue.Len(); i++ {
+			elementValue := vValue.Index(i)
+			switch elementValue.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
+			case reflect.Float32, reflect.Float64:
+				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
+			case reflect.String:
+				values = append(values, elementValue.String())
+			default:
+				return
+			}
+		}
+	case reflect.Map:
+		if !containTag(structField.Tag, tagName) {
+			return
+		}
+		keys := vValue.MapKeys()
+		for _, key := range keys {
+			elementValue := vValue.MapIndex(key)
+			switch elementValue.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
+			case reflect.Float32, reflect.Float64:
+				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
+			case reflect.String:
+				values = append(values, elementValue.String())
+			default:
+				return
+			}
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if !containTag(structField.Tag, tagName) {
+			return
+		}
+		values = append(values, fmt.Sprintf("%d", vValue.Int()))
+	case reflect.Float32, reflect.Float64:
+		if !containTag(structField.Tag, tagName) {
+			return
+		}
+		values = append(values, fmt.Sprintf("%f", vValue.Float()))
+	case reflect.String:
+		if !containTag(structField.Tag, tagName) {
+			return
+		}
+		values = append(values, vValue.String())
+	default:
 		return
 	}
 
-	values := commonGet(structField, vValue)
 	if len(values) == 0 {
 		return fmt.Errorf("%s is not match %s", structField.Name, reg)
 	}
