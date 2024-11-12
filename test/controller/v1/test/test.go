@@ -14,7 +14,8 @@ func (t *StructService) Test() string {
 }
 
 type InnerParam struct {
-	TestId string `json:"testId" inList:"testId1" default:"testId1"`
+	TestId  string `json:"testId" inList:"testId1"`
+	TestInt []int  `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
 }
 
 type Param struct {
