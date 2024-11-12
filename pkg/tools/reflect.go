@@ -108,6 +108,9 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 			case reflect.Ptr:
 				fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
 			case reflect.Struct:
+				if vValue.IsZero() {
+					return
+				}
 				for i := 0; i < pValue.NumField(); i++ {
 					field := vValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
@@ -484,7 +487,7 @@ func Between(structField reflect.StructField, vValue reflect.Value, data interfa
 
 	tagName := "between"
 	tagValue := strings.Split(structField.Tag.Get(tagName), ",")
-	if len(tagValue) != 2 {
+	if len(tagValue) == 0 {
 		return
 	}
 
@@ -576,8 +579,12 @@ func Between(structField reflect.StructField, vValue reflect.Value, data interfa
 	}
 
 	for _, value := range values {
-		if value < tagValue[0] || value > tagValue[1] {
+		if len(tagValue) == 2 && tagValue[0] != "" && tagValue[1] != "" && (value < tagValue[0] || value > tagValue[1]) {
 			return fmt.Errorf("%s is not between %s", structField.Name, strings.Join(tagValue, "-"))
+		} else if tagValue[0] != "" && value < tagValue[0] {
+			return fmt.Errorf("%s is must >= %s", structField.Name, tagValue[0])
+		} else if len(tagValue) == 2 && tagValue[1] != "" && value > tagValue[1] {
+			return fmt.Errorf("%s is must <= %s", structField.Name, tagValue[1])
 		}
 	}
 
@@ -673,6 +680,10 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 		case reflect.Ptr:
 			fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
 		case reflect.Struct:
+			if vValue.Elem().IsZero() {
+				return
+			}
+
 			for i := 0; i < pValue.NumField(); i++ {
 				field := vValue.Elem().Field(i)
 				fieldStruct := pValue.Type().Field(i)

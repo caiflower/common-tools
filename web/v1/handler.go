@@ -316,24 +316,20 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
-	if ctx.success == 200 {
-		res := commonResponse{
-			RequestID: golocalv1.GetTraceID(),
-			Code:      &ctx.success,
-			Data:      ctx.response,
-		}
-		bytes, _ := tools.Marshal(res)
-		if _, err := w.Write(bytes); err != nil {
-			h.logger.Error("writeResponse Error: %s", err.Error())
-		}
-	} else {
-
+	res := commonResponse{
+		RequestID: golocalv1.GetTraceID(),
+		Code:      &ctx.success,
+		Data:      ctx.response,
+	}
+	bytes, _ := tools.Marshal(res)
+	if _, err := w.Write(bytes); err != nil {
+		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
 }
 
 func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
-		fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, r, string(debug.Stack()))
+		fmt.Printf("%s [ERROR] - Got a runtime error %s, %s. %v\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, err, r, string(debug.Stack()))
 		h.writeError(w, r, ctx, e)
 	}
 }
