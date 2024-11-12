@@ -402,90 +402,11 @@ func CheckRegxp(structField reflect.StructField, vValue reflect.Value, data inte
 
 	tagName := "reg"
 	reg := structField.Tag.Get(tagName)
-
-	var values []string
-	switch vValue.Kind() {
-	case reflect.Ptr:
-		// 获取指针指向的值
-		indirectValue := vValue.Elem()
-
-		// 递归处理指针指向的值
-		switch indirectValue.Kind() {
-		case reflect.Struct:
-			t := indirectValue.Type()
-			for i := 0; i < t.NumField(); i++ {
-				fieldStruct := t.Field(i)
-				if err = CheckRegxp(fieldStruct, indirectValue.Field(i), data); err != nil {
-					return
-				}
-			}
-			return
-		default:
-			return CheckRegxp(structField, indirectValue, data)
-		}
-	case reflect.Struct:
-		t := structField.Type
-		for i := 0; i < t.NumField(); i++ {
-			fieldStruct := t.Field(i)
-			if err = CheckRegxp(fieldStruct, vValue.Field(i), data); err != nil {
-				return
-			}
-		}
-		return
-	case reflect.Slice:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		for i := 0; i < vValue.Len(); i++ {
-			elementValue := vValue.Index(i)
-			switch elementValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
-			case reflect.Float32, reflect.Float64:
-				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
-			case reflect.String:
-				values = append(values, elementValue.String())
-			default:
-				return
-			}
-		}
-	case reflect.Map:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		keys := vValue.MapKeys()
-		for _, key := range keys {
-			elementValue := vValue.MapIndex(key)
-			switch elementValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
-			case reflect.Float32, reflect.Float64:
-				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
-			case reflect.String:
-				values = append(values, elementValue.String())
-			default:
-				return
-			}
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, fmt.Sprintf("%d", vValue.Int()))
-	case reflect.Float32, reflect.Float64:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, fmt.Sprintf("%f", vValue.Float()))
-	case reflect.String:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, vValue.String())
-	default:
+	if reg == "" {
 		return
 	}
 
+	values := commonGet(structField, vValue)
 	if len(values) == 0 {
 		return fmt.Errorf("%s is not match %s", structField.Name, reg)
 	}
@@ -587,12 +508,7 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 		if vValue.String() == "" {
 			vValue.SetString(value)
 		}
-	case reflect.Float32:
-		if vValue.Float() == 0 {
-			v, _ := strconv.ParseFloat(value, 32)
-			vValue.SetFloat(v)
-		}
-	case reflect.Float64:
+	case reflect.Float32, reflect.Float64:
 		if vValue.Float() == 0 {
 			v, _ := strconv.ParseFloat(value, 64)
 			vValue.SetFloat(v)
@@ -618,14 +534,6 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 			}
 		}
 		vValue.Set(slice)
-	case reflect.Struct:
-		t := structField.Type
-		for i := 0; i < t.NumField(); i++ {
-			fieldStruct := t.Field(i)
-			if err = commonSet(fieldStruct, vValue.Field(i), values); err != nil {
-				return
-			}
-		}
 	case reflect.Bool:
 		v, _ := strconv.ParseBool(value)
 		vValue.Set(reflect.ValueOf(&v))
@@ -657,21 +565,8 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 				v, _ := strconv.ParseBool(value)
 				vValue.Set(reflect.ValueOf(&v))
 			}
-		case reflect.Ptr:
-			fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
-		case reflect.Struct:
-			if vValue.Elem().IsZero() {
-				return
-			}
-
-			for i := 0; i < pValue.NumField(); i++ {
-				field := vValue.Elem().Field(i)
-				fieldStruct := pValue.Type().Field(i)
-				if err = commonSet(fieldStruct, field, values); err != nil {
-					return
-				}
-			}
 		default:
+
 		}
 	default:
 
