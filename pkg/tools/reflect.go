@@ -480,103 +480,18 @@ func CheckRegxp(structField reflect.StructField, vValue reflect.Value, data inte
 	return
 }
 
-func Between(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func CheckBetween(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	if structField.Tag.Get("verf") == "nilable" && vValue.IsZero() {
 		return
 	}
 
 	tagName := "between"
-	tagValue := strings.Split(structField.Tag.Get(tagName), ",")
-	if len(tagValue) == 0 {
+	tagValueStr := structField.Tag.Get(tagName)
+	if len(tagValueStr) == 0 {
 		return
 	}
-
-	var values []string
-	switch vValue.Kind() {
-	case reflect.Ptr:
-		// 获取指针指向的值
-		indirectValue := vValue.Elem()
-
-		// 递归处理指针指向的值
-		switch indirectValue.Kind() {
-		case reflect.Struct:
-			t := indirectValue.Type()
-			for i := 0; i < t.NumField(); i++ {
-				fieldStruct := t.Field(i)
-				if err = Between(fieldStruct, indirectValue.Field(i), data); err != nil {
-					return
-				}
-			}
-			return
-		default:
-			return Between(structField, indirectValue, data)
-		}
-	case reflect.Struct:
-		t := structField.Type
-		for i := 0; i < t.NumField(); i++ {
-			fieldStruct := t.Field(i)
-			if err = Between(fieldStruct, vValue.Field(i), data); err != nil {
-				return
-			}
-		}
-		return
-	case reflect.Slice:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		for i := 0; i < vValue.Len(); i++ {
-			elementValue := vValue.Index(i)
-			switch elementValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
-			case reflect.Float32, reflect.Float64:
-				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
-			case reflect.String:
-				values = append(values, elementValue.String())
-			default:
-				return
-			}
-		}
-	case reflect.Map:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		keys := vValue.MapKeys()
-		for _, key := range keys {
-			elementValue := vValue.MapIndex(key)
-			switch elementValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
-			case reflect.Float32, reflect.Float64:
-				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
-			case reflect.String:
-				values = append(values, elementValue.String())
-			default:
-				return
-			}
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, fmt.Sprintf("%d", vValue.Int()))
-	case reflect.Float32, reflect.Float64:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, fmt.Sprintf("%f", vValue.Float()))
-	case reflect.String:
-		if !containTag(structField.Tag, tagName) {
-			return
-		}
-		values = append(values, vValue.String())
-	default:
-		return
-	}
-
-	if len(values) == 0 {
-		return fmt.Errorf("%s is not between %s", structField.Name, strings.Join(tagValue, "-"))
-	}
+	tagValue := strings.Split(tagValueStr, ",")
+	values := commonGet(structField, vValue)
 
 	for _, value := range values {
 		if len(tagValue) == 2 && tagValue[0] != "" && tagValue[1] != "" && (value < tagValue[0] || value > tagValue[1]) {
@@ -585,6 +500,52 @@ func Between(structField reflect.StructField, vValue reflect.Value, data interfa
 			return fmt.Errorf("%s is must >= %s", structField.Name, tagValue[0])
 		} else if len(tagValue) == 2 && tagValue[1] != "" && value > tagValue[1] {
 			return fmt.Errorf("%s is must <= %s", structField.Name, tagValue[1])
+		}
+	}
+
+	return
+}
+
+func CheckLen(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+	if structField.Tag.Get("verf") == "nilable" && vValue.IsZero() {
+		return
+	}
+
+	tagName := "len"
+	tagValueStr := structField.Tag.Get(tagName)
+	if len(tagValueStr) == 0 {
+		return
+	}
+	tagValues := strings.Split(tagValueStr, ",")
+
+	var min, max int
+	var minErr, maxErr error
+	if tagValues[0] != "" {
+		min, minErr = strconv.Atoi(tagValues[0])
+		if minErr != nil {
+			return
+		}
+	} else {
+		minErr = fmt.Errorf("no min")
+	}
+
+	if len(tagValues) >= 2 && tagValues[1] != "" {
+		max, maxErr = strconv.Atoi(tagValues[1])
+		if maxErr != nil {
+			return
+		}
+	} else {
+		maxErr = fmt.Errorf("no max")
+	}
+
+	values := commonGet(structField, vValue)
+	for _, value := range values {
+		if minErr == nil && maxErr == nil && (len(value) < min || len(value) > max) {
+			return fmt.Errorf("%s len is not between %d-%d", structField.Name, min, max)
+		} else if minErr == nil && len(value) < min {
+			return fmt.Errorf("%s len must >= %d", structField.Name, min)
+		} else if maxErr == nil && len(value) > max {
+			return fmt.Errorf("%s len must <= %d", structField.Name, max)
 		}
 	}
 
@@ -696,6 +657,71 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 	default:
 
 	}
+	return
+}
+
+func commonGet(structField reflect.StructField, vValue reflect.Value) (values []string) {
+	switch vValue.Kind() {
+	case reflect.Ptr:
+		// 获取指针指向的值
+		indirectValue := vValue.Elem()
+
+		// 递归处理指针指向的值
+		switch indirectValue.Kind() {
+		case reflect.Struct:
+			t := indirectValue.Type()
+			for i := 0; i < t.NumField(); i++ {
+				fieldStruct := t.Field(i)
+				values = append(values, commonGet(fieldStruct, indirectValue.Field(i))...)
+			}
+		default:
+			values = append(values, commonGet(structField, indirectValue)...)
+		}
+	case reflect.Struct:
+		t := structField.Type
+		for i := 0; i < t.NumField(); i++ {
+			fieldStruct := t.Field(i)
+			values = append(values, commonGet(fieldStruct, vValue.Field(i))...)
+		}
+	case reflect.Slice:
+		for i := 0; i < vValue.Len(); i++ {
+			elementValue := vValue.Index(i)
+			switch elementValue.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
+			case reflect.Float32, reflect.Float64:
+				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
+			case reflect.String:
+				values = append(values, elementValue.String())
+			default:
+
+			}
+		}
+	case reflect.Map:
+		keys := vValue.MapKeys()
+		for _, key := range keys {
+			elementValue := vValue.MapIndex(key)
+			switch elementValue.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				values = append(values, fmt.Sprintf("%d", elementValue.Int()))
+			case reflect.Float32, reflect.Float64:
+				values = append(values, fmt.Sprintf("%f", elementValue.Float()))
+			case reflect.String:
+				values = append(values, elementValue.String())
+			default:
+
+			}
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		values = append(values, fmt.Sprintf("%d", vValue.Int()))
+	case reflect.Float32, reflect.Float64:
+		values = append(values, fmt.Sprintf("%f", vValue.Float()))
+	case reflect.String:
+		values = append(values, vValue.String())
+	default:
+
+	}
+
 	return
 }
 

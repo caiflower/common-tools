@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -87,6 +88,14 @@ func (s *HttpServer) Register(controller *RestfulController) {
 	if controller.targetMethod == nil {
 		panic(fmt.Sprintf("Register restfulApi failed. Not found controller[%s] action[%s]. ", controller.controllerName, controller.action))
 	}
+}
+
+func AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
+	defaultHttpServer.AddParamValidFunc(fn)
+}
+
+func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
+	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
 }
 
 func (s *HttpServer) AddInterceptor() {

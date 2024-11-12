@@ -21,9 +21,9 @@ type Param struct {
 	TestId     string
 	Args       string   `json:"args" param:"args" default:"testDefault"`
 	Name       string   `json:"name"`
-	Name1      *string  `verf:"nilable" inList:"name,name1"`
+	Name1      *string  `verf:"nilable" len:",5"`
 	MyName     []string `json:"myName" inList:"myName,myName1" reg:"[0-9a-zA-Z]+"`
-	TestInt    []int    `json:"testInt" inList:"0,1,2,3,4,5" reg:"[0-4]+" between:",2"`
+	TestInt    []int    `json:"testInt" inList:"0,1,2,3,4,5" reg:"[0-4]+" between:"1,3"`
 	InnerParam *InnerParam
 }
 

@@ -28,11 +28,12 @@ func initHandler(config *Config, logger logger.ILog) {
 }
 
 type handler struct {
-	config             *Config
-	controllers        map[string]*controller
-	restfulControllers []*RestfulController
-	restfulPaths       map[string]struct{}
-	logger             logger.ILog
+	config              *Config
+	controllers         map[string]*controller
+	restfulControllers  []*RestfulController
+	restfulPaths        map[string]struct{}
+	logger              logger.ILog
+	paramsValidFuncList []func(reflect.StructField, reflect.Value, interface{}) error
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +257,9 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 		return nil
 	}
 
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp, tools.Between}); err != nil {
+	funcList := []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp, tools.CheckBetween, tools.CheckLen}
+	funcList = append(funcList, h.paramsValidFuncList...)
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, funcList); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
 	}
 
@@ -283,10 +286,6 @@ func (h *handler) doTargetMethod(ctx *RequestCtx) e.ApiError {
 	return nil
 }
 
-func (h *handler) doRestful(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) bool {
-	return false
-}
-
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	code := e.GetCode()
@@ -295,8 +294,6 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 		Code:      &code,
 		Error:     e,
 	}
-
-	bytes, _ := tools.Marshal(res)
 
 	if ctx.restful && res.Code != nil {
 		// 如果是restful风格设置http响应码等于code
@@ -307,6 +304,7 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 			//w.WriteHeader(http.StatusInternalServerError)
 		}
 	}
+	bytes, _ := tools.Marshal(res)
 
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
@@ -320,6 +318,10 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 		RequestID: golocalv1.GetTraceID(),
 		Code:      &ctx.success,
 		Data:      ctx.response,
+	}
+
+	if ctx.restful {
+		res.Code = nil
 	}
 	bytes, _ := tools.Marshal(res)
 	if _, err := w.Write(bytes); err != nil {
