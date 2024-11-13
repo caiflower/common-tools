@@ -34,6 +34,7 @@ type handler struct {
 	restfulPaths        map[string]struct{}
 	logger              logger.ILog
 	paramsValidFuncList []func(reflect.StructField, reflect.Value, interface{}) error
+	interceptors        InterceptorSort
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +109,20 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 执行拦截器
+	for _, v := range h.interceptors {
+		v.interceptor.BeforeCallTargetMethod(w, r, ctx)
+	}
+
 	// 执行目标方法
-	if err := h.doTargetMethod(ctx); err != nil {
+	err := h.doTargetMethod(w, r, ctx)
+
+	// 执行拦截器
+	for _, v := range h.interceptors {
+		v.interceptor.AfterCallTargetMethod(w, r, ctx)
+	}
+
+	if err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
@@ -266,7 +279,10 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 	return nil
 }
 
-func (h *handler) doTargetMethod(ctx *RequestCtx) e.ApiError {
+func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) (err e.ApiError) {
+	err = e.NewApiError(e.Internal, "InternalError", nil)
+	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx)
+
 	if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
 		ctx.args[0] = ctx.args[0].Elem()
 	}
@@ -333,5 +349,11 @@ func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ct
 	if err := recover(); err != nil {
 		fmt.Printf("%s [ERROR] - Got a runtime error %s, %s. %v\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, err, r, string(debug.Stack()))
 		h.writeError(w, r, ctx, e)
+	}
+}
+
+func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
+	if err := recover(); err != nil {
+		fmt.Printf("%s [ERROR] - Got a runtime error %s, %s. %v\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, err, r, string(debug.Stack()))
 	}
 }

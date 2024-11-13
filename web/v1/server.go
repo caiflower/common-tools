@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -98,8 +99,15 @@ func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Valu
 	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
 }
 
-func (s *HttpServer) AddInterceptor() {
-	return
+func AddInterceptor(interceptor Interceptor, order int) {
+	defaultHttpServer.AddInterceptor(interceptor, order)
+}
+
+func (s *HttpServer) AddInterceptor(interceptor Interceptor, order int) {
+	s.handler.interceptors = append(s.handler.interceptors, InterceptorItem{
+		interceptor: interceptor,
+		order:       order,
+	})
 }
 
 func (s *HttpServer) StartUp() {
@@ -109,6 +117,8 @@ func (s *HttpServer) StartUp() {
 		WriteTimeout: time.Duration(s.config.WriteTimeout) * time.Second,
 		Handler:      commonHandler,
 	}
+
+	sort.Sort(s.handler.interceptors)
 
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
