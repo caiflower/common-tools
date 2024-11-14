@@ -104,6 +104,10 @@ func AddInterceptor(interceptor interceptor.Interceptor, order int) {
 	defaultHttpServer.AddInterceptor(interceptor, order)
 }
 
+func (s *HttpServer) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
+	s.handler.beforeDispatchCallbackFunc = callbackFunc
+}
+
 func (s *HttpServer) AddInterceptor(i interceptor.Interceptor, order int) {
 	s.handler.interceptors = append(s.handler.interceptors, interceptor.Item{
 		Interceptor: i,

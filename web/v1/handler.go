@@ -16,6 +16,9 @@ import (
 	"github.com/caiflower/common-tools/web/interceptor"
 )
 
+// BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
+type BeforeDispatchCallbackFunc func(w http.ResponseWriter, r *http.Request) bool
+
 var commonHandler *handler
 
 func initHandler(config *Config, logger logger.ILog) {
@@ -28,13 +31,15 @@ func initHandler(config *Config, logger logger.ILog) {
 }
 
 type handler struct {
-	config              *Config
-	controllers         map[string]*controller
-	restfulControllers  []*RestfulController
-	restfulPaths        map[string]struct{}
-	logger              logger.ILog
-	paramsValidFuncList []func(reflect.StructField, reflect.Value, interface{}) error
-	interceptors        interceptor.ItemSort
+	config             *Config
+	controllers        map[string]*controller
+	restfulControllers []*RestfulController
+	restfulPaths       map[string]struct{}
+	logger             logger.ILog
+
+	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
+	paramsValidFuncList        []func(reflect.StructField, reflect.Value, interface{}) error
+	interceptors               interceptor.ItemSort
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +52,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	golocalv1.PutTraceID(traceID)
 	defer golocalv1.Clean()
+
+	if h.beforeDispatchCallbackFunc != nil {
+		if h.beforeDispatchCallbackFunc(w, r) {
+			return
+		}
+	}
 
 	// 执行具体的业务
 	h.dispatch(w, r)
