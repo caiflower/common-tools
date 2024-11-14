@@ -60,7 +60,7 @@ const (
 type Config struct {
 	Mode    string `yaml:"mode" default:"cluster"`
 	Timeout int    `yaml:"timeout" default:"10"`
-	Enable  string `yaml:"enable" default:"true"`
+	Enable  string `yaml:"enable" default:"false"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string

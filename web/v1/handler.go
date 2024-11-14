@@ -7,13 +7,13 @@ import (
 	"reflect"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/e"
+	"github.com/caiflower/common-tools/web/interceptor"
 )
 
 var commonHandler *handler
@@ -34,7 +34,7 @@ type handler struct {
 	restfulPaths        map[string]struct{}
 	logger              logger.ILog
 	paramsValidFuncList []func(reflect.StructField, reflect.Value, interface{}) error
-	interceptors        InterceptorSort
+	interceptors        interceptor.ItemSort
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +66,29 @@ type RequestCtx struct {
 	success      int
 }
 
-func (c *RequestCtx) setResponse(v interface{}) {
+func (c *RequestCtx) convert2InterceptorCtx() *interceptor.Context {
+	return &interceptor.Context{Ctx: c, Attributes: make(map[string]interface{})}
+}
+
+func (c *RequestCtx) SetResponse(v interface{}) {
 	c.response = v
 	c.success = 200
+}
+
+func (c *RequestCtx) IsFinish() bool {
+	return c.success == 200
+}
+
+func (c *RequestCtx) GetPath() string {
+	return c.path
+}
+
+func (c *RequestCtx) GetPathParam() map[string]string {
+	return c.paths
+}
+
+func (c *RequestCtx) GetParams() map[string][]string {
+	return c.params
 }
 
 type commonResponse struct {
@@ -109,20 +129,16 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 执行拦截器
-	for _, v := range h.interceptors {
-		v.interceptor.BeforeCallTargetMethod(w, r, ctx)
-	}
+	interceptorCtx := ctx.convert2InterceptorCtx()
+	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx, interceptorCtx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// 执行目标方法
-	err := h.doTargetMethod(w, r, ctx)
-
-	// 执行拦截器
-	for _, v := range h.interceptors {
-		v.interceptor.AfterCallTargetMethod(w, r, ctx)
+	doTargetMethod := func() e.ApiError {
+		return h.doTargetMethod(w, r, ctx)
 	}
 
-	if err != nil {
+	// aop切入
+	if err := h.interceptors.DoInterceptor(interceptorCtx, doTargetMethod); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
@@ -280,9 +296,6 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 }
 
 func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) (err e.ApiError) {
-	err = e.NewApiError(e.Internal, "InternalError", nil)
-	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx)
-
 	if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
 		ctx.args[0] = ctx.args[0].Elem()
 	}
@@ -293,12 +306,13 @@ func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 		if ret.AssignableTo(reflect.TypeOf(new(e.ApiError)).Elem()) {
 			return results[i].Interface().(e.ApiError)
 		} else if ret.AssignableTo(reflect.TypeOf(new(error)).Elem()) {
-			err := results[i].Interface().(error)
-			return e.NewApiError(e.Unknown, err.Error(), err)
+			_err := results[i].Interface().(error)
+			return e.NewApiError(e.Unknown, _err.Error(), _err)
 		} else {
-			ctx.setResponse(results[i].Interface())
+			ctx.SetResponse(results[i].Interface())
 		}
 	}
+
 	return nil
 }
 
@@ -338,7 +352,12 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 
 	if ctx.restful {
 		res.Code = nil
+	} else {
+		if *res.Code == 200 {
+			*res.Code = 0
+		}
 	}
+
 	bytes, _ := tools.Marshal(res)
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
@@ -347,13 +366,24 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 
 func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
-		fmt.Printf("%s [ERROR] - Got a runtime error %s, %s. %v\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, err, r, string(debug.Stack()))
+		fmt.Printf("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
 		h.writeError(w, r, ctx, e)
 	}
 }
 
-func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
+func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *interceptor.Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
-		fmt.Printf("%s [ERROR] - Got a runtime error %s, %s. %v\n%s", time.Now().Format("2006-01-02 15:04:05"), txt, err, r, string(debug.Stack()))
+		h.logger.Error("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
+
+		// onPanic
+		for _, v := range h.interceptors {
+			apiError := v.Interceptor.OnPanic(interceptorCtx)
+			if apiError != nil {
+				defaultErr = apiError
+				break
+			}
+		}
+
+		h.writeError(w, r, ctx, defaultErr)
 	}
 }

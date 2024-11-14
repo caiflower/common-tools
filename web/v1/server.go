@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/caiflower/common-tools/web/interceptor"
 )
 
 // 基于云生http.server实现的http服务器
@@ -99,14 +100,14 @@ func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Valu
 	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
 }
 
-func AddInterceptor(interceptor Interceptor, order int) {
+func AddInterceptor(interceptor interceptor.Interceptor, order int) {
 	defaultHttpServer.AddInterceptor(interceptor, order)
 }
 
-func (s *HttpServer) AddInterceptor(interceptor Interceptor, order int) {
-	s.handler.interceptors = append(s.handler.interceptors, InterceptorItem{
-		interceptor: interceptor,
-		order:       order,
+func (s *HttpServer) AddInterceptor(i interceptor.Interceptor, order int) {
+	s.handler.interceptors = append(s.handler.interceptors, interceptor.Item{
+		Interceptor: i,
+		Order:       order,
 	})
 }
 
