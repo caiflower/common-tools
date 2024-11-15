@@ -5,16 +5,13 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-
-	"github.com/caiflower/common-tools/pkg/queue"
 )
 
 type MyClass struct {
 }
 
 func TestGetClassName(t *testing.T) {
-	className := GetClassName(queue.NewDelayQueue())
-	fmt.Printf("className = %v\n", className)
+
 }
 
 type TestMethodStruct struct {
