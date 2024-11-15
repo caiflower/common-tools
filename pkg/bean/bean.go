@@ -41,7 +41,7 @@ func writeBean(name string, bean interface{}) {
 			continue
 		}
 
-		if field.Kind() != reflect.Pointer && field.Kind() != reflect.Interface {
+		if field.Kind() != reflect.Ptr && field.Kind() != reflect.Interface {
 			panic(fmt.Sprintf("Ioc failed. Only can autowrite pointer or interface. Bean=%s DependentBean=%s. ", name, fieldType.Name))
 		}
 
@@ -100,13 +100,13 @@ func needAutoWrite(tag string) bool {
 }
 
 func AddBean(bean interface{}) {
-	if reflect.TypeOf(bean).Kind() != reflect.Interface && reflect.TypeOf(bean).Kind() != reflect.Pointer {
+	if reflect.TypeOf(bean).Kind() != reflect.Interface && reflect.TypeOf(bean).Kind() != reflect.Ptr {
 		panic(fmt.Sprintf("Add bean failed. Bean kind must be interface or ptr. "))
 	}
 
 	var name string
 	kind := reflect.TypeOf(bean).Kind()
-	if kind == reflect.Pointer || kind == reflect.Interface {
+	if kind == reflect.Ptr || kind == reflect.Interface {
 		pkgPath := reflect.TypeOf(bean).Elem().PkgPath()
 		splits := strings.Split(pkgPath, "/")
 		path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
