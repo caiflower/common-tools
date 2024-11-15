@@ -891,21 +891,21 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameSignFollower:
 				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value any) bool {
+				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
 					jobTracker.OnNewLeader(ev.leaderName)
 					return true
 				})
 			case eventNameSignMaster:
 				c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value any) bool {
+				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
 					jobTracker.OnStartedLeading()
 					return true
 				})
 			case eventNameStopMaster:
 				c.logger.Debug("[cluster] %s stop master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value any) bool {
+				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
 					jobTracker.OnStoppedLeading()
 					return true
@@ -916,7 +916,7 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameReleaseMaster:
 				c.logger.Debug("[cluster] %s release master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value any) bool {
+				c.jobTrackers.Range(func(key, value interface{}) bool {
 					tracker := value.(JobTracker)
 					tracker.OnReleaseMaster()
 					return true

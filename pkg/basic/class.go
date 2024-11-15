@@ -68,7 +68,7 @@ func (c *Class) GetPkgName() string {
 func createClass(cls interface{}) *Class {
 	kind := reflect.TypeOf(cls).Kind()
 
-	if kind != reflect.Pointer && kind != reflect.Interface {
+	if kind != reflect.Ptr && kind != reflect.Interface {
 		panic(fmt.Sprintf("CrateClass failed. Class must be pointer or interface. "))
 	}
 
@@ -108,7 +108,7 @@ func (c *Class) addMethod(method *Method) {
 func GetClassName(v interface{}) string {
 	kind := reflect.TypeOf(v).Kind()
 
-	if kind == reflect.Pointer || kind == reflect.Interface {
+	if kind == reflect.Ptr || kind == reflect.Interface {
 		return strings.Replace(reflect.TypeOf(v).String(), "*", "", 1)
 	} else {
 		panic("Class must be interface or ptr. ")

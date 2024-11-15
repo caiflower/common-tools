@@ -16,7 +16,7 @@ type controller struct {
 func newController(v interface{}, rootPath string) (*controller, error) {
 	kind := reflect.TypeOf(v).Kind()
 	switch kind {
-	case reflect.Pointer, reflect.Interface:
+	case reflect.Ptr, reflect.Interface:
 		cls := basic.NewClass(v)
 		path := cls.GetPath()
 		if strings.Contains(path, rootPath) {
