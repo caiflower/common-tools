@@ -3,9 +3,6 @@ package tools
 import (
 	"regexp"
 	"strings"
-
-	"github.com/google/uuid"
-	jsoniter "github.com/json-iterator/go"
 )
 
 // RegReplace 正则表达式替换
@@ -43,38 +40,6 @@ func StringSliceLike(slice []string, str string) bool {
 		}
 	}
 	return false
-}
-
-func Marshal(v interface{}) (bytes []byte, err error) {
-	switch t := v.(type) {
-	case string:
-		bytes = []byte(t)
-		return
-	case []byte:
-		bytes = v.([]byte)
-		return
-	}
-
-	bytes, err = jsoniter.ConfigFastest.Marshal(v)
-
-	return
-}
-
-func Unmarshal(bytes []byte, v interface{}) (err error) {
-	switch v.(type) {
-	case string:
-		v = string(bytes)
-		return
-	case []byte:
-		v = bytes
-		return
-	}
-	return jsoniter.ConfigFastest.Unmarshal(bytes, v)
-}
-
-func UUID() string {
-	u, _ := uuid.NewUUID()
-	return u.String()
 }
 
 func ToCamel(str string) (camel string) {

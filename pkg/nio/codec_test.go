@@ -30,12 +30,12 @@ func (v *test) valid() {
 	var marshal, marshal1 []byte
 	var err error
 
-	marshal, err = tools.Marshal(v.input)
+	marshal, err = tools.ToByte(v.input)
 	if err != nil {
 		panic(err)
 	}
 
-	marshal1, err = tools.Marshal(msg.bytes)
+	marshal1, err = tools.ToByte(msg.bytes)
 	if err != nil {
 		panic(err)
 	}

@@ -43,7 +43,7 @@ func (m *Msg) Flag() uint8 {
 }
 
 func (m *Msg) Unmarshal(v interface{}) error {
-	return tools.Unmarshal(m.bytes, v)
+	return tools.DeByte(m.bytes, v)
 }
 
 type GzipCodec struct {
@@ -63,7 +63,7 @@ func (gc *GzipCodec) Encode(msg *Msg) *bytes.Buffer {
 	if msg.body == nil {
 		msg.length = 1
 	} else {
-		msg.bytes, err = tools.Marshal(msg.body)
+		msg.bytes, err = tools.ToByte(msg.body)
 		if err != nil {
 			gc.logger.Error("encode msg error: %s", err.Error())
 		}
