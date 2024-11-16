@@ -50,10 +50,16 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 	structTag := structField.Tag
 	if containTag(structTag, "default") || vValue.Kind() == reflect.Struct || vValue.Kind() == reflect.Ptr {
 		switch vValue.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if vValue.Int() == 0 {
 				v, _ := strconv.Atoi(structTag.Get("default"))
 				vValue.SetInt(int64(v))
+				flag = true
+			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			if vValue.Uint() == 0 {
+				v, _ := strconv.Atoi(structTag.Get("default"))
+				vValue.SetUint(uint64(v))
 				flag = true
 			}
 		case reflect.String:
@@ -595,10 +601,15 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 	value := values[0]
 
 	switch vValue.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if vValue.Int() == 0 {
 			v, _ := strconv.Atoi(value)
 			vValue.SetInt(int64(v))
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if vValue.Uint() == 0 {
+			v, _ := strconv.Atoi(value)
+			vValue.SetUint(uint64(v))
 		}
 	case reflect.String:
 		if vValue.String() == "" {
@@ -636,22 +647,22 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 	case reflect.Ptr:
 		pValue := reflect.New(structField.Type.Elem()).Elem()
 		switch pValue.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if vValue.IsNil() {
 				v, _ := strconv.Atoi(value)
 				vValue.Set(reflect.ValueOf(&v))
+			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			if vValue.IsNil() {
+				v, _ := strconv.Atoi(value)
+				vValue.SetUint(uint64(v))
 			}
 		case reflect.String:
 			if vValue.IsNil() {
 				v := value
 				vValue.Set(reflect.ValueOf(&v))
 			}
-		case reflect.Float32:
-			if vValue.IsNil() {
-				v, _ := strconv.ParseFloat(value, 32)
-				vValue.Set(reflect.ValueOf(&v))
-			}
-		case reflect.Float64:
+		case reflect.Float32, reflect.Float64:
 			if vValue.IsNil() {
 				v, _ := strconv.ParseFloat(value, 64)
 				vValue.Set(reflect.ValueOf(&v))

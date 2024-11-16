@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -61,4 +63,14 @@ func ToCamel(str string) (camel string) {
 	}
 
 	return
+}
+
+func ToString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	if t := reflect.ValueOf(v); t.Kind() == reflect.Ptr && t.IsNil() {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
