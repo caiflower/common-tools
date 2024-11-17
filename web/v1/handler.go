@@ -352,6 +352,12 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 			bytes = tmpBytes
 			w.Header().Set("Content-Encoding", "gzip")
 		}
+	} else if AcceptBr(r.Header) {
+		tmpBytes, err := tools.Brotil(bytes)
+		if err == nil {
+			bytes = tmpBytes
+			w.Header().Set("Content-Encoding", "br")
+		}
 	}
 
 	if _, err := w.Write(bytes); err != nil {
@@ -382,6 +388,12 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 		if err == nil {
 			bytes = tmpBytes
 			w.Header().Set("Content-Encoding", "gzip")
+		}
+	} else if AcceptBr(r.Header) {
+		tmpBytes, err := tools.Brotil(bytes)
+		if err == nil {
+			bytes = tmpBytes
+			w.Header().Set("Content-Encoding", "br")
 		}
 	}
 
@@ -419,4 +431,11 @@ func AcceptGzip(header http.Header) bool {
 		return false
 	}
 	return strings.Contains(header.Get("Accept-Encoding"), "gzip")
+}
+
+func AcceptBr(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Accept-Encoding"), "br")
 }

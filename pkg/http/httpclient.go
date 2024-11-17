@@ -224,7 +224,7 @@ func (h *httpClient) createHttpRequest(method, url string, contentType string, r
 		httpRequest.Header.Set(k, v)
 	}
 
-	httpRequest.Header.Set("Accept-Encoding", "gzip")
+	httpRequest.Header.Set("Accept-Encoding", "gzip, br")
 
 	if h.disablePool {
 		httpRequest.Close = true
@@ -250,6 +250,12 @@ func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, e
 			h.log.Error("unzip failed. err: %s", err.Error())
 			return nil, UnGzipErr
 		}
+	} else if isBr(remoteResponse.Header) {
+		body, err = tools.UnBrotil(body)
+		if err != nil {
+			h.log.Error("unzip failed. err: %s", err.Error())
+			return nil, UnGzipErr
+		}
 	}
 
 	return body, err
@@ -260,4 +266,11 @@ func isGzip(header http.Header) bool {
 		return false
 	}
 	return strings.Contains(header.Get("Content-Encoding"), "gzip")
+}
+
+func isBr(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Content-Encoding"), "br")
 }
