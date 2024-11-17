@@ -346,6 +346,13 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 		}
 	}
 	bytes, _ := tools.Marshal(res)
+	if AcceptGzip(r.Header) {
+		tmpBytes, err := tools.Gzip(bytes)
+		if err == nil {
+			bytes = tmpBytes
+			w.Header().Set("Content-Encoding", "gzip")
+		}
+	}
 
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
@@ -370,6 +377,14 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 	}
 
 	bytes, _ := tools.Marshal(res)
+	if AcceptGzip(r.Header) {
+		tmpBytes, err := tools.Gzip(bytes)
+		if err == nil {
+			bytes = tmpBytes
+			w.Header().Set("Content-Encoding", "gzip")
+		}
+	}
+
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
@@ -397,4 +412,11 @@ func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *ht
 
 		h.writeError(w, r, ctx, defaultErr)
 	}
+}
+
+func AcceptGzip(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Accept-Encoding"), "gzip")
 }

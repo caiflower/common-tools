@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -20,6 +21,7 @@ var (
 	NewHttpRequestErr = fmt.Errorf("new httpRequest failed")
 	HttpRequestErr    = fmt.Errorf("http request failed")
 	UnmarshalErr      = fmt.Errorf("unmaral response failed")
+	UnGzipErr         = fmt.Errorf("ungzip failed")
 )
 
 const (
@@ -222,6 +224,8 @@ func (h *httpClient) createHttpRequest(method, url string, contentType string, r
 		httpRequest.Header.Set(k, v)
 	}
 
+	httpRequest.Header.Set("Accept-Encoding", "gzip")
+
 	if h.disablePool {
 		httpRequest.Close = true
 	}
@@ -240,5 +244,20 @@ func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, e
 		return nil, UnmarshalErr
 	}
 
+	if isGzip(remoteResponse.Header) {
+		body, err = tools.Gunzip(body)
+		if err != nil {
+			h.log.Error("unzip failed. err: %s", err.Error())
+			return nil, UnGzipErr
+		}
+	}
+
 	return body, err
+}
+
+func isGzip(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Content-Encoding"), "gzip")
 }

@@ -131,3 +131,52 @@ func TestHttpClient(t *testing.T) {
 	}
 	fmt.Printf("%v\n", res)
 }
+
+type InnerParam struct {
+	TestId  string `json:"testId" inList:"testId1"`
+	TestInt []int  `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
+}
+
+type Param struct {
+	TestId     string
+	Args       string   `json:"args" param:"args" default:"testDefault"`
+	Name       string   `json:"name"`
+	Name1      *string  `verf:"nilable" len:",5"`
+	MyName     []string `json:"myName" inList:"myName,myName1" reg:"[0-9a-zA-Z]+"`
+	TestInt    []int    `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
+	InnerParam *InnerParam
+}
+
+type CommonResponse struct {
+	RequestID string `json:"requestId"`
+	Code      *int   `json:"code,omitempty"`
+	Data      Param  `json:"data,omitempty"`
+}
+
+func TestHttpClient_GetJson(t *testing.T) {
+	config := Config{}
+	enable := true
+	config.Verbose = &enable
+	client := NewHttpClient(config)
+
+	s := "name1"
+	var request = Param{
+		TestId:  "mysql",
+		Args:    "1",
+		Name:    "2",
+		Name1:   &s,
+		MyName:  []string{"myName"},
+		TestInt: []int{1, 2},
+	}
+
+	var res CommonResponse
+	response := Response{
+		Data: &res,
+	}
+	err := client.PostJson("test", "http://127.0.0.1:8080/v1/test/struct?Action=Test1", request, &response, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%v\n", res)
+}
