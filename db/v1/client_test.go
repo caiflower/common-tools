@@ -2,7 +2,6 @@ package v1
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 	"time"
 
@@ -36,18 +35,9 @@ func TestNewDBClient(t *testing.T) {
 		Level: logger.DebugLevel,
 	}
 
-	err := tools.DoTagFunc(&l, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
-	if err != nil {
-		panic(err)
-	}
 	logger.InitLogger(&l)
 
-	err = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
-	if err != nil {
-		panic(err)
-	}
-
-	client, err := NewDBClient(&config)
+	client, err := NewDBClient(config)
 	if err != nil {
 		panic(err)
 	}

@@ -7,13 +7,15 @@ import (
 	"github.com/caiflower/common-tools/pkg/http"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	webv1 "github.com/caiflower/common-tools/web/v1"
 )
 
 type DefaultConfig struct {
 	LoggerConfig     logger.Config  `yaml:"logger"`
 	ClusterConfig    cluster.Config `yaml:"cluster"`
-	DatabaseConfig   dbv1.Config    `yaml:"database"`
+	DatabaseConfig   []dbv1.Config  `yaml:"database"`
 	HttpClientConfig http.Config    `yaml:"http_client"`
+	WebConfig        []webv1.Config `yaml:"web"`
 }
 
 func LoadDefaultConfig(v *DefaultConfig) (err error) {

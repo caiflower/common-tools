@@ -13,14 +13,14 @@ type controller struct {
 	cls   *basic.Class
 }
 
-func newController(v interface{}, rootPath string) (*controller, error) {
+func newController(v interface{}, controllerRootPkgName, rootPath string) (*controller, error) {
 	kind := reflect.TypeOf(v).Kind()
 	switch kind {
 	case reflect.Ptr, reflect.Interface:
 		cls := basic.NewClass(v)
 		path := cls.GetPath()
-		if strings.Contains(path, rootPath) {
-			path = strings.Split(path, rootPath)[1][1:]
+		if strings.Contains(path, controllerRootPkgName) {
+			path = strings.Split(path, controllerRootPkgName)[1][1:]
 		} else {
 			splits := strings.Split(path, "/")
 			path = splits[len(splits)-1]
@@ -41,6 +41,15 @@ func newController(v interface{}, rootPath string) (*controller, error) {
 
 		if strings.HasSuffix(lowerClsName, "controller") {
 			paths = append(paths, "/"+path+"/"+strings.Replace(lowerClsName, "controller", "", 1))
+		}
+
+		if rootPath != "" {
+			for i, _ := range paths {
+				if i == 0 {
+					continue
+				}
+				paths[i] = "/" + rootPath + paths[i]
+			}
 		}
 
 		return &controller{paths: paths, cls: cls}, nil

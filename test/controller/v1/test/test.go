@@ -13,19 +13,27 @@ func (t *StructService) Test() string {
 	return "testResponse"
 }
 
+type InnerHeader struct {
+	RequestID string `header:"X-Request-Id"`
+	UserID    string `header:"X-User-Id" verf:""`
+}
+
 type InnerParam struct {
 	TestId  string `json:"testId" inList:"testId1"`
 	TestInt []int  `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
 }
 
 type Param struct {
-	TestId     string
-	Args       string   `json:"args" param:"args" default:"testDefault"`
-	Name       string   `json:"name"`
-	Name1      *string  `verf:"nilable" len:",5"`
-	MyName     []string `json:"myName" inList:"myName,myName1" reg:"[0-9a-zA-Z]+"`
-	TestInt    []int    `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
-	InnerParam *InnerParam
+	RequestID         string `header:"X-Request-Id"`
+	InnerStructHeader InnerHeader
+	InnerPrtHeader    *InnerHeader
+	TestId            string
+	Args              string   `json:"args" param:"args" default:"testDefault"`
+	Name              string   `json:"name"`
+	Name1             *string  `verf:"nilable" len:",5"`
+	MyName            []string `json:"myName" inList:"myName,myName1" reg:"[0-9a-zA-Z]+"`
+	TestInt           []int    `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
+	InnerParam        *InnerParam
 }
 
 type Param2 struct {

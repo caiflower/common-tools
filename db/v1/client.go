@@ -43,16 +43,16 @@ type Client struct {
 	config *Config
 }
 
-func NewDBClient(config *Config) (c *Client, err error) {
-	if config == nil {
-		return nil, fmt.Errorf("db Config is nil")
+func NewDBClient(config Config) (c *Client, err error) {
+	if err = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
+		return nil, err
 	}
 
 	logger.Info(" *** db Config *** %s", tools.ToJson(config))
 
 	switch config.Dialect {
 	case "mysql":
-		c, err = createMysqlClient(config)
+		c, err = createMysqlClient(&config)
 		if err != nil {
 			return nil, err
 		}

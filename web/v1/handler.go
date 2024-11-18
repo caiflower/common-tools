@@ -49,6 +49,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if traceID == "" {
 		traceID = tools.UUID()
+		if h.config.HeaderTraceID != "" {
+			r.Header.Set(h.config.HeaderTraceID, traceID)
+		}
 	}
 	golocalv1.PutTraceID(traceID)
 	defer golocalv1.Clean()
@@ -263,7 +266,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 		}
 
 		if ctx.params != nil && len(ctx.params) > 0 {
-			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
+			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{setParam}); err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 			}
 		}
@@ -299,7 +302,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			}
 		case http.MethodGet:
 			if ctx.params != nil && len(ctx.params) > 0 {
-				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
+				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{setParam}); err != nil {
 					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 				}
 			}
@@ -307,10 +310,15 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 
 		// 设置paths
 		if ctx.paths != nil && len(ctx.paths) > 0 {
-			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetPath}); err != nil {
+			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{setPath}); err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
 			}
 		}
+	}
+
+	// 设置header
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), r.Header, []func(reflect.StructField, reflect.Value, interface{}) error{setHeader}); err != nil {
+		return e.NewApiError(e.Internal, fmt.Sprintf("set header failed. detail: %s", err.Error()), err)
 	}
 
 	// 设置默认值

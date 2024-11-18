@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,7 +94,9 @@ type Cluster struct {
 	jobTrackers    *sync.Map
 }
 
-func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
+func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
+	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+
 	if config.Timeout <= 0 {
 		config.Timeout = 10
 	}
@@ -111,7 +114,7 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	}
 
 	cluster := &Cluster{
-		config:       config,
+		config:       &config,
 		allNode:      &sync.Map{},
 		aliveNodes:   &sync.Map{},
 		term:         0,
@@ -147,7 +150,7 @@ func NewClusterWithArgs(config *Config, logger logger.ILog) (*Cluster, error) {
 	return cluster, nil
 }
 
-func NewCluster(config *Config) (*Cluster, error) {
+func NewCluster(config Config) (*Cluster, error) {
 	return NewClusterWithArgs(config, logger.DefaultLogger())
 }
 

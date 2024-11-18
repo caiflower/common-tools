@@ -36,7 +36,7 @@ type DefaultJobTracker struct {
 	callers      []Caller
 }
 
-func NewDefaultJobTracker(interval int, config *Config, caller ...Caller) (*DefaultJobTracker, error) {
+func NewDefaultJobTracker(interval int, config Config, caller ...Caller) (*DefaultJobTracker, error) {
 	cluster, err := NewCluster(config)
 	if err != nil {
 		return nil, err

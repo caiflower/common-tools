@@ -36,9 +36,9 @@ func (t *TestJobTracker) OnNewLeader(leaderName string) {
 func TestClusterJobTracker(t *testing.T) {
 	var cluster1, cluster2, cluster3 *Cluster
 
-	c1 := &Config{Enable: "true"}
-	c2 := &Config{Enable: "true"}
-	c3 := &Config{Enable: "true"}
+	c1 := Config{Enable: "true"}
+	c2 := Config{Enable: "true"}
+	c3 := Config{Enable: "true"}
 
 	c1.Nodes = append(c1.Nodes,
 		&struct {
@@ -222,9 +222,9 @@ func (t *TestCaller) SlaverCall(leaderName string) {
 }
 
 func TestDefaultJobTracker(t *testing.T) {
-	c1 := &Config{Enable: "true"}
-	c2 := &Config{Enable: "true"}
-	c3 := &Config{Enable: "true"}
+	c1 := Config{Enable: "true"}
+	c2 := Config{Enable: "true"}
+	c3 := Config{Enable: "true"}
 
 	c1.Nodes = append(c1.Nodes,
 		&struct {

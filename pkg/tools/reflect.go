@@ -155,112 +155,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 	return
 }
 
-func SetParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
-	if !vValue.CanSet() {
-		return
-	}
-
-	var params []string
-	m := data.(map[string][]string)
-	structTag := structField.Tag
-	if containTag(structTag, "param") {
-		params = m[structTag.Get("param")]
-	} else {
-		name := structField.Name
-		// 首字母变小
-		lName := strings.ToLower(name[:1]) + name[1:]
-		for k, v := range m {
-			if ToCamel(k) == lName || name == k {
-				params = v
-				break
-			}
-		}
-	}
-
-	if len(params) > 0 {
-		switch vValue.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			v, _ := strconv.Atoi(params[0])
-			vValue.SetInt(int64(v))
-		case reflect.Float32, reflect.Float64:
-			v, _ := strconv.ParseFloat(params[0], 64)
-			vValue.SetFloat(v)
-		case reflect.String:
-			vValue.SetString(params[0])
-		case reflect.Slice:
-			elemType := vValue.Type().Elem()
-			slice := reflect.MakeSlice(reflect.SliceOf(elemType), len(params), len(params))
-			for i, param := range params {
-				switch elemType.Kind() {
-				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					v, _ := strconv.ParseInt(param, 10, 64)
-					slice.Index(i).SetInt(v)
-				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-					v, _ := strconv.ParseUint(param, 10, 64)
-					slice.Index(i).SetUint(v)
-				case reflect.Float32, reflect.Float64:
-					v, _ := strconv.ParseFloat(param, 64)
-					slice.Index(i).SetFloat(v)
-				case reflect.String:
-					slice.Index(i).SetString(param)
-				default:
-					if structTag.Get("param") != "" {
-						return fmt.Errorf("unsupported tag param:'%s'", structField.Name)
-					}
-				}
-			}
-			vValue.Set(slice)
-		case reflect.Ptr:
-			pValue := reflect.New(structField.Type.Elem()).Elem()
-			switch pValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				v, _ := strconv.Atoi(params[0])
-				vValue.Set(reflect.ValueOf(&v))
-			case reflect.String:
-				vValue.Set(reflect.ValueOf(&params[0]))
-			case reflect.Float32, reflect.Float64:
-				v, _ := strconv.ParseFloat(params[0], 64)
-				vValue.Set(reflect.ValueOf(&v))
-			case reflect.Bool:
-				v, _ := strconv.ParseBool(params[0])
-				vValue.Set(reflect.ValueOf(&v))
-			default:
-			}
-		default:
-			if structTag.Get("param") != "" {
-				return fmt.Errorf("unsupported tag param:'%s'", structField.Name)
-			}
-		}
-	}
-
-	return
-}
-
-func SetPath(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
-	m := data.(map[string]string)
-
-	var value string
-	name := structField.Name
-	// 首字母变小
-	lName := strings.ToLower(name[:1]) + name[1:]
-	for k, v := range m {
-		if ToCamel(k) == lName || name == k {
-			value = v
-			break
-		}
-	}
-
-	if value != "" {
-		err = commonSet(structField, vValue, []string{value})
-	}
-	return
-}
-
 func CheckNil(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
-	if !containTag(structField.Tag, "verf") {
-		return
-	}
-
 	verf := structField.Tag.Get("verf")
 
 	switch vValue.Kind() {
@@ -268,17 +163,20 @@ func CheckNil(structField reflect.StructField, vValue reflect.Value, data interf
 		pValue := reflect.New(structField.Type.Elem()).Elem()
 		switch pValue.Kind() {
 		case reflect.Struct:
+			newValue := vValue
+			if vValue.IsZero() {
+				newValue = reflect.New(structField.Type.Elem())
+			}
+
 			for i := 0; i < pValue.NumField(); i++ {
-				field := vValue.Elem().Field(i)
+				field := newValue.Elem().Field(i)
 				fieldStruct := pValue.Type().Field(i)
 				if err = CheckNil(fieldStruct, field, data); err != nil {
 					return
 				}
 			}
 		default:
-			if verf != "nilable" && vValue.IsNil() {
-				return fmt.Errorf("%s is missing", structField.Name)
-			}
+
 		}
 	case reflect.Struct:
 		t := structField.Type
@@ -289,9 +187,15 @@ func CheckNil(structField reflect.StructField, vValue reflect.Value, data interf
 			}
 		}
 	default:
-		if verf != "nilable" && vValue.IsZero() {
-			return fmt.Errorf("%s is missing", structField.Name)
-		}
+
+	}
+
+	if !containTag(structField.Tag, "verf") {
+		return
+	}
+
+	if verf != "nilable" && vValue.IsZero() {
+		return fmt.Errorf("%s is missing", structField.Name)
 	}
 
 	return
@@ -444,7 +348,7 @@ func CheckRegxp(structField reflect.StructField, vValue reflect.Value, data inte
 		}
 	}
 
-	values = commonGet(structField, vValue)
+	values = ReflectCommonGet(structField, vValue)
 	if len(values) == 0 {
 		return fmt.Errorf("%s is not match %s", structField.Name, tagValueStr)
 	}
@@ -501,7 +405,7 @@ func CheckBetween(structField reflect.StructField, vValue reflect.Value, data in
 	}
 
 	tagValue := strings.Split(tagValueStr, ",")
-	values := commonGet(structField, vValue)
+	values := ReflectCommonGet(structField, vValue)
 
 	for _, value := range values {
 		if len(tagValue) == 2 && tagValue[0] != "" && tagValue[1] != "" && (value < tagValue[0] || value > tagValue[1]) {
@@ -580,7 +484,7 @@ func CheckLen(structField reflect.StructField, vValue reflect.Value, data interf
 		maxErr = fmt.Errorf("no max")
 	}
 
-	values := commonGet(structField, vValue)
+	values := ReflectCommonGet(structField, vValue)
 	for _, value := range values {
 		if minErr == nil && maxErr == nil && (len(value) < min || len(value) > max) {
 			return fmt.Errorf("%s len is not between %d-%d", structField.Name, min, max)
@@ -594,7 +498,7 @@ func CheckLen(structField reflect.StructField, vValue reflect.Value, data interf
 	return
 }
 
-func commonSet(structField reflect.StructField, vValue reflect.Value, values []string) (err error) {
+func ReflectCommonSet(structField reflect.StructField, vValue reflect.Value, values []string) (err error) {
 	if len(values) <= 0 {
 		return
 	}
@@ -681,7 +585,7 @@ func commonSet(structField reflect.StructField, vValue reflect.Value, values []s
 	return
 }
 
-func commonGet(structField reflect.StructField, vValue reflect.Value) (values []string) {
+func ReflectCommonGet(structField reflect.StructField, vValue reflect.Value) (values []string) {
 	switch vValue.Kind() {
 	case reflect.Ptr:
 		// 获取指针指向的值
@@ -693,16 +597,16 @@ func commonGet(structField reflect.StructField, vValue reflect.Value) (values []
 			t := indirectValue.Type()
 			for i := 0; i < t.NumField(); i++ {
 				fieldStruct := t.Field(i)
-				values = append(values, commonGet(fieldStruct, indirectValue.Field(i))...)
+				values = append(values, ReflectCommonGet(fieldStruct, indirectValue.Field(i))...)
 			}
 		default:
-			values = append(values, commonGet(structField, indirectValue)...)
+			values = append(values, ReflectCommonGet(structField, indirectValue)...)
 		}
 	case reflect.Struct:
 		t := structField.Type
 		for i := 0; i < t.NumField(); i++ {
 			fieldStruct := t.Field(i)
-			values = append(values, commonGet(fieldStruct, vValue.Field(i))...)
+			values = append(values, ReflectCommonGet(fieldStruct, vValue.Field(i))...)
 		}
 	case reflect.Slice:
 		for i := 0; i < vValue.Len(); i++ {

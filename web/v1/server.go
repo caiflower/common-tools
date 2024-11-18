@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/interceptor"
 )
 
@@ -20,7 +21,7 @@ type Config struct {
 	ReadTimeout           int    `yaml:"read_timeout" default:"10"`
 	WriteTimeout          int    `yaml:"write_timeout" default:"10"`
 	RootPath              string `yaml:"root_path"` // 可以为空
-	HeaderTraceID         string `yaml:"header_trace_id" default:"X-Request-ID"`
+	HeaderTraceID         string `yaml:"header_trace_id" default:"X-Request-Id"`
 	ControllerRootPkgName string `yaml:"controller_root_pkg_name" default:"controller"`
 }
 
@@ -42,6 +43,8 @@ func InitDefaultHttpServer(config Config) *HttpServer {
 }
 
 func NewHttpServer(config Config) *HttpServer {
+	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+
 	httpServer := &HttpServer{
 		config: &config,
 		logger: logger.DefaultLogger(),
@@ -60,7 +63,7 @@ func AddController(v interface{}) {
 
 // AddController 只能增加func、point和interface，其他类型直接忽略
 func (s *HttpServer) AddController(v interface{}) {
-	c, err := newController(v, s.config.ControllerRootPkgName)
+	c, err := newController(v, s.config.ControllerRootPkgName, s.config.RootPath)
 	if err != nil {
 		logger.Warn("[AddController] add error: %s", err.Error())
 		return

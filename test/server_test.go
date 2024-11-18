@@ -3,11 +3,9 @@ package test
 import (
 	"fmt"
 	"net/http"
-	"reflect"
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/tools"
 	testv1 "github.com/caiflower/common-tools/test/controller/v1/test"
 	"github.com/caiflower/common-tools/web/e"
 	"github.com/caiflower/common-tools/web/interceptor"
@@ -57,10 +55,8 @@ func (t *TestInterceptor2) OnPanic(ctx *interceptor.Context) (err e.ApiError) {
 }
 
 func TestHttpServer(t *testing.T) {
-	config := v1.Config{}
-	err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
-	if err != nil {
-		panic(err)
+	config := v1.Config{
+		RootPath: "testhttp",
 	}
 
 	server := v1.NewHttpServer(config)
