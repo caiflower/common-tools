@@ -231,7 +231,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 	case reflect.Struct:
 		ctx.args = append(ctx.args, reflect.New(arg))
 	default:
-		return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
+		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
 	}
 
 	// 非restful风格
@@ -240,6 +240,21 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 		var bytes []byte
 		if r.ContentLength != 0 {
 			bytes, _ = io.ReadAll(r.Body)
+			if isGzip(r.Header) {
+				tmpBytes, err := tools.Gunzip(bytes)
+				if err != nil {
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
+				} else {
+					bytes = tmpBytes
+				}
+			} else if isBr(r.Header) {
+				tmpBytes, err := tools.UnBrotil(bytes)
+				if err != nil {
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
+				} else {
+					bytes = tmpBytes
+				}
+			}
 		} else {
 			bytes = []byte("{}")
 		}
@@ -249,7 +264,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 
 		if ctx.params != nil && len(ctx.params) > 0 {
 			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
-				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 			}
 		}
 
@@ -260,17 +275,32 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			var bytes []byte
 			if r.ContentLength != 0 {
 				bytes, _ = io.ReadAll(r.Body)
+				if isGzip(r.Header) {
+					tmpBytes, err := tools.Gunzip(bytes)
+					if err != nil {
+						return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
+					} else {
+						bytes = tmpBytes
+					}
+				} else if isBr(r.Header) {
+					tmpBytes, err := tools.UnBrotil(bytes)
+					if err != nil {
+						return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
+					} else {
+						bytes = tmpBytes
+					}
+				}
 			} else {
 				bytes = []byte("{}")
 			}
 			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
 				h.logger.Warn("unmarshal failed. error: %s", err.Error())
-				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse json failed."), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse json failed."), err)
 			}
 		case http.MethodGet:
 			if ctx.params != nil && len(ctx.params) > 0 {
 				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetParam}); err != nil {
-					return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 				}
 			}
 		}
@@ -278,7 +308,7 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 		// 设置paths
 		if ctx.paths != nil && len(ctx.paths) > 0 {
 			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetPath}); err != nil {
-				return e.NewApiError(e.NotAcceptable, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
 			}
 		}
 	}
@@ -346,13 +376,13 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 		}
 	}
 	bytes, _ := tools.Marshal(res)
-	if AcceptGzip(r.Header) {
+	if !ctx.restful && acceptGzip(r.Header) {
 		tmpBytes, err := tools.Gzip(bytes)
 		if err == nil {
 			bytes = tmpBytes
 			w.Header().Set("Content-Encoding", "gzip")
 		}
-	} else if AcceptBr(r.Header) {
+	} else if !ctx.restful && acceptBr(r.Header) {
 		tmpBytes, err := tools.Brotil(bytes)
 		if err == nil {
 			bytes = tmpBytes
@@ -360,6 +390,7 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 		}
 	}
 
+	w.Header().Set("Accept-Encoding", "gzip, br")
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
@@ -383,13 +414,13 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 	}
 
 	bytes, _ := tools.Marshal(res)
-	if AcceptGzip(r.Header) {
+	if acceptGzip(r.Header) {
 		tmpBytes, err := tools.Gzip(bytes)
 		if err == nil {
 			bytes = tmpBytes
 			w.Header().Set("Content-Encoding", "gzip")
 		}
-	} else if AcceptBr(r.Header) {
+	} else if acceptBr(r.Header) {
 		tmpBytes, err := tools.Brotil(bytes)
 		if err == nil {
 			bytes = tmpBytes
@@ -397,6 +428,7 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 		}
 	}
 
+	w.Header().Set("Accept-Encoding", "gzip, br")
 	if _, err := w.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
@@ -426,16 +458,30 @@ func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *ht
 	}
 }
 
-func AcceptGzip(header http.Header) bool {
+func acceptGzip(header http.Header) bool {
 	if header == nil {
 		return false
 	}
 	return strings.Contains(header.Get("Accept-Encoding"), "gzip")
 }
 
-func AcceptBr(header http.Header) bool {
+func acceptBr(header http.Header) bool {
 	if header == nil {
 		return false
 	}
 	return strings.Contains(header.Get("Accept-Encoding"), "br")
+}
+
+func isGzip(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Content-Encoding"), "gzip")
+}
+
+func isBr(header http.Header) bool {
+	if header == nil {
+		return false
+	}
+	return strings.Contains(header.Get("Content-Encoding"), "br")
 }

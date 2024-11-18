@@ -173,10 +173,13 @@ func TestHttpClient_GetJson(t *testing.T) {
 	response := Response{
 		Data: &res,
 	}
-	err := client.PostJson("test", "http://127.0.0.1:8080/v1/test/struct?Action=Test1", request, &response, nil)
-	if err != nil {
-		panic(err)
-	}
 
-	fmt.Printf("%v\n", res)
+	for i := 0; i < 10; i++ {
+		err := client.PostJson("test", "http://127.0.0.1:8080/v1/test/struct?Action=Test1", request, &response, nil)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("%v\n", res)
+	}
 }
