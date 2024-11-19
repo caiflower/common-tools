@@ -169,6 +169,9 @@ func (s *HttpServer) StartUp() {
 	sort.Sort(s.handler.interceptors)
 
 	global.DefaultResourceManger.Add(s)
+	metric := NewHttpMetric()
+	s.handler.metric = metric
+
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %d *********\n"+

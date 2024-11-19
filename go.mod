@@ -13,6 +13,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/modern-go/gls v0.0.0-20220109145502-612d0167dce5
 	github.com/modern-go/reflect2 v1.0.2
+	github.com/prometheus/client_golang v1.12.2
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	gopkg.in/yaml.v2 v2.4.0

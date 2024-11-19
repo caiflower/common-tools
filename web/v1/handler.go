@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"reflect"
 	"runtime/debug"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -14,6 +16,11 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/e"
 	"github.com/caiflower/common-tools/web/interceptor"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+const (
+	beginTime = "beginTime"
 )
 
 // BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
@@ -36,6 +43,7 @@ type handler struct {
 	restfulControllers []*RestfulController
 	restfulPaths       map[string]struct{}
 	logger             logger.ILog
+	metric             *HttpMetric
 
 	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
 	paramsValidFuncList        []func(reflect.StructField, reflect.Value, interface{}) error
@@ -54,7 +62,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	golocalv1.PutTraceID(traceID)
+	golocalv1.Put(beginTime, time.Now())
 	defer golocalv1.Clean()
+
+	if specialRequest(w, r) {
+		return
+	}
 
 	if h.beforeDispatchCallbackFunc != nil {
 		if h.beforeDispatchCallbackFunc(w, r) {
@@ -373,6 +386,10 @@ func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 }
 
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
+	// 记录metric
+	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
+	go h.metric.saveMetric(h.config.Name, strconv.Itoa(e.GetCode()), ctx.method, ctx.path, sub.Milliseconds())
+
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	code := e.GetCode()
 	res := CommonResponse{
@@ -412,6 +429,10 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 }
 
 func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
+	// 记录metric
+	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
+	go h.metric.saveMetric(h.config.Name, strconv.Itoa(ctx.success), ctx.method, ctx.path, sub.Milliseconds())
+
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
 	res := CommonResponse{
@@ -499,4 +520,14 @@ func isBr(header http.Header) bool {
 		return false
 	}
 	return strings.Contains(header.Get("Content-Encoding"), "br")
+}
+
+var promHttpHandler = promhttp.Handler()
+
+func specialRequest(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/metrics" {
+		promHttpHandler.ServeHTTP(w, r)
+		return true
+	}
+	return false
 }
