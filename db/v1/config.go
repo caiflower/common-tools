@@ -12,4 +12,5 @@ type Config struct {
 	ConnMaxLifetime int    `yaml:"connMaxLifetime" default:"28800"`
 	Plural          bool   `yaml:"plural"`
 	Debug           bool   `yaml:"debug"`
+	EnableMetric    bool   `yaml:"enable_metric"`
 }

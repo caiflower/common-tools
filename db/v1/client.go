@@ -41,6 +41,7 @@ type Filter interface {
 type Client struct {
 	DB     *bun.DB
 	config *Config
+	cancel context.CancelFunc
 }
 
 func NewDBClient(config Config) (c *Client, err error) {
@@ -68,6 +69,13 @@ func NewDBClient(config Config) (c *Client, err error) {
 			return tableName
 		})
 	}
+
+	if config.EnableMetric {
+		ctx, cancelFunc := context.WithCancel(context.Background())
+		c.cancel = cancelFunc
+		startMetric(ctx, c.DB, &config)
+	}
+
 	return c, nil
 }
 
@@ -109,7 +117,13 @@ func (c *Client) Begin() (*bun.Tx, error) {
 
 func (c *Client) Close() {
 	logger.Info(" *** db Client Close *** ")
-	c.DB.Close()
+	if c.cancel != nil {
+		c.cancel()
+	}
+	err := c.DB.Close()
+	if err != nil {
+		logger.Warn(" *** db Client Close Failed *** \n err: %s", err)
+	}
 }
 
 func (c *Client) GetSelect(model interface{}) *bun.SelectQuery {

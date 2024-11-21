@@ -24,11 +24,12 @@ type ContainerRegistry struct {
 
 func TestNewDBClient(t *testing.T) {
 	config := Config{
-		Url:      "10.226.138.71:3306",
-		User:     "root",
-		Password: "admin",
-		DbName:   "fc-placement",
-		Debug:    true,
+		Url:          "10.226.138.71:3306",
+		User:         "root",
+		Password:     "admin",
+		DbName:       "fc-placement",
+		Debug:        true,
+		EnableMetric: true,
 	}
 
 	l := logger.Config{
@@ -53,4 +54,6 @@ func TestNewDBClient(t *testing.T) {
 	}
 
 	fmt.Println(count)
+
+	time.Sleep(100 * time.Second)
 }
