@@ -75,14 +75,14 @@ func (s *HttpServer) AddController(v interface{}) {
 }
 
 func Register(controller *RestfulController) {
-	defaultHttpServer.AddController(controller)
+	defaultHttpServer.Register(controller)
 }
 
 // Register 注册restfulController
 func (s *HttpServer) Register(controller *RestfulController) {
 	path := "method:" + controller.method + "version:" + controller.version + "path:" + controller.path
 	if _, e := s.handler.restfulPaths[path]; e {
-		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exsit. ", controller.method, controller.version, controller.originPath))
+		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exsit. ", controller.method, controller.version, controller.path))
 	}
 	c := s.handler.controllers[controller.controllerName]
 	if c != nil {
