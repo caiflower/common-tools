@@ -345,18 +345,25 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 }
 
 func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) (err e.ApiError) {
-	if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
-		ctx.args[0] = ctx.args[0].Elem()
+	if ctx.targetMethod.HasArgs() {
+		if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
+			ctx.args[0] = ctx.args[0].Elem()
+		}
 	}
 
 	results := ctx.targetMethod.Invoke(ctx.args)
 	rets := ctx.targetMethod.GetRets()
 	for i, ret := range rets {
 		if ret.AssignableTo(reflect.TypeOf(new(e.ApiError)).Elem()) {
-			return results[i].Interface().(e.ApiError)
+			_err := results[i].Interface()
+			if _err != nil {
+				return _err.(e.ApiError)
+			}
 		} else if ret.AssignableTo(reflect.TypeOf(new(error)).Elem()) {
 			_err := results[i].Interface().(error)
-			return e.NewApiError(e.Unknown, _err.Error(), _err)
+			if _err != nil {
+				return e.NewApiError(e.Unknown, _err.Error(), _err)
+			}
 		} else {
 			ctx.SetResponse(results[i].Interface())
 		}

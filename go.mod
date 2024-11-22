@@ -2,7 +2,7 @@ module github.com/caiflower/common-tools
 
 go 1.16
 
-replace github.com/json-iterator/go v1.1.12 => ./pkg/tools/go@v1.1.12
+replace github.com/json-iterator/go v1.1.12 => ./pkg/tools/go
 
 require (
 	github.com/andybalholm/brotli v1.1.1
