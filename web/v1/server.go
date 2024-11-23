@@ -8,38 +8,49 @@ import (
 	"sort"
 	"time"
 
+	"github.com/caiflower/common-tools/global"
+	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/e"
 	"github.com/caiflower/common-tools/web/interceptor"
 )
 
 // 基于云生http.server实现的http服务器
 
 type Config struct {
-	Name                  string `yaml:"name" default:"default"`
-	Port                  int    `yaml:"port" default:"8080"`
-	ReadTimeout           int    `yaml:"read_timeout" default:"10"`
-	WriteTimeout          int    `yaml:"write_timeout" default:"10"`
-	RootPath              string `yaml:"root_path"` // 可以为空
-	HeaderTraceID         string `yaml:"header_trace_id" default:"X-Request-Id"`
-	ControllerRootPkgName string `yaml:"controller_root_pkg_name" default:"controller"`
+	Name                  string     `yaml:"name" default:"default"`
+	Port                  int        `yaml:"port" default:"8080"`
+	ReadTimeout           int        `yaml:"read_timeout" default:"10"`
+	WriteTimeout          int        `yaml:"write_timeout" default:"10"`
+	RootPath              string     `yaml:"root_path"` // 可以为空
+	HeaderTraceID         string     `yaml:"header_trace_id" default:"X-Request-Id"`
+	ControllerRootPkgName string     `yaml:"controller_root_pkg_name" default:"controller"`
+	WebLimiter            WebLimiter `yaml:"web_limiter"`
 }
 
-var defaultHttpServer *HttpServer
+type WebLimiter struct {
+	Enable bool `yaml:"enable"`
+	Qos    int  `yaml:"qos" default:"1000"`
+}
+
+var DefaultHttpServer *HttpServer
 
 type HttpServer struct {
-	config  *Config
-	logger  logger.ILog
-	server  *http.Server
-	handler *handler
+	config        *Config
+	logger        logger.ILog
+	server        *http.Server
+	handler       *handler
+	limiterBucket *limiter.TokenBucket
 }
 
 func InitDefaultHttpServer(config Config) *HttpServer {
-	if defaultHttpServer != nil {
-		return defaultHttpServer
+	if DefaultHttpServer != nil {
+		return DefaultHttpServer
 	}
-	defaultHttpServer = NewHttpServer(config)
-	return defaultHttpServer
+	DefaultHttpServer = NewHttpServer(config)
+	return DefaultHttpServer
 }
 
 func NewHttpServer(config Config) *HttpServer {
@@ -58,7 +69,7 @@ func NewHttpServer(config Config) *HttpServer {
 }
 
 func AddController(v interface{}) {
-	defaultHttpServer.AddController(v)
+	DefaultHttpServer.AddController(v)
 }
 
 // AddController 只能增加func、point和interface，其他类型直接忽略
@@ -72,10 +83,12 @@ func (s *HttpServer) AddController(v interface{}) {
 	for _, path := range c.paths {
 		s.handler.controllers[path] = c
 	}
+
+	bean.AddBean(v)
 }
 
 func Register(controller *RestfulController) {
-	defaultHttpServer.Register(controller)
+	DefaultHttpServer.Register(controller)
 }
 
 // Register 注册restfulController
@@ -96,7 +109,7 @@ func (s *HttpServer) Register(controller *RestfulController) {
 }
 
 func AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
-	defaultHttpServer.AddParamValidFunc(fn)
+	DefaultHttpServer.AddParamValidFunc(fn)
 }
 
 func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
@@ -104,7 +117,7 @@ func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Valu
 }
 
 func AddInterceptor(interceptor interceptor.Interceptor, order int) {
-	defaultHttpServer.AddInterceptor(interceptor, order)
+	DefaultHttpServer.AddInterceptor(interceptor, order)
 }
 
 func (s *HttpServer) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
@@ -126,8 +139,36 @@ func (s *HttpServer) StartUp() {
 		Handler:      commonHandler,
 	}
 
+	if s.config.WebLimiter.Enable {
+		getLimiterCallBack := func(qos int) *limiter.TokenBucket {
+			limiterBucket := limiter.NewTokenBucket(qos)
+			return limiterBucket
+		}
+
+		s.limiterBucket = getLimiterCallBack(s.config.WebLimiter.Qos)
+		s.limiterBucket.Startup()
+
+		var limiterCallBack = func(w http.ResponseWriter, r *http.Request) bool {
+			if s.limiterBucket.TakeTokenNonBlocking() {
+				return false
+			} else {
+				res := CommonResponse{
+					RequestId: tools.UUID(),
+					Error:     e.NewApiError(e.TooManyRequests, "TooManyRequests", nil),
+				}
+
+				w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+				w.WriteHeader(res.Error.GetCode())
+				w.Write([]byte(tools.ToJson(res)))
+				return true
+			}
+		}
+		s.SetBeforeDispatchCallBack(limiterCallBack)
+	}
+
 	sort.Sort(s.handler.interceptors)
 
+	global.DefaultResourceManger.Add(s)
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %d *********\n"+
@@ -152,4 +193,9 @@ func (s *HttpServer) Close() {
 		}
 		s.logger.Info(" **** http server gracefully shutdown ****")
 	}
+	if s.limiterBucket != nil {
+		s.limiterBucket.Close()
+	}
+	s.server = nil
+	s.limiterBucket = nil
 }

@@ -36,12 +36,7 @@ type DefaultJobTracker struct {
 	callers      []Caller
 }
 
-func NewDefaultJobTracker(interval int, config Config, caller ...Caller) (*DefaultJobTracker, error) {
-	cluster, err := NewCluster(config)
-	if err != nil {
-		return nil, err
-	}
-
+func NewDefaultJobTracker(interval int, cluster ICluster, caller ...Caller) *DefaultJobTracker {
 	if interval <= 0 {
 		interval = 10
 	}
@@ -50,7 +45,7 @@ func NewDefaultJobTracker(interval int, config Config, caller ...Caller) (*Defau
 		Interval: interval,
 		Cluster:  cluster,
 		callers:  caller,
-	}, nil
+	}
 }
 
 func (t *DefaultJobTracker) Name() string {
@@ -79,11 +74,17 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 }
 
 func (t *DefaultJobTracker) OnStoppedLeading() {
-	t.leaderCancel()
+	if t.leaderCancel != nil {
+		t.leaderCancel()
+		t.leaderCancel = nil
+	}
 }
 
 func (t *DefaultJobTracker) OnReleaseMaster() {
-	t.workerCancel()
+	if t.workerCancel != nil {
+		t.workerCancel()
+		t.workerCancel = nil
+	}
 }
 
 func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
@@ -109,11 +110,16 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 
 func (t *DefaultJobTracker) Start() {
 	t.Cluster.AddJobTracker(t)
-	t.Cluster.StartUp()
 	global.DefaultResourceManger.Add(t)
 }
 
 func (t *DefaultJobTracker) Close() {
-	t.leaderCancel()
-	t.workerCancel()
+	if t.leaderCancel != nil {
+		t.leaderCancel()
+		t.leaderCancel = nil
+	}
+	if t.workerCancel != nil {
+		t.workerCancel()
+		t.workerCancel = nil
+	}
 }

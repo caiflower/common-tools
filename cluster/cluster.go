@@ -170,17 +170,20 @@ func (c *Cluster) StartUp() {
 	c.cancelFunc = cancelFunc
 	c.ctx = ctx
 
-	// 开启服务监听端口
-	c.listen()
-
-	// 集群建立连接
-	c.reconnect()
+	if c.config.Mode != modeSingle {
+		// 开启服务监听端口
+		c.listen()
+		// 集群建立连接
+		c.reconnect()
+	}
 
 	// 开始选举
 	go c.fighting()
 
-	// 开始心跳
-	go c.heartbeat()
+	if c.config.Mode != modeSingle {
+		// 开始心跳
+		go c.heartbeat()
+	}
 
 	// 开始消费事件
 	go c.consumeEvent()
@@ -350,7 +353,7 @@ func (c *Cluster) loadNodes() {
 	}
 	if c.config.Mode == modeSingle {
 		if c.curNode == nil {
-			c.curNode = newNode("127.0.0.1:10000", "127.0.0.1")
+			c.curNode = newNode("127.0.0.1:10000", "single")
 		}
 	}
 }
@@ -823,6 +826,10 @@ func (c *Cluster) signLeader(node *Node, term int) {
 		if node.name == c.curNode.name {
 			c.sate = leader
 			go c.createEvent(eventNameSignMaster, node.name)
+			// 单集群模式自己就是Follower
+			if c.config.Mode == modeSingle {
+				go c.createEvent(eventNameSignFollower, node.name)
+			}
 		} else {
 			c.sate = follower
 			go c.createEvent(eventNameSignFollower, node.name)

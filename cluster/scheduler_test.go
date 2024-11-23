@@ -323,30 +323,39 @@ func TestDefaultJobTracker(t *testing.T) {
 		Name: "Localhost1",
 	}
 	c1.Nodes[0].Local = true
-	tracker1, err := NewDefaultJobTracker(10, c1, testCaller1)
+
+	cluster1, err := NewCluster(c1)
 	if err != nil {
 		panic(err)
 	}
+	tracker1 := NewDefaultJobTracker(10, cluster1, testCaller1)
+	go cluster1.StartUp()
 	go tracker1.Start()
 
 	testCaller2 := &TestCaller{
 		Name: "Localhost2",
 	}
 	c2.Nodes[1].Local = true
-	tracker2, err := NewDefaultJobTracker(10, c2, testCaller2)
+
+	cluster2, err := NewCluster(c2)
 	if err != nil {
 		panic(err)
 	}
+	tracker2 := NewDefaultJobTracker(10, cluster2, testCaller2)
+	go cluster2.StartUp()
 	go tracker2.Start()
 
 	testCaller3 := &TestCaller{
 		Name: "Localhost3",
 	}
 	c3.Nodes[2].Local = true
-	tracker3, err := NewDefaultJobTracker(10, c3, testCaller3)
+	cluster3, err := NewCluster(c3)
 	if err != nil {
 		panic(err)
 	}
+	tracker3 := NewDefaultJobTracker(10, cluster3, testCaller3)
+
+	go cluster3.StartUp()
 	go tracker3.Start()
 
 	time.Sleep(60 * time.Second)

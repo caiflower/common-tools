@@ -69,11 +69,26 @@ func writeBean(name string, bean interface{}) {
 			fieldBean = GetBean(fieldType.Name)
 		}
 		if fieldBean == nil {
-			pkgPath := fieldType.Type.Elem().PkgPath()
-			splits := strings.Split(pkgPath, "/")
-			path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
-			name = path + strings.Replace(fieldType.Type.String(), "*", "", 1)
-			fieldBean = GetBean(name)
+			switch field.Kind() {
+			case reflect.Interface:
+				name = field.Type().PkgPath() + "/" + field.Type().String()
+				fieldBean = GetBean(name)
+				if fieldBean == nil {
+					beanContext.lock.RLock()
+					defer beanContext.lock.RUnlock()
+					for _, v := range beanContext.beanMap {
+						if reflect.TypeOf(v).AssignableTo(field.Type()) {
+							fieldBean = v
+						}
+					}
+				}
+			case reflect.Ptr:
+				pkgPath := fieldType.Type.Elem().PkgPath()
+				splits := strings.Split(pkgPath, "/")
+				path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
+				name = path + strings.Replace(fieldType.Type.String(), "*", "", 1)
+				fieldBean = GetBean(name)
+			}
 		}
 		if fieldBean == nil {
 			fieldBean = GetBean(strings.Replace(fieldType.Type.String(), "*", "", 1))

@@ -14,10 +14,10 @@ type ApiError interface {
 }
 
 type apiError struct {
-	Code    int    `json:"-"`
-	Type    string `json:"type"`
-	Message string `json:"message"`
-	Cause   error  `json:"-"`
+	Code    int `json:"-"`
+	Type    string
+	Message string
+	Cause   error `json:"-"`
 }
 
 func (e *apiError) GetCode() int {
@@ -46,10 +46,11 @@ type ErrorCode struct {
 }
 
 var (
-	NotFound      = &ErrorCode{Code: http.StatusNotFound, Type: "NotFound"}
-	NotAcceptable = &ErrorCode{Code: http.StatusNotAcceptable, Type: "NotAcceptable"}
-	Unknown       = &ErrorCode{Code: http.StatusInternalServerError, Type: "Unknown"}
-	Internal      = &ErrorCode{Code: http.StatusInternalServerError, Type: "InternalError"}
+	NotFound        = &ErrorCode{Code: http.StatusNotFound, Type: "NotFound"}
+	NotAcceptable   = &ErrorCode{Code: http.StatusNotAcceptable, Type: "NotAcceptable"}
+	Unknown         = &ErrorCode{Code: http.StatusInternalServerError, Type: "Unknown"}
+	Internal        = &ErrorCode{Code: http.StatusInternalServerError, Type: "InternalError"}
+	TooManyRequests = &ErrorCode{Code: http.StatusTooManyRequests, Type: "TooManyRequests"}
 
 	InvalidArgument = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
 )

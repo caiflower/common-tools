@@ -105,11 +105,11 @@ func (c *RequestCtx) GetParams() map[string][]string {
 	return c.params
 }
 
-type commonResponse struct {
-	RequestID string      `json:"requestId"`
-	Code      *int        `json:"code,omitempty"`
-	Data      interface{} `json:"data,omitempty"`
-	Error     e.ApiError  `json:"error,omitempty"`
+type CommonResponse struct {
+	RequestId string
+	Code      *int        `json:",omitempty"`
+	Data      interface{} `json:",omitempty"`
+	Error     e.ApiError  `json:",omitempty"`
 }
 
 func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
@@ -375,8 +375,8 @@ func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	code := e.GetCode()
-	res := commonResponse{
-		RequestID: golocalv1.GetTraceID(),
+	res := CommonResponse{
+		RequestId: golocalv1.GetTraceID(),
 		Code:      &code,
 		Error:     e,
 	}
@@ -414,8 +414,8 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
-	res := commonResponse{
-		RequestID: golocalv1.GetTraceID(),
+	res := CommonResponse{
+		RequestId: golocalv1.GetTraceID(),
 		Code:      &ctx.success,
 		Data:      ctx.response,
 	}

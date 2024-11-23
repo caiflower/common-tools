@@ -22,3 +22,7 @@ func LoadDefaultConfig(v *DefaultConfig) (err error) {
 	err = tools.LoadConfig(env.ConfigPath+"/default.yaml", v)
 	return
 }
+
+func LoadYamlFile(fileName string, v interface{}) error {
+	return tools.LoadConfig(env.ConfigPath+"/"+fileName, v)
+}

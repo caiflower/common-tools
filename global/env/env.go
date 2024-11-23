@@ -19,7 +19,7 @@ func init() {
 func initConfigPath() {
 	ConfigPath = os.Getenv("CONFIG_PATH")
 	if ConfigPath == "" {
-		ConfigPath = "/etc"
+		ConfigPath = "./etc"
 	}
 }
 
