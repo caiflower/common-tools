@@ -6,6 +6,8 @@ replace github.com/json-iterator/go v1.1.12 => ./pkg/tools/json-iterator
 
 require (
 	github.com/andybalholm/brotli v1.1.1
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/go-redis/redis/v8 v8.11.4
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/google/uuid v1.6.0
 	github.com/json-iterator/go v1.1.12

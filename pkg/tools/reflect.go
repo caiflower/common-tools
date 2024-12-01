@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modern-go/reflect2"
 )
@@ -52,9 +53,15 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 		switch vValue.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if vValue.Int() == 0 {
-				v, _ := strconv.Atoi(structTag.Get("default"))
-				vValue.SetInt(int64(v))
-				flag = true
+				if v, err := strconv.Atoi(structTag.Get("default")); err == nil {
+					vValue.SetInt(int64(v))
+					flag = true
+				} else {
+					if v, err := time.ParseDuration(structTag.Get("default")); err == nil {
+						vValue.SetInt(int64(v))
+						flag = true
+					}
+				}
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			if vValue.Uint() == 0 {
@@ -144,7 +151,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 
 			}
 		default:
-
+			fmt.Println(vValue.Kind())
 		}
 	}
 
