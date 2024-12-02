@@ -2,7 +2,7 @@ module github.com/caiflower/common-tools
 
 go 1.16
 
-replace github.com/json-iterator/go v1.1.12 => ./pkg/tools/json-iterator
+replace github.com/json-iterator/go v1.1.12 => github.com/caiflower/json-iterator v1.1.12
 
 require (
 	github.com/andybalholm/brotli v1.1.1
@@ -17,4 +17,5 @@ require (
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	gopkg.in/yaml.v2 v2.4.0
+	github.com/prometheus/client_golang v1.12.0
 )

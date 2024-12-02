@@ -167,10 +167,10 @@ func (s *HttpServer) StartUp() {
 	}
 
 	sort.Sort(s.handler.interceptors)
-
-	global.DefaultResourceManger.Add(s)
 	metric := NewHttpMetric()
 	s.handler.metric = metric
+
+	global.DefaultResourceManger.Add(s)
 
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
