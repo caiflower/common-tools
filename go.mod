@@ -17,5 +17,4 @@ require (
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	gopkg.in/yaml.v2 v2.4.0
-	github.com/prometheus/client_golang v1.12.0
 )
