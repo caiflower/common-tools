@@ -108,13 +108,13 @@ func (s *HttpServer) Register(controller *RestfulController) {
 	}
 }
 
-func AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
-	DefaultHttpServer.AddParamValidFunc(fn)
-}
-
-func (s *HttpServer) AddParamValidFunc(fn func(reflect.StructField, reflect.Value, interface{}) error) {
-	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
-}
+//func AddParamValidFunc(fn ValidFunc) {
+//	DefaultHttpServer.AddParamValidFunc(fn)
+//}
+//
+//func (s *HttpServer) AddParamValidFunc(fn ValidFunc) {
+//	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
+//}
 
 func AddInterceptor(interceptor interceptor.Interceptor, order int) {
 	DefaultHttpServer.AddInterceptor(interceptor, order)

@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,7 +48,7 @@ type handler struct {
 	metric             *HttpMetric
 
 	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
-	paramsValidFuncList        []func(reflect.StructField, reflect.Value, interface{}) error
+	paramsValidFuncList        []ValidFunc
 	interceptors               interceptor.ItemSort
 }
 
@@ -275,7 +277,13 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			bytes = []byte("{}")
 		}
 		if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
-			h.logger.Warn("unmarshal failed. error: %s", err.Error())
+			err = json.Unmarshal(bytes, ctx.args[0].Interface())
+			var typeError *json.UnmarshalTypeError
+			if errors.As(err, &typeError) {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+			} else {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
+			}
 		}
 
 		if ctx.params != nil && len(ctx.params) > 0 {
@@ -310,8 +318,12 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 				bytes = []byte("{}")
 			}
 			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
-				h.logger.Warn("unmarshal failed. error: %s", err.Error())
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse json failed."), err)
+				var typeError *json.UnmarshalTypeError
+				if errors.As(err, &typeError) {
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+				} else {
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
+				}
 			}
 		case http.MethodGet:
 			if ctx.params != nil && len(ctx.params) > 0 {
@@ -348,9 +360,20 @@ func (h *handler) validArgs(ctx *RequestCtx) e.ApiError {
 		return nil
 	}
 
-	funcList := []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp, tools.CheckBetween, tools.CheckLen}
-	funcList = append(funcList, h.paramsValidFuncList...)
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, funcList); err != nil {
+	//funcList := []func(reflect.StructField, reflect.Value, interface{}) error{tools.CheckNil, tools.CheckInList, tools.CheckRegxp, tools.CheckBetween, tools.CheckLen}
+	//funcList = append(funcList, h.paramsValidFuncList...)
+	//if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, funcList); err != nil {
+	//	return e.NewApiError(e.InvalidArgument, err.Error(), nil)
+	//}
+
+	elem := reflect.TypeOf(ctx.args[0].Interface()).Elem()
+	pkgPath := elem.PkgPath()
+	object := validObject{
+		pkgPath:   pkgPath,
+		filedName: elem.Name(),
+	}
+	funcList := []func(reflect.StructField, reflect.Value, interface{}) error{valid}
+	if err := tools.DoTagFunc(ctx.args[0].Interface(), object, funcList); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
 	}
 

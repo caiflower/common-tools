@@ -49,7 +49,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 
 	flag := false
 	structTag := structField.Tag
-	if containTag(structTag, "default") || vValue.Kind() == reflect.Struct || vValue.Kind() == reflect.Ptr {
+	if ContainTag(structTag, "default") || vValue.Kind() == reflect.Struct || vValue.Kind() == reflect.Ptr {
 		switch vValue.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if vValue.Int() == 0 {
@@ -197,7 +197,7 @@ func CheckNil(structField reflect.StructField, vValue reflect.Value, data interf
 
 	}
 
-	if !containTag(structField.Tag, "verf") {
+	if !ContainTag(structField.Tag, "verf") {
 		return
 	}
 
@@ -246,7 +246,7 @@ func CheckInList(structField reflect.StructField, vValue reflect.Value, data int
 		}
 		return
 	case reflect.Slice:
-		if !containTag(structField.Tag, tagName) {
+		if !ContainTag(structField.Tag, tagName) {
 			return
 		}
 		for i := 0; i < vValue.Len(); i++ {
@@ -263,7 +263,7 @@ func CheckInList(structField reflect.StructField, vValue reflect.Value, data int
 			}
 		}
 	case reflect.Map:
-		if !containTag(structField.Tag, tagName) {
+		if !ContainTag(structField.Tag, tagName) {
 			return
 		}
 		keys := vValue.MapKeys()
@@ -281,17 +281,17 @@ func CheckInList(structField reflect.StructField, vValue reflect.Value, data int
 			}
 		}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if !containTag(structField.Tag, tagName) {
+		if !ContainTag(structField.Tag, tagName) {
 			return
 		}
 		values = append(values, fmt.Sprintf("%d", vValue.Int()))
 	case reflect.Float32, reflect.Float64:
-		if !containTag(structField.Tag, tagName) {
+		if !ContainTag(structField.Tag, tagName) {
 			return
 		}
 		values = append(values, fmt.Sprintf("%f", vValue.Float()))
 	case reflect.String:
-		if !containTag(structField.Tag, tagName) {
+		if !ContainTag(structField.Tag, tagName) {
 			return
 		}
 		values = append(values, vValue.String())
@@ -657,6 +657,6 @@ func ReflectCommonGet(structField reflect.StructField, vValue reflect.Value) (va
 	return
 }
 
-func containTag(tag reflect.StructTag, tagName string) bool {
+func ContainTag(tag reflect.StructTag, tagName string) bool {
 	return regexp.MustCompile(`\b` + tagName + `\b`).Match([]byte(tag))
 }

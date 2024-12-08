@@ -3,6 +3,7 @@ package test
 import (
 	"fmt"
 
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/web/e"
 )
 
@@ -19,8 +20,9 @@ type InnerHeader struct {
 }
 
 type InnerParam struct {
-	TestId  string `json:"testId" inList:"testId1"`
-	TestInt []int  `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2"`
+	TestId      string `json:"testId" inList:"testId"`
+	TestInt     []int  `json:"testInt" inList:"1,2,3,4,5" reg:"[1-3]+" between:"1,2" len:",1"`
+	InnerHeader InnerHeader
 }
 
 type Param struct {
@@ -37,11 +39,15 @@ type Param struct {
 }
 
 type Param2 struct {
-	Args  string `json:"args"`
-	Name  string
-	Test  string    `param:"test"`
-	Test1 []string  `param:"test1"`
-	Test3 []float64 `param:"test3"`
+	Args           string `json:"args" verf:""`
+	Name           string
+	Test           string    `param:"test"`
+	Test1          []string  `param:"test1" verf:""`
+	Test3          []float64 `param:"test3"`
+	InnerPrtHeader *InnerHeader
+	InnerParam     *InnerParam `verf:""`
+	Time           basic.TimeStandard
+	Time1          *basic.TimeStandard `verf:""`
 	//UnSupport []Param   `param:"unSupportParam"`
 }
 
@@ -54,6 +60,7 @@ func (t *StructService) Test2(param *Param) *Param {
 }
 
 func (t *StructService) Test3(param Param2) Param2 {
+	fmt.Println(param.Time.UTCString())
 	return param
 }
 

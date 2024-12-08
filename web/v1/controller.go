@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/pkg/tools"
 )
 
 type controller struct {
@@ -55,6 +56,26 @@ func newController(v interface{}, controllerRootPkgName, rootPath string) (*cont
 			}
 			if rootPath != "" {
 				paths[i] = "/" + rootPath + paths[i]
+			}
+		}
+
+		for _, method := range cls.GetAllMethod() {
+			if method.HasArgs() {
+				arg := method.GetArgs()[0]
+				var argValue reflect.Value
+				switch arg.Kind() {
+				case reflect.Ptr:
+					argValue = reflect.New(arg.Elem())
+				case reflect.Struct:
+					argValue = reflect.New(arg)
+				default:
+					panic(fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()))
+				}
+				elem := reflect.TypeOf(argValue.Interface()).Elem()
+				pkgPath := elem.PkgPath() + "." + elem.Name()
+				if err := tools.DoTagFunc(argValue.Interface(), pkgPath, []func(reflect.StructField, reflect.Value, interface{}) error{buildValid}); err != nil {
+					panic(err.Error())
+				}
 			}
 		}
 

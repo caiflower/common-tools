@@ -55,6 +55,13 @@ func (t *TestInterceptor2) OnPanic(ctx *interceptor.Context) (err e.ApiError) {
 }
 
 func TestHttpServer(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		fmt.Println("加载时区出错:", err)
+		return
+	}
+	// 设置time.Local为中国标准时间
+	time.Local = loc
 	config := v1.Config{
 		RootPath: "testhttp",
 	}
