@@ -9,12 +9,16 @@ import (
 )
 
 type Config struct {
-	Name              string   `json:"name"`
-	Enable            bool     `json:"enable"`
-	BootstrapServers  []string `json:"bootstrap_servers"`
-	GroupID           string   `json:"group_id"`
-	Topics            []string `json:"topics"`
-	ConsumerWorkerNum int      `json:"consumer_worker_num" default:"2"`
+	Name              string   `yaml:"name"`
+	Enable            bool     `yaml:"enable"`
+	BootstrapServers  []string `yaml:"bootstrap_servers"`
+	GroupID           string   `yaml:"group_id"`
+	Topics            []string `yaml:"topics"`
+	ConsumerWorkerNum int      `yaml:"consumer_worker_num" default:"2"`
+	SecurityProtocol  string   `yaml:"security_protocol"`
+	SaslMechanism     string   `yaml:"sasl_mechanism"`
+	SaslUsername      string   `yaml:"sasl_username"`
+	SaslPassword      string   `yaml:"sasl_password"`
 }
 
 type KafkaClient struct {
@@ -35,7 +39,7 @@ func (c *KafkaClient) Close() {
 	if c.Consumer != nil {
 		err := c.Consumer.Close()
 		if err != nil {
-			logger.Warn("close kafka consumer error", err.Error())
+			logger.Warn("close kafka consumer error: %s", err.Error())
 		}
 		c.Consumer = nil
 	}

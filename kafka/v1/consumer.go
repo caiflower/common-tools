@@ -21,7 +21,7 @@ type Consumer interface {
 
 func NewConsumerClient(config Config) Consumer {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("Kafka consumer %s set default config failed. err: %s", err.Error())
+		logger.Warn("Kafka consumer %s set default config failed. err: %s", config.Name, err.Error())
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -42,6 +42,26 @@ func NewConsumerClient(config Config) Consumer {
 	}
 	if err := configMap.SetKey("enable.auto.commit", false); err != nil {
 		logger.Warn("set enable.auto.commit error: %s", err.Error())
+	}
+	if config.SecurityProtocol != "" {
+		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
+			logger.Warn("set security.protocol error: %s", err.Error())
+		}
+	}
+	if config.SaslMechanism != "" {
+		if err := configMap.SetKey("sasl.mechanism", config.SaslMechanism); err != nil {
+			logger.Warn("set sasl.mechanism error: %s", err.Error())
+		}
+	}
+	if config.SaslUsername != "" {
+		if err := configMap.SetKey("sasl.username", config.SaslUsername); err != nil {
+			logger.Warn("set sasl.username error: %s", err.Error())
+		}
+	}
+	if config.SaslPassword != "" {
+		if err := configMap.SetKey("sasl.password", config.SaslPassword); err != nil {
+			logger.Warn("set sasl.password error: %s", err.Error())
+		}
 	}
 
 	consumer, err := kafka.NewConsumer(configMap)

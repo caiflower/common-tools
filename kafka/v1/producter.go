@@ -32,6 +32,26 @@ func NewProducerClient(config Config) Producer {
 	if err := configMap.SetKey("group.id", config.GroupID); err != nil {
 		logger.Warn("set group.id error: %s", err.Error())
 	}
+	if config.SecurityProtocol != "" {
+		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
+			logger.Warn("set security.protocol error: %s", err.Error())
+		}
+	}
+	if config.SaslMechanism != "" {
+		if err := configMap.SetKey("sasl.mechanism", config.SaslMechanism); err != nil {
+			logger.Warn("set sasl.mechanism error: %s", err.Error())
+		}
+	}
+	if config.SaslUsername != "" {
+		if err := configMap.SetKey("sasl.username", config.SaslUsername); err != nil {
+			logger.Warn("set sasl.username error: %s", err.Error())
+		}
+	}
+	if config.SaslPassword != "" {
+		if err := configMap.SetKey("sasl.password", config.SaslPassword); err != nil {
+			logger.Warn("set sasl.password error: %s", err.Error())
+		}
+	}
 
 	producer, err := kafka.NewProducer(configMap)
 	if err != nil {
