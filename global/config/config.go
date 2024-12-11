@@ -4,6 +4,7 @@ import (
 	"github.com/caiflower/common-tools/cluster"
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/global/env"
+	kafkav1 "github.com/caiflower/common-tools/kafka/v1"
 	"github.com/caiflower/common-tools/pkg/http"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -18,6 +19,7 @@ type DefaultConfig struct {
 	HttpClientConfig http.Config      `yaml:"http_client"`
 	WebConfig        []webv1.Config   `yaml:"web"`
 	RedisConfig      []redisv1.Config `yaml:"redis"`
+	KafkaConfig      []kafkav1.Config `yaml:"kafka"`
 }
 
 func LoadDefaultConfig(v *DefaultConfig) (err error) {

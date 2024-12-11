@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -67,12 +66,12 @@ func NewConsumerClient(config Config) Consumer {
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
 		logger.Error("create kafka consumer error: %s", err.Error())
-		return &KafkaClient{config: config}
+		return kafkaClient
 	}
 	err = consumer.SubscribeTopics(config.Topics, nil)
 	if err != nil {
 		logger.Error("subscribe topics error, %s", err.Error())
-		return &KafkaClient{config: config}
+		return kafkaClient
 	}
 	kafkaClient.Consumer = consumer
 
@@ -100,42 +99,23 @@ func (c *KafkaClient) doListen() {
 				case <-c.ctx.Done():
 					return
 				default:
-					ev := c.Consumer.Poll(100)
-					switch event := ev.(type) {
-					case *kafka.Message:
-						e.OnError("Kafka consumer")
-						for _, fn := range c.consumerFuncList {
-							fn(event)
-						}
-						err := c.Consumer.Assign([]kafka.TopicPartition{event.TopicPartition})
-						if err != nil {
-							logger.Warn("Kafka consumer assign kafka message error: %s", err.Error())
-						}
-					case kafka.PartitionEOF:
-						logger.Warn("Kafka consumer reached EOF. error: %v", event)
-					case kafka.Error:
-						logger.Warn("Kafka consumer failed. error: %v", event)
-					default:
-						logger.Warn("Kafka consumer ignored. ev: %v", event)
+					msg, err := c.Consumer.ReadMessage(-1)
+					if err == nil {
+						func() {
+							defer e.OnError("Kafka consumer")
+							for _, fn := range c.consumerFuncList {
+								fn(msg.Value)
+							}
+
+							if _, err = c.Consumer.CommitMessage(msg); err != nil {
+								logger.Error("Kafka consumer commit message error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
+							}
+						}()
+					} else if !err.(kafka.Error).IsTimeout() {
+						logger.Error("Kafka consumer error: %v (%v)\n", err, msg)
 					}
 				}
 			}
 		}()
 	}
-
-	ticker := time.NewTicker(time.Second * 1)
-	go func() {
-		for {
-			select {
-			case <-c.ctx.Done():
-				return
-			case <-ticker.C:
-				if p, err := c.Consumer.Commit(); err != nil {
-					logger.Error("Kafka consumer commit error: %s. TopicPartition: %s", err.Error(), tools.ToJson(p))
-				}
-			default:
-
-			}
-		}
-	}()
 }

@@ -29,9 +29,6 @@ func NewProducerClient(config Config) Producer {
 	if err := configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ",")); err != nil {
 		logger.Warn("set bootstrap.servers error: %s", err.Error())
 	}
-	if err := configMap.SetKey("group.id", config.GroupID); err != nil {
-		logger.Warn("set group.id error: %s", err.Error())
-	}
 	if config.SecurityProtocol != "" {
 		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
 			logger.Warn("set security.protocol error: %s", err.Error())
@@ -67,7 +64,7 @@ func NewProducerClient(config Config) Producer {
 				if ev.TopicPartition.Error != nil {
 					logger.Error("Kafka producer delivery failed. error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
 				} else {
-					logger.Info("Kafka producer delivery message %v to %v", ev.Value, ev.TopicPartition)
+					logger.Debug("Kafka producer delivery message %v to %v", ev.Value, ev.TopicPartition)
 				}
 			}
 		}
@@ -83,7 +80,7 @@ func (c *KafkaClient) Send(msg interface{}) error {
 		event := make(chan kafka.Event, len(c.config.Topics))
 		for _, topic := range c.config.Topics {
 			message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Value: []byte(tools.ToJson(msg))}
-			err := c.Producer.Produce(message, event)
+			err = c.Producer.Produce(message, event)
 			if err != nil {
 				return err
 			}
@@ -94,10 +91,10 @@ func (c *KafkaClient) Send(msg interface{}) error {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					logger.Error("Kafka producer delivery failed. error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
+					logger.Error("Kafka producer delivery failed. error: %v. Message %v, topic %v", ev.TopicPartition.Error, tools.ToJson(msg), ev.TopicPartition.Topic)
 					err = ev.TopicPartition.Error
 				} else {
-					logger.Info("Kafka producer delivery message %v to %v", ev.Value, ev.TopicPartition)
+					logger.Debug("Kafka producer delivery message %v to %v", tools.ToJson(msg), ev.TopicPartition)
 				}
 			}
 		}
@@ -110,10 +107,9 @@ func (c *KafkaClient) Send(msg interface{}) error {
 
 func (c *KafkaClient) AsyncSend(msg interface{}) error {
 	if c.Producer != nil {
-		event := make(chan kafka.Event, len(c.config.Topics))
 		for _, topic := range c.config.Topics {
 			message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Value: []byte(tools.ToJson(msg))}
-			err := c.Producer.Produce(message, event)
+			err := c.Producer.Produce(message, nil)
 			if err != nil {
 				return err
 			}

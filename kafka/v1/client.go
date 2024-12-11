@@ -8,6 +8,12 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
+/*
+ * 基于github.com/confluentinc/confluent-kafka-go实现的kafka client
+ * 1、生产者支持异步和同步发送
+ * 2、消费者支持设置consumer_worker_num, 消费者数量
+ */
+
 type Config struct {
 	Name              string   `yaml:"name"`
 	Enable            bool     `yaml:"enable"`
