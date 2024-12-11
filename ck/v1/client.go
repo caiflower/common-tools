@@ -12,6 +12,12 @@ import (
 	"github.com/uptrace/go-clickhouse/ch/chschema"
 )
 
+/**
+ * 基于tcp原生接口实现的ck客户端，go > 1.18
+ * ck client use tcp native protocol
+ * https://clickhouse.com/docs/zh/interfaces/tcp
+ */
+
 type Config struct {
 	User            string        `yaml:"user"`
 	Password        string        `yaml:"password"`
