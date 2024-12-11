@@ -10,7 +10,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/uptrace/go-clickhouse/ch"
 	"github.com/uptrace/go-clickhouse/ch/chschema"
-	"github.com/uptrace/go-clickhouse/chdebug"
 )
 
 type Config struct {
@@ -26,11 +25,23 @@ type Config struct {
 	Plural          bool          `json:"plural"`
 }
 
-type Client struct {
-	db *ch.DB
+type IClickHouseDB interface {
+	GetDB() *ch.DB
+	GetSelect(model interface{}) *ch.SelectQuery // 获得通用处理器：查询
+	GetInsert(model interface{}) *ch.InsertQuery // 获得通用处理器：写入
+
+	TruncateTable(model interface{}) error                 // 清空表
+	DropTable(model interface{}) error                     // 删除表
+	GetCreateTable(model interface{}) *ch.CreateTableQuery // 创建表
+	Close()                                                // 关闭
 }
 
-func NewClient(config Config) *Client {
+type Client struct {
+	db     *ch.DB
+	config *Config
+}
+
+func NewClient(config Config) IClickHouseDB {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
 		logger.Warn("Clickhouse set default config failed. err: %s", err.Error())
 	}
@@ -53,18 +64,72 @@ func NewClient(config Config) *Client {
 	//	ch.WithPoolSize(config.PoolSize),
 	//	ch.WithTLSConfig(&tls.Config{InsecureSkipVerify: true}),
 	//)
-	db.AddQueryHook(chdebug.NewQueryHook(chdebug.WithVerbose(true)))
-	if err := db.Ping(context.Background()); err != nil {
-		logger.Error("Clickhouse ping failed. err: %s", err.Error())
+	c := &Client{
+		db:     db,
+		config: &config,
 	}
-
+	if config.Debug {
+		db.AddQueryHook(c)
+	}
 	if !config.Plural {
 		chschema.SetTableNameInflector(func(tableName string) string {
 			return tableName
 		})
 	}
 
-	return &Client{
-		db: db,
+	// ping
+	if err := db.Ping(context.Background()); err != nil {
+		logger.Error("Clickhouse ping failed. err: %s", err.Error())
 	}
+
+	return c
+}
+
+func (c *Client) BeforeQuery(ctx context.Context, event *ch.QueryEvent) context.Context {
+	return ctx
+}
+
+func (c *Client) AfterQuery(ctx context.Context, event *ch.QueryEvent) {
+	if c.config.Debug {
+		rows := ""
+		if event.Result != nil {
+			c, _ := event.Result.RowsAffected()
+			rows = fmt.Sprintf(". rows_affected=%d.", c)
+		}
+		if event.Err == nil {
+			logger.Debug("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
+		} else {
+			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, time.Since(event.StartTime), rows, event.Err)
+		}
+	}
+}
+
+func (c *Client) GetDB() *ch.DB {
+	return c.db
+}
+
+func (c *Client) GetSelect(model interface{}) *ch.SelectQuery {
+	return c.db.NewSelect().Model(model)
+}
+
+func (c *Client) GetInsert(model interface{}) *ch.InsertQuery {
+	return c.db.NewInsert().Model(model)
+}
+
+func (c *Client) TruncateTable(model interface{}) error {
+	_, err := c.db.NewTruncateTable().Model(model).Exec(context.TODO())
+	return err
+}
+
+func (c *Client) DropTable(model interface{}) error {
+	_, err := c.db.NewDropTable().Model(model).Exec(context.TODO())
+	return err
+}
+
+func (c *Client) GetCreateTable(model interface{}) *ch.CreateTableQuery {
+	return c.db.NewCreateTable().Model(model)
+}
+
+func (c *Client) Close() {
+	c.db.Close()
 }
