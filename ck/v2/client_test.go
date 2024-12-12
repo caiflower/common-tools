@@ -14,7 +14,7 @@ type Host struct {
 	CreateTime basic.Time
 }
 
-func TestNewClient(t *testing.T) {
+func getClient() IClickHouseDB {
 	client := NewClient(Config{
 		User:     "root",
 		Password: "",
@@ -22,6 +22,12 @@ func TestNewClient(t *testing.T) {
 		DbName:   "host_meta",
 		Debug:    true,
 	})
+
+	return client
+}
+
+func TestNewClient(t *testing.T) {
+	client := getClient()
 
 	if query, err := client.GetDB().Query("SELECT * FROM `host`"); err != nil {
 		panic(err)
@@ -43,4 +49,20 @@ func TestNewClient(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestModel(t *testing.T) {
+	client := getClient()
+
+	model := client.NewInsert().Model(&Host{})
+	fmt.Println(model)
+
+	model = client.NewInsert().Model(Host{})
+	fmt.Println(model)
+
+	model = client.NewInsert().Model([]*Host{})
+	fmt.Println(model)
+
+	model = client.NewInsert().Model([]Host{})
+	fmt.Println(model)
 }

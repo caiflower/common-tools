@@ -2,6 +2,7 @@ package v2
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -26,6 +27,8 @@ type Config struct {
 
 type IClickHouseDB interface {
 	GetDB() *sql.DB
+
+	NewInsert() *InsertQuery
 }
 
 type Client struct {
@@ -67,4 +70,81 @@ func NewClient(config Config) IClickHouseDB {
 
 func (c *Client) GetDB() *sql.DB {
 	return c.db
+}
+
+func (c *Client) NewInsert() *InsertQuery {
+	return &InsertQuery{
+		db: c.db,
+	}
+}
+
+type InsertQuery struct {
+	db    *sql.DB
+	table string
+
+	sqlErr error
+}
+
+func (q *InsertQuery) Model(v interface{}) *InsertQuery {
+	of := reflect.TypeOf(v)
+	switch of.Kind() {
+	case reflect.Ptr:
+		q.table = tools.ToUnderscore(of.Elem().Name())
+	case reflect.Struct:
+		q.table = tools.ToUnderscore(of.Name())
+	case reflect.Slice:
+		if of.Elem().Kind() == reflect.Ptr {
+			q.table = tools.ToUnderscore(of.Elem().Elem().Name())
+		} else if of.Elem().Kind() == reflect.Struct {
+			q.table = tools.ToUnderscore(of.Elem().Name())
+		}
+	default:
+		q.sqlErr = fmt.Errorf("invalid model type: %s", of.Kind().String())
+	}
+
+	return q
+}
+
+func (q *InsertQuery) Exec(v interface{}) (int64, error) {
+	if q.sqlErr != nil {
+		return 0, q.sqlErr
+	}
+
+	of := reflect.TypeOf(v)
+	switch of.Kind() {
+	case reflect.Ptr:
+		//conn, err := q.db.Prepare("INSERT INTO " + q.table)
+		//if err != nil {
+		//	q.sqlErr = err
+		//	return 0, q.sqlErr
+		//}
+
+		//value := reflect.ValueOf(v)
+		//for i := 0; i < of.Elem().NumField(); i++ {
+		//
+		//}
+
+		//if result, err := q.db.Exec(""); err != nil {
+		//	q.sqlErr = err
+		//	return 0, q.sqlErr
+		//} else {
+		//	return result.RowsAffected()
+		//}
+	case reflect.Struct:
+
+	case reflect.Slice:
+		//begin, err := q.db.Begin()
+		//if err != nil {
+		//	return 0, err
+		//}
+		//if of.Elem().Kind() == reflect.Ptr {
+		//	q.table = tools.ToUnderscore(of.Elem().Elem().Name())
+		//} else if of.Elem().Kind() == reflect.Struct {
+		//	q.table = tools.ToUnderscore(of.Elem().Name())
+		//}
+	default:
+		q.sqlErr = fmt.Errorf("invalid model type: %s", of.Kind().String())
+	}
+
+	return 0, q.sqlErr
 }

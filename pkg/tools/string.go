@@ -65,6 +65,12 @@ func ToCamel(str string) (camel string) {
 	return
 }
 
+func ToUnderscore(s string) string {
+	var re = regexp.MustCompile("([a-z0-9])([A-Z])")
+	var res = re.ReplaceAllString(s, "${1}_${2}")
+	return strings.ToLower(res)
+}
+
 func ToString(v interface{}) string {
 	if v == nil {
 		return ""
