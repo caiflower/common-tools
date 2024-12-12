@@ -17,7 +17,6 @@ require (
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	github.com/uptrace/go-clickhouse v0.2.9
-	github.com/uptrace/go-clickhouse/chdebug v0.2.9
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -26,11 +25,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/codemodus/kace v0.5.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/fatih/color v1.13.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
-	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/pierrec/lz4/v4 v4.1.17 // indirect
