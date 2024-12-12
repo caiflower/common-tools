@@ -1,7 +1,10 @@
+// +build go1.18
+
 package v1
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"reflect"
 	"time"
@@ -27,6 +30,7 @@ type Config struct {
 	ConnMaxLifetime time.Duration `yaml:"connMaxLifetime" default:"500s"`
 	Timeout         time.Duration `yaml:"timeout" default:"5s"`
 	PoolSize        int           `yaml:"pool_size" default:"200"`
+	Compress        bool          `yaml:"compress"`
 	Debug           bool          `yaml:"debug"`
 	Plural          bool          `json:"plural"`
 }
@@ -36,10 +40,21 @@ type IClickHouseDB interface {
 	GetSelect(model interface{}) *ch.SelectQuery // 获得通用处理器：查询
 	GetInsert(model interface{}) *ch.InsertQuery // 获得通用处理器：写入
 
-	TruncateTable(model interface{}) error                 // 清空表
-	DropTable(model interface{}) error                     // 删除表
-	GetCreateTable(model interface{}) *ch.CreateTableQuery // 创建表
-	Close()                                                // 关闭
+	Insert(data interface{}) (int64, error)                       // 新增
+	QueryAll(result interface{}) (int, error)                     // 查询所有
+	QueryPage(result interface{}, filter DataFilter) (int, error) //通用处理：分页查询
+
+	TruncateTable(model interface{}) error                       // 清空表
+	DropTable(model interface{}) error                           // 删除表
+	GetCreateTable(model interface{}) *ch.CreateTableQuery       // 创建表
+	GetRowsAffected(result sql.Result, err error) (int64, error) // 获取受影响的行数
+	Close()                                                      // 关闭
+}
+
+type DataFilter interface {
+	GetPage() (offset int, limit int, disable bool) //分页偏移量计算，disable=true表示禁用分页
+	Filter(db *ch.DB) *ch.SelectQuery               //查询时获取过滤器
+	GetOrders() []string                            //获得排序规则
 }
 
 type Client struct {
@@ -59,6 +74,7 @@ func NewClient(config Config) IClickHouseDB {
 		ch.WithConnMaxIdleTime(config.MaxIdleTime),
 		ch.WithConnMaxLifetime(config.MaxIdleTime),
 		ch.WithPoolSize(config.PoolSize),
+		ch.WithCompression(config.Compress),
 	)
 	//db := ch.Connect(
 	//	ch.WithUser(config.User),
@@ -134,6 +150,42 @@ func (c *Client) DropTable(model interface{}) error {
 
 func (c *Client) GetCreateTable(model interface{}) *ch.CreateTableQuery {
 	return c.db.NewCreateTable().Model(model)
+}
+
+func (c *Client) QueryAll(result interface{}) (int, error) {
+	return c.GetSelect(result).ScanAndCount(context.TODO(), result)
+}
+
+func (c *Client) QueryPage(result interface{}, filter DataFilter) (int, error) {
+	offset, limit, disable := filter.GetPage()
+
+	// 禁用分页
+	if disable {
+		count := 0
+		err := filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Scan(context.Background(), result)
+		v := reflect.ValueOf(result)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if v.Kind() == reflect.Slice {
+			count = v.Len()
+		}
+		return count, err
+	}
+
+	// 分页
+	return filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Offset(offset).Limit(limit).ScanAndCount(context.Background(), result)
+}
+
+func (c *Client) Insert(data interface{}) (int64, error) {
+	return c.GetRowsAffected(c.GetInsert(data).Exec(context.TODO()))
+}
+
+func (c *Client) GetRowsAffected(result sql.Result, err error) (int64, error) {
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (c *Client) Close() {
