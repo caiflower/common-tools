@@ -5,6 +5,7 @@ go 1.16
 replace github.com/json-iterator/go v1.1.12 => github.com/caiflower/json-iterator v1.1.12
 
 require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.0.10
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/confluentinc/confluent-kafka-go/v2 v2.2.0
