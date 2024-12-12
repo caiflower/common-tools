@@ -17,7 +17,7 @@ type Host struct {
 func TestNewClient(t *testing.T) {
 	client := NewClient(Config{
 		User:     "root",
-		Password: "qq1339811657",
+		Password: "",
 		Urls:     []string{"ck.caiflower.cn:9005"},
 		DbName:   "host_meta",
 		Debug:    true,
