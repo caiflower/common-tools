@@ -13,12 +13,16 @@ func DoFuncString(poolSize int, fn func(interface{}), slices ...string) error {
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(len(slices))
 	c := make(chan string, 100)
+	defer close(c)
 	go func() {
 		for _, v := range slices {
 			c <- v
 		}
 	}()
 
+	if poolSize <= 0 {
+		poolSize = len(slices)
+	}
 	for i := 0; i < poolSize; i++ {
 		go func() {
 			for v := range c {
@@ -40,12 +44,16 @@ func DoFuncInterface(poolSize int, fn func(interface{}), slices map[int]interfac
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(len(slices))
 	c := make(chan interface{}, 100)
+	defer close(c)
 	go func() {
 		for _, v := range slices {
 			c <- v
 		}
 	}()
 
+	if poolSize <= 0 {
+		poolSize = len(slices)
+	}
 	for i := 0; i < poolSize; i++ {
 		go func() {
 			for v := range c {
