@@ -19,7 +19,7 @@ func NewTimeStandard(str string) TimeStandard {
 	return t
 }
 
-func (t *TimeStandard) String() string {
+func (t TimeStandard) String() string {
 	if t.IsZero() {
 		return ""
 	}

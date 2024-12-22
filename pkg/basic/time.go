@@ -70,7 +70,7 @@ func unmarshalJSONToJson(data []byte) (time.Time, error) {
 	return time.ParseInLocation(`"`+format+`"`, str, loc)
 }
 
-func (t *Time) String() string {
+func (t Time) String() string {
 	if t.IsZero() {
 		return ""
 	}
