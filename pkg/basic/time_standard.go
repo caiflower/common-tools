@@ -53,9 +53,9 @@ func (t *TimeStandard) MarshalJSON() ([]byte, error) {
 	if t.IsZero() {
 		return []byte("\"\""), nil
 	}
-	b := make([]byte, 0, len(TimeFormatT)+2)
+	b := make([]byte, 0, len(TimeFormat)+2)
 	b = append(b, '"')
-	b = t.Time().AppendFormat(b, TimeFormatT)
+	b = t.Time().AppendFormat(b, TimeFormat)
 	b = append(b, '"')
 	return b, nil
 }
