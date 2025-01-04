@@ -17,15 +17,15 @@ type Message struct {
 
 func TestMock(t *testing.T) {
 	productConfig := Config{
-		Name:             "consumer",
+		Name:             "product",
 		Enable:           true,
-		BootstrapServers: []string{"10.226.132.131:9092"},
+		BootstrapServers: []string{"kafaka-kafka.app.svc.cluster.local:9092"},
 		GroupID:          "testGroup",
 		Topics:           []string{"testTopic"},
-		//SecurityProtocol: "SASL_PLAINTEXT",
-		//SaslMechanism:    "SCRAM-SHA-256",
-		//SaslUsername:     "user1",
-		//SaslPassword:     "IFh3YqTg1J",
+		SecurityProtocol: "SASL_PLAINTEXT",
+		SaslMechanism:    "SCRAM-SHA-256",
+		SaslUsername:     "user1",
+		SaslPassword:     "3JVZWh98fe",
 	}
 	pClient := NewProducerClient(productConfig)
 	if err := pClient.Send(&Message{
@@ -48,13 +48,13 @@ func TestMock(t *testing.T) {
 	consumerConfig := Config{
 		Name:             "consumer",
 		Enable:           true,
-		BootstrapServers: []string{"10.226.132.131:9092"},
-		GroupID:          "testGroup",
+		BootstrapServers: []string{"kafaka-kafka.app.svc.cluster.local:9092"},
+		GroupID:          "test",
 		Topics:           []string{"testTopic"},
-		//SecurityProtocol: "SASL_PLAINTEXT",
-		//SaslMechanism:    "SCRAM-SHA-256",
-		//SaslUsername:     "user1",
-		//SaslPassword:     "IFh3YqTg1J",
+		SecurityProtocol: "SASL_PLAINTEXT",
+		SaslMechanism:    "SCRAM-SHA-256",
+		SaslUsername:     "user1",
+		SaslPassword:     "3JVZWh98fe",
 	}
 	cClient := NewConsumerClient(consumerConfig)
 	cClient.Listen(func(message interface{}) {
@@ -65,8 +65,8 @@ func TestMock(t *testing.T) {
 		fmt.Println(tools.ToJson(m))
 	})
 
-	time.Sleep(20 * time.Second)
-	cClient.Close()
+	time.Sleep(60 * time.Second)
+	//cClient.Close()
 
 	time.Sleep(2 * time.Second)
 }
