@@ -62,6 +62,8 @@ func NewConsumerClient(config Config) Consumer {
 			logger.Warn("set sasl.password error: %s", err.Error())
 		}
 	}
+	configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
+	configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
 	configMap.SetKey("auto.offset.reset", "earliest")
 
 	consumer, err := kafka.NewConsumer(configMap)

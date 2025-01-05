@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -17,6 +18,10 @@ type Producer interface {
 }
 
 func NewProducerClient(config Config) Producer {
+	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
+		logger.Warn("Kafka consumer %s set default config failed. err: %s", config.Name, err.Error())
+	}
+
 	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock()}
 	if !config.Enable {
 		logger.Warn("kafka producer %s is disable", config.Name)
@@ -49,6 +54,8 @@ func NewProducerClient(config Config) Producer {
 			logger.Warn("set sasl.password error: %s", err.Error())
 		}
 	}
+	configMap.SetKey("request.required.acks", config.ProducerAcks)
+	configMap.SetKey("compression.type", config.ProducerCompressType)
 
 	producer, err := kafka.NewProducer(configMap)
 	if err != nil {
