@@ -17,15 +17,16 @@ type Message struct {
 
 func TestMock(t *testing.T) {
 	productConfig := Config{
-		Name:             "product",
-		Enable:           true,
-		BootstrapServers: []string{"kafaka-kafka.app.svc.cluster.local:9092"},
-		GroupID:          "testGroup",
-		Topics:           []string{"testTopic"},
-		SecurityProtocol: "SASL_PLAINTEXT",
-		SaslMechanism:    "SCRAM-SHA-256",
-		SaslUsername:     "user1",
-		SaslPassword:     "3JVZWh98fe",
+		Name:                 "product",
+		Enable:               true,
+		BootstrapServers:     []string{"kafaka-kafka.app.svc.cluster.local:9092"},
+		GroupID:              "testGroup",
+		Topics:               []string{"testTopic"},
+		SecurityProtocol:     "SASL_PLAINTEXT",
+		SaslMechanism:        "SCRAM-SHA-256",
+		SaslUsername:         "user1",
+		SaslPassword:         "3JVZWh98fe",
+		ProducerCompressType: "gzip",
 	}
 	pClient := NewProducerClient(productConfig)
 	if err := pClient.Send(&Message{

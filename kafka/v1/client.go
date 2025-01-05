@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -15,16 +16,20 @@ import (
  */
 
 type Config struct {
-	Name              string   `yaml:"name"`
-	Enable            bool     `yaml:"enable"`
-	BootstrapServers  []string `yaml:"bootstrap_servers"`
-	GroupID           string   `yaml:"group_id"`
-	Topics            []string `yaml:"topics"`
-	ConsumerWorkerNum int      `yaml:"consumer_worker_num" default:"2"`
-	SecurityProtocol  string   `yaml:"security_protocol"`
-	SaslMechanism     string   `yaml:"sasl_mechanism"`
-	SaslUsername      string   `yaml:"sasl_username"`
-	SaslPassword      string   `yaml:"sasl_password"`
+	Name                      string        `yaml:"name"`
+	Enable                    bool          `yaml:"enable"`
+	BootstrapServers          []string      `yaml:"bootstrap_servers"`
+	GroupID                   string        `yaml:"group_id"`
+	Topics                    []string      `yaml:"topics"`
+	ProducerAcks              int           `yaml:"producer_acks" default:"-1"`
+	ProducerCompressType      string        `yaml:"producer_compress_type" default:"none"` // none, gzip, snappy, lz4, zstd
+	ConsumerHeartBeatInterval time.Duration `yaml:"consumer_heart_beat_interval" default:"3s"`
+	ConsumerSessionTimeout    time.Duration `yaml:"consumer_session_timeout" default:"45s"`
+	ConsumerWorkerNum         int           `yaml:"consumer_worker_num" default:"2"`
+	SecurityProtocol          string        `yaml:"security_protocol"`
+	SaslMechanism             string        `yaml:"sasl_mechanism"`
+	SaslUsername              string        `yaml:"sasl_username"`
+	SaslPassword              string        `yaml:"sasl_password"`
 }
 
 type KafkaClient struct {
