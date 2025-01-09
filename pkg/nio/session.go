@@ -11,6 +11,7 @@ type ISession interface {
 	WriteMsg(msg *Msg) error
 	Put(key string, v interface{})
 	Get(key string) interface{}
+	GetRemoteAddr() net.Addr
 	Close()
 }
 
@@ -48,4 +49,11 @@ func (s *Session) Put(key string, v interface{}) {
 
 func (s *Session) Get(key string) interface{} {
 	return s.attribute[key]
+}
+
+func (s *Session) GetRemoteAddr() net.Addr {
+	if s.connection != nil {
+		return s.connection.RemoteAddr()
+	}
+	return nil
 }

@@ -14,6 +14,7 @@ require (
 	github.com/json-iterator/go v1.1.12
 	github.com/modern-go/gls v0.0.0-20220109145502-612d0167dce5
 	github.com/modern-go/reflect2 v1.0.2
+	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/prometheus/client_golang v1.12.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/uptrace/bun v1.0.19

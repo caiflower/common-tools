@@ -3,7 +3,9 @@ package cluster
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
+	"github.com/caiflower/common-tools/pkg/cache"
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/nio"
 
 	"github.com/caiflower/common-tools/pkg/e"
@@ -20,28 +24,30 @@ import (
 )
 
 type ICluster interface {
-	StartUp()                        // 启动
-	Close()                          // 关闭
-	IsFighting() bool                // 集群是否正在选举
-	IsClose() bool                   // 集群是否关闭
-	IsReady() bool                   // 集群是否就绪
-	IsLeader() bool                  // 当前节点是否是领导人
-	IsCandidate() bool               // 当前节点是否是候选人
-	IsFollower() bool                // 当前节点是否是群众
-	GetLeaderNode() *Node            // 获取当前的主节点
-	GetLeaderName() string           // 获取leader名称
-	GetMyNode() *Node                // 获取当前本节点
-	GetNodeByName(name string) *Node // 根据名称获取节点
-	GetMyAddress() string            // 获取当前节点通信地址
-	GetMyName() string               // 获得当前本节点名称
-	GetMyTerm() int                  // 获取当前本节点任期
-	GetAllNodeNames() []string       // 获取所有节点名称
-	GetAllNodeCount() int            // 获取所有节点的数量
-	GetAliveNodeNames() []string     // 获取所有活着的节点名称
-	GetAliveNodeCount() int          // 获取在线节点数量
-	GetLostNodeNames() []string      // 获取所有失联节点名称
-	AddJobTracker(v JobTracker)      // add scheduler
-	RemoveJobTracker(v JobTracker)   // remove scheduler
+	StartUp()                                                                     // 启动
+	Close()                                                                       // 关闭
+	IsFighting() bool                                                             // 集群是否正在选举
+	IsClose() bool                                                                // 集群是否关闭
+	IsReady() bool                                                                // 集群是否就绪
+	IsLeader() bool                                                               // 当前节点是否是领导人
+	IsCandidate() bool                                                            // 当前节点是否是候选人
+	IsFollower() bool                                                             // 当前节点是否是群众
+	GetLeaderNode() *Node                                                         // 获取当前的主节点
+	GetLeaderName() string                                                        // 获取leader名称
+	GetMyNode() *Node                                                             // 获取当前本节点
+	GetNodeByName(name string) *Node                                              // 根据名称获取节点
+	GetMyAddress() string                                                         // 获取当前节点通信地址
+	GetMyName() string                                                            // 获得当前本节点名称
+	GetMyTerm() int                                                               // 获取当前本节点任期
+	GetAllNodeNames() []string                                                    // 获取所有节点名称
+	GetAllNodeCount() int                                                         // 获取所有节点的数量
+	GetAliveNodeNames() []string                                                  // 获取所有活着的节点名称
+	GetAliveNodeCount() int                                                       // 获取在线节点数量
+	GetLostNodeNames() []string                                                   // 获取所有失联节点名称
+	AddJobTracker(v JobTracker)                                                   // add scheduler
+	RemoveJobTracker(v JobTracker)                                                // remove scheduler
+	RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) // registerFunc
+	CallFunc(fc *FuncSpec) (interface{}, error)                                   // callFunc
 }
 
 type stat uint8
@@ -71,23 +77,24 @@ type Config struct {
 }
 
 type Cluster struct {
-	lock           sync.Locker    // 启动关闭锁
-	fightingLock   sync.Locker    // 竞争锁
-	config         *Config        // 配置文件
-	curNode        *Node          // 当前节点
-	leaderNode     *Node          // 领导节点
-	leaderName     string         // 领导节点名称
-	leaderLock     sync.Locker    // leader锁
-	lostLeaderTime time.Time      // 没有leader的时间
-	allNode        *sync.Map      // 所有的节点
-	aliveNodes     *sync.Map      // 所有存活的节点
-	term           int            // 当前任期
-	sate           stat           // 集群状态
-	server         nio.IServer    // 服务端口
-	logger         logger.ILog    // 日志框架
-	msgChan        chan *Message  // 消息通信chan
-	votesMap       map[int]string // 投票map term->nodeName
-	votesLock      sync.Locker    // 投票锁
+	lock           sync.Locker                                            // 启动关闭锁
+	fightingLock   sync.Locker                                            // 竞争锁
+	config         *Config                                                // 配置文件
+	curNode        *Node                                                  // 当前节点
+	leaderNode     *Node                                                  // 领导节点
+	leaderName     string                                                 // 领导节点名称
+	leaderLock     sync.Locker                                            // leader锁
+	lostLeaderTime time.Time                                              // 没有leader的时间
+	allNode        *sync.Map                                              // 所有的节点
+	aliveNodes     *sync.Map                                              // 所有存活的节点
+	term           int                                                    // 当前任期
+	sate           stat                                                   // 集群状态
+	server         nio.IServer                                            // 服务端口
+	logger         logger.ILog                                            // 日志框架
+	msgChan        chan *Message                                          // 消息通信chan
+	votesMap       map[int]string                                         // 投票map term->nodeName
+	votesLock      sync.Locker                                            // 投票锁
+	localFuncs     map[string]func(data interface{}) (interface{}, error) // 本地函数
 	ctx            context.Context
 	cancelFunc     context.CancelFunc
 	events         chan *event
@@ -127,6 +134,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		leaderLock:   syncx.NewSpinLock(),
 		events:       make(chan *event, 20),
 		jobTrackers:  &sync.Map{},
+		localFuncs:   make(map[string]func(data interface{}) (interface{}, error)),
 	}
 
 	// 初始化节点信息
@@ -372,6 +380,7 @@ func (c *Cluster) findCurNode() {
 	}
 }
 
+// getClientHandler client contact
 func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 	handler := &nio.Handler{}
 
@@ -384,6 +393,24 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 	}
 
 	handler.OnMessageReceived = func(session *nio.Session, message *nio.Msg) {
+		// 其他协议，不受任期影响
+		if message.Flag() == messageRemoteCallRes {
+			rcMsg := new(remoteCallMessage)
+			err := message.Unmarshal(rcMsg)
+			if err != nil {
+				c.logger.Warn("[cluster] unmarshal remoteCallMessage error: %s", err.Error())
+			}
+
+			c.logger.Debug("[cluster] remote [%s] func return", session.GetRemoteAddr())
+			if f, ok := cache.LocalCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
+				f.(*FuncSpec).setResult(rcMsg.Result, rcMsg.Err)
+				// remote return, then delete cache
+				cache.LocalCache.Delete(remoteCall + rcMsg.UUID)
+			}
+			return
+		}
+
+		// 集群基本协议
 		nodeMsg := new(Message)
 		if err := message.Unmarshal(nodeMsg); err != nil {
 			c.logger.Warn("[cluster] unmarshal msg error: %s", err.Error())
@@ -423,10 +450,44 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 	return handler
 }
 
+// getServerHandler server contact
 func (c *Cluster) getServerHandler() *nio.Handler {
 	handler := &nio.Handler{}
 
 	handler.OnMessageReceived = func(session *nio.Session, message *nio.Msg) {
+		// 其他协议，不受任期影响
+		if message.Flag() == messageRemoteCallReq {
+			rcMsg := new(remoteCallMessage)
+			err := message.Unmarshal(rcMsg)
+			if err != nil {
+				c.logger.Warn("[cluster] unmarshal remoteCallMessage error: %s", err.Error())
+			}
+			f := &FuncSpec{
+				traceId:  rcMsg.TraceID,
+				uuid:     rcMsg.UUID,
+				funcName: rcMsg.FuncName,
+				param:    rcMsg.Param,
+				sync:     rcMsg.Sync,
+			}
+			msg := new(remoteCallMessage)
+			msg.TraceID = f.traceId
+			msg.UUID = f.uuid
+			msg.FuncName = f.funcName
+			msg.Param = f.param
+			msg.Sync = f.sync
+
+			c.logger.Debug("[cluster] '%s' exec remote func", c.GetMyName())
+			c.callLocalFunc(f)
+			msg.Result = f.result
+			msg.Err = f.err
+
+			if err = session.WriteMsg(nio.NewMsg(messageRemoteCallRes, msg)); err != nil {
+				c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
+			}
+			return
+		}
+
+		// 集群基本协议
 		nodeMsg := new(Message)
 		if err := message.Unmarshal(nodeMsg); err != nil {
 			c.logger.Warn("[cluster] unmarshal msg error: %s", err.Error())
@@ -590,7 +651,7 @@ func (c *Cluster) fighting() {
 
 	defer func() {
 		if c.leaderNode != nil {
-			logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderName)
+			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderName)
 		} else {
 			if !c.IsClose() {
 				c.sate = follower
@@ -727,7 +788,7 @@ func (c *Cluster) fighting() {
 					}
 				}
 				if sign {
-					logger.Info("[cluster] sign myself: %s to be leader. ", c.GetMyName())
+					c.logger.Info("[cluster] sign myself: %s to be leader. ", c.GetMyName())
 					c.signLeader(c.curNode, nextTerm)
 				}
 			}
@@ -780,7 +841,7 @@ func (c *Cluster) heartbeat() {
 			} else if c.IsFollower() {
 				// 如果集群不就绪
 				if !c.IsReady() || c.leaderNode == nil {
-					logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
+					c.logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
 					go c.fighting()
 				}
 			}
@@ -958,5 +1019,67 @@ func getStatusName(s stat) string {
 		return "leader"
 	default:
 		return ""
+	}
+}
+
+func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) {
+	c.localFuncs[funcName] = fn
+}
+
+func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
+
+	// 本地调用
+	if c.GetMyNode().name == f.nodeName {
+		c.logger.Debug("[%s] call local func '%s'", f.uuid, f.funcName)
+		go c.callLocalFunc(f)
+
+	} else { // 远程调用
+		c.logger.Debug("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
+		cache.LocalCache.Set(remoteCall+f.uuid, f, f.timeout+(5*time.Second)) //写缓存，TTL时间比超时时间富余一些。
+		c.callRemoteFunc(f)
+	}
+	f.wait()
+	return f.result, f.err
+}
+
+func (c *Cluster) callLocalFunc(f *FuncSpec) {
+	if golocalv1.GetTraceID() == "" {
+		defer golocalv1.Clean()
+		golocalv1.PutTraceID(f.traceId)
+	}
+	fc := c.localFuncs[f.funcName]
+	if fc == nil {
+		err := fmt.Errorf("not such function '%s' in the cluster", f.funcName)
+		c.logger.Error("[cluster] [remote call] failed. %s Cause of %s", f.uuid, err)
+		f.setResult(nil, err)
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("Got a runtime error %s. [remote call]\n%s", r, string(debug.Stack()))
+			f.setResult(nil, fmt.Errorf("%s", r))
+		}
+	}()
+	f.setResult(fc(f.param))
+}
+
+func (c *Cluster) callRemoteFunc(f *FuncSpec) {
+	var send bool
+	msg := &remoteCallMessage{
+		TraceID: f.traceId, UUID: f.uuid, FuncName: f.funcName, Param: f.param, Sync: f.sync,
+	}
+	c.aliveNodes.Range(func(key, val interface{}) bool {
+		if _node, ok := val.(*Node); ok && _node.name == f.nodeName {
+			send = true
+			if err := _node.SendMessage(messageRemoteCallReq, msg); err != nil {
+				f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
+				c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
+			}
+			return false
+		}
+		return true
+	})
+	if !send {
+		f.setResult(nil, fmt.Errorf("the node %s does not exist or is dead", f.nodeName))
 	}
 }
