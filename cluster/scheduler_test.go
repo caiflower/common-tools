@@ -217,6 +217,19 @@ func (t *TestCaller) MasterCall() {
 	fmt.Printf("%s MasterCall time: %s \n", t.Name, time.Now().Format("2006-01-02 15:04:05"))
 }
 
+func (t *TestCaller) OnStoppedLeading() {
+
+}
+func (t *TestCaller) OnStartedLeading() {
+
+}
+
+func (t *TestCaller) OnReleaseMaster() {}
+
+func (t *TestCaller) OnNewLeader(leaderName string) {
+
+}
+
 func (t *TestCaller) SlaverCall(leaderName string) {
 	fmt.Printf("%s SlaverCall time: %s \n", t.Name, time.Now().Format("2006-01-02 15:04:05"))
 }

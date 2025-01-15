@@ -35,12 +35,9 @@ func (v *test) valid() {
 		panic(err)
 	}
 
-	marshal1, err = tools.ToByte(msg.bytes)
-	if err != nil {
-		panic(err)
-	}
+	marshal1 = msg.bytes
 
-	if string(msg.bytes) == string(marshal1) {
+	if string(marshal) == string(marshal1) {
 		fmt.Printf("test success. %s \n", string(marshal1))
 	} else {
 		panic(fmt.Sprintf("valid faild. input: %s want: %s, but %s", marshal, v.want, msg.bytes))

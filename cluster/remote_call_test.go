@@ -100,7 +100,7 @@ func TestRemoteCall(t *testing.T) {
 			fmt.Println("timeout")
 			return
 		default:
-			result, err := f.getResult()
+			result, err := f.GetResult()
 			if err != nil {
 				fmt.Printf("err = %v \n", err)
 				return

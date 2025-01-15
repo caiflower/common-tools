@@ -22,8 +22,9 @@ func ToByte(v interface{}) (bytes []byte, err error) {
 
 func DeByte(bytes []byte, v interface{}) (err error) {
 	switch v.(type) {
-	case string:
-		v = string(bytes)
+	case *string:
+		s := v.(*string)
+		*s = string(bytes)
 		return
 	case []byte:
 		v = bytes

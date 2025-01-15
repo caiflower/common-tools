@@ -22,9 +22,23 @@ type JobTracker interface {
 }
 
 type Caller interface {
+	OnStartedLeading()
+	OnStoppedLeading()
+	OnReleaseMaster()
+	OnNewLeader(leaderName string)
 	MasterCall()
 	SlaverCall(leaderName string)
 }
+
+type DefaultCaller struct {
+}
+
+func (dc *DefaultCaller) OnStartedLeading()             {}
+func (dc *DefaultCaller) OnStoppedLeading()             {}
+func (dc *DefaultCaller) OnReleaseMaster()              {}
+func (dc *DefaultCaller) OnNewLeader(leaderName string) {}
+func (dc *DefaultCaller) MasterCall()                   {}
+func (dc *DefaultCaller) SlaverCall(leaderName string)  {}
 
 type DefaultJobTracker struct {
 	Cluster      ICluster
@@ -56,6 +70,9 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.leaderCtx = ctx
 	t.leaderCancel = cancel
+	for _, caller := range t.callers {
+		go caller.OnStartedLeading()
+	}
 
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
@@ -78,6 +95,9 @@ func (t *DefaultJobTracker) OnStoppedLeading() {
 		t.leaderCancel()
 		t.leaderCancel = nil
 	}
+	for _, caller := range t.callers {
+		go caller.OnStoppedLeading()
+	}
 }
 
 func (t *DefaultJobTracker) OnReleaseMaster() {
@@ -85,12 +105,18 @@ func (t *DefaultJobTracker) OnReleaseMaster() {
 		t.workerCancel()
 		t.workerCancel = nil
 	}
+	for _, caller := range t.callers {
+		go caller.OnReleaseMaster()
+	}
 }
 
 func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.workerCtx = ctx
 	t.workerCancel = cancel
+	for _, caller := range t.callers {
+		go caller.OnNewLeader(leaderName)
+	}
 
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
