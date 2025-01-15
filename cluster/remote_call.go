@@ -15,18 +15,19 @@ const (
 )
 
 type FuncSpec struct {
-	traceId  string      //请求ID
-	uuid     string      //唯一ID
-	nodeName string      //目标节点
-	funcName string      //函数名称
-	param    interface{} //参数
-	sync     bool        //是否同步
-	result   interface{} //结果
-	err      error       //错误信息
-	timeout  time.Duration
-	ctx      context.Context    // 上下文
-	cancel   context.CancelFunc // 取消函数
-	finished bool
+	traceId   string      //请求ID
+	uuid      string      //唯一ID
+	nodeName  string      //目标节点
+	funcName  string      //函数名称
+	param     interface{} //参数
+	sync      bool        //是否同步
+	result    interface{} //结果
+	err       error       //错误信息
+	timeout   time.Duration
+	ctx       context.Context    // 上下文
+	cancel    context.CancelFunc // 取消函数
+	finished  bool
+	attribute map[string]interface{}
 }
 
 // NewFuncSpec 同步调用，timeout是同步超时时间
@@ -58,6 +59,10 @@ func (fs *FuncSpec) SetTraceId(traceId string) *FuncSpec {
 	return fs
 }
 
+func (fs *FuncSpec) GetTraceId() string {
+	return fs.traceId
+}
+
 func (fs *FuncSpec) setResult(result interface{}, err error) {
 	fs.result = result
 	fs.err = err
@@ -78,10 +83,18 @@ func (fs *FuncSpec) wait() {
 	}
 }
 
-func (fs *FuncSpec) getResult() (interface{}, error) {
+func (fs *FuncSpec) GetResult() (interface{}, error) {
 	if _, e := cache.LocalCache.Get(remoteCall + fs.uuid); !e && !fs.finished {
 		return nil, fmt.Errorf("remote call timed out")
 	} else {
 		return fs.result, fs.err
 	}
+}
+
+func (fs *FuncSpec) SetAttribute(key string, v interface{}) {
+	fs.attribute[key] = v
+}
+
+func (fs *FuncSpec) GetAttribute(key string) interface{} {
+	return fs.attribute[key]
 }

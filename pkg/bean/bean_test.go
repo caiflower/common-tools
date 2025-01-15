@@ -6,9 +6,9 @@ import (
 )
 
 type TestAutoWrite struct {
-	TestAutoWrite1 *TestAutoWrite1 `autowrite:""`
-	TestAutoWrite2 *TestAutoWrite2 `autowrite:""`
-	//TestAutoWrite4 TestAutoWrite4 `autowrite:""`
+	*TestAutoWrite1 `autowired:""`
+	TestAutoWrite2  *TestAutoWrite2 `autowired:""`
+	//TestAutoWrite4 TestAutoWrite4 `autowired:""`
 }
 
 type TestAutoWrite1 struct {
@@ -16,11 +16,11 @@ type TestAutoWrite1 struct {
 }
 
 type TestAutoWrite2 struct {
-	TestAutoWrite3 *TestAutoWrite3 `autowrite:""`
+	TestAutoWrite3 *TestAutoWrite3 `autowired:""`
 }
 
 type TestAutoWrite3 struct {
-	TestAutoWrite2 *TestAutoWrite2 `autowrite:""`
+	TestAutoWrite2 *TestAutoWrite2 `autowired:""`
 }
 
 type TestAutoWrite4 struct {

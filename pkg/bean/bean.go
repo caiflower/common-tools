@@ -10,6 +10,7 @@ import (
 
 const (
 	AutoWrite = "autowrite"
+	Autowired = "autowired"
 )
 
 var beanContext = beanManager{
@@ -60,6 +61,9 @@ func writeBean(name string, bean interface{}) {
 		// 3. 根据package.StructName获取bean
 		// 4. 根据package.InterfaceName获取bean
 		fieldBeanName := fieldType.Tag.Get(AutoWrite)
+		if fieldBeanName == "" {
+			fieldBeanName = fieldType.Tag.Get(Autowired)
+		}
 		var fieldBean interface{}
 
 		if fieldBeanName != "" {
@@ -111,7 +115,7 @@ func writeBean(name string, bean interface{}) {
 }
 
 func needAutoWrite(tag string) bool {
-	return regexp.MustCompile(`\b` + AutoWrite + `\b`).Match([]byte(tag))
+	return regexp.MustCompile(`\b`+AutoWrite+`\b`).Match([]byte(tag)) || regexp.MustCompile(`\b`+Autowired+`\b`).Match([]byte(tag))
 }
 
 func AddBean(bean interface{}) {

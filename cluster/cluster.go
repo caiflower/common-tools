@@ -146,6 +146,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 
 	// find curNode
 	cluster.findCurNode()
+	cluster.aliveNodes.Store(cluster.GetMyName(), cluster.GetMyNode())
 
 	if cluster.curNode == nil {
 		return nil, errors.New("can not find current node")
@@ -679,7 +680,7 @@ func (c *Cluster) fighting() {
 			return
 		}
 
-		count := c.GetAliveNodeCount() + 1 // 包括自己
+		count := c.GetAliveNodeCount()
 		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
 			if len(messages)+1 < count/2 {
@@ -754,7 +755,7 @@ func (c *Cluster) fighting() {
 			return
 		}
 
-		count := c.GetAliveNodeCount() + 1 // 包括自己
+		count := c.GetAliveNodeCount()
 		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
 			c.sate = candidate
 			// 先给自己投一票
@@ -855,6 +856,9 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
+		if node.name == c.GetMyName() {
+			return true
+		}
 		go func() {
 			if err := node.connection.Write(flag, msg); err != nil {
 				c.logger.Error("[cluster] send message to %s error: %v", node.address, err)

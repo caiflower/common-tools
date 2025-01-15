@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
@@ -31,6 +32,7 @@ type IDB interface {
 	QueryByCondition(result interface{}, filter Filter) (int, error)         // 通用处理：根据条件查询
 	QueryAll(result interface{}) (int, error)                                // 通用处理：查询全量
 	GetRowsAffected(result sql.Result, err error) (int64, error)             // 通用处理：获取执行结果影响的记录数量
+	ParseErr(err error) error                                                // 单个数据操作，消化ErrNoRows
 }
 
 type Filter interface {
@@ -192,6 +194,14 @@ func (c *Client) GetRowsAffected(result sql.Result, err error) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (c *Client) ParseErr(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+
+	return err
 }
 
 func (c *Client) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context.Context {
