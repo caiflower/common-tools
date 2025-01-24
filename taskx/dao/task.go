@@ -1,4 +1,4 @@
-package dao
+package taskxdao
 
 import (
 	"context"
@@ -37,9 +37,9 @@ type TaskDao struct {
 	dbv1.IDB `autowired:""`
 }
 
-func (d *TaskDao) GetByTaskState(taskState []string) ([]*Task, error) {
+func (d *TaskDao) GetByTaskState(taskState []string, id int) ([]*Task, error) {
 	res := make([]*Task, 0)
-	err := d.GetSelect(&res).Where("task_state IN (?)", bun.In(taskState)).Scan(context.TODO(), &res)
+	err := d.GetSelect(&res).Where("task_state IN (?)", bun.In(taskState)).Where("id > ?", id).Order("id asc").Scan(context.TODO(), &res)
 	if err != nil {
 		return nil, err
 	}

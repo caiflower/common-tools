@@ -72,16 +72,17 @@ var taskHash = func(c *SubTask) string {
 }
 
 type Task struct {
-	taskName    string
-	input       string
-	description string
-	taskId      string
-	taskState   TaskState
-	requestId   string
-	retry       int
-	urgent      bool
-	subTasks    []*SubTask
-	subTaskMap  map[string]*SubTask
+	taskName      string
+	input         string
+	description   string
+	taskId        string
+	taskState     TaskState
+	requestId     string
+	retry         int
+	urgent        bool
+	failedSubtask bool
+	subTasks      []*SubTask
+	subTaskMap    map[string]*SubTask
 	//isSort      bool
 	g graph.Graph[string, *SubTask]
 }
@@ -260,16 +261,24 @@ func (t *Task) NextSubTasks() []*SubTask {
 	//}
 
 	var res []*SubTask
+	// has failedSubtask
+	if t.failedSubtask {
+		return res
+	}
+
 	predecessorMap, _ := t.g.PredecessorMap()
-	for _, v := range t.subTasks {
-		if v.GetTaskState() == TaskPending || v.GetTaskState() == TaskRunning {
-			if len(predecessorMap[v.GetTaskId()]) == 0 {
-				res = append(res, v)
-			} else {
-				break
-			}
+	for k, v := range predecessorMap {
+		if len(v) == 0 {
+			res = append(res, t.subTaskMap[k])
 		}
 	}
+	//for _, v := range t.subTasks {
+	//	if v.GetTaskState() == TaskPending || v.GetTaskState() == TaskRunning {
+	//		if len(predecessorMap[v.GetTaskId()]) == 0 {
+	//			res = append(res, v)
+	//		}
+	//	}
+	//}
 
 	return res
 }
@@ -280,7 +289,7 @@ func (t *Task) UpdateSubTaskState(taskId string, taskState TaskState) error {
 		return fmt.Errorf("%s Task not found", taskId)
 	}
 
-	if taskState == TaskFailed || taskState == TaskSucceeded {
+	if taskState == TaskSucceeded {
 		adjacencyMap, err := t.g.AdjacencyMap()
 		if err != nil {
 			return err
@@ -293,12 +302,11 @@ func (t *Task) UpdateSubTaskState(taskId string, taskState TaskState) error {
 
 		if err = t.g.RemoveVertex(subtask.GetTaskId()); err != nil {
 			return err
-		} else {
-			subtask.SetTaskState(taskState)
 		}
-	} else {
-		subtask.SetTaskState(taskState)
+	} else if taskState == TaskFailed {
+		t.failedSubtask = true
 	}
+	subtask.SetTaskState(taskState)
 
 	return nil
 }
@@ -356,9 +364,9 @@ func (t *Task) Graph() string {
 //t.isSort = true
 //}
 
-func (t *Task) convert2Bean() (*dao.Task, []*dao.Subtask) {
+func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 	now := time.Now()
-	task := &dao.Task{
+	task := &taskxdao.Task{
 		TaskId:      t.taskId,
 		TaskName:    t.taskName,
 		RequestId:   t.requestId,
@@ -373,7 +381,7 @@ func (t *Task) convert2Bean() (*dao.Task, []*dao.Subtask) {
 	}
 
 	predecessorMap, _ := t.g.PredecessorMap()
-	subtasks := make([]*dao.Subtask, 0, len(t.subTasks))
+	subtasks := make([]*taskxdao.Subtask, 0, len(t.subTasks))
 	for _, v := range t.subTasks {
 		m := predecessorMap[v.GetTaskId()]
 		preSubtaskId := ""
@@ -383,7 +391,7 @@ func (t *Task) convert2Bean() (*dao.Task, []*dao.Subtask) {
 			}
 			preSubtaskId += k
 		}
-		subtasks = append(subtasks, &dao.Subtask{
+		subtasks = append(subtasks, &taskxdao.Subtask{
 			TaskId:       t.GetTaskId(),
 			SubtaskId:    v.GetTaskId(),
 			TaskName:     v.taskName,
@@ -399,7 +407,7 @@ func (t *Task) convert2Bean() (*dao.Task, []*dao.Subtask) {
 	return task, subtasks
 }
 
-func (t *Task) initByBean(task *dao.Task, subtasks []*dao.Subtask) (*Task, error) {
+func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*Task, error) {
 	t.taskId = task.TaskId
 	t.taskName = task.TaskName
 	t.requestId = task.RequestId

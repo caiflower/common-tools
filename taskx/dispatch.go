@@ -7,6 +7,7 @@ import (
 	"github.com/caiflower/common-tools/cluster"
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/pkg/cache"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -16,15 +17,17 @@ import (
 
 const (
 	defaultTimeout = time.Second * 3
+
+	taskIdKey = "common-tools/taskx/taskId"
 )
 
 var SingletonTaskDispatcher = &taskDispatcher{}
 
 type taskDispatcher struct {
 	cluster.DefaultCaller
-	Cluster    cluster.ICluster `autowired:""`
-	TaskDao    *dao.TaskDao     `autowired:""`
-	SubTaskDao *dao.SubTaskDao  `autowired:""`
+	Cluster    cluster.ICluster     `autowired:""`
+	TaskDao    *taskxdao.TaskDao    `autowired:""`
+	SubTaskDao *taskxdao.SubTaskDao `autowired:""`
 	running    bool
 }
 
@@ -46,8 +49,8 @@ func InitTaskDispatcher(taskWorker, subtaskWorker, taskQueueSize, subtaskQueueSi
 	_tr.taskWorker = taskWorker
 	_tr.subtaskQueueSize = subtaskQueueSize
 	_tr.taskQueueSize = taskQueueSize
-	bean.AddBean(&dao.Task{})
-	bean.AddBean(&dao.Subtask{})
+	bean.AddBean(&taskxdao.Task{})
+	bean.AddBean(&taskxdao.Subtask{})
 	bean.AddBean(SingletonTaskDispatcher)
 	bean.AddBean(_tr)
 }
@@ -86,12 +89,20 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	if err := tx.Submit(); err != nil {
 		return err
 	}
+	if task.urgent {
+		go t.handleTaskImmediately(task.taskId)
+	}
 
 	return nil
 }
 
 func (t *taskDispatcher) handleTask() {
-	tasks, err := t.TaskDao.GetByTaskState([]string{string(TaskPending), string(TaskRunning)})
+	id := 0
+	if tmp, e := cache.LocalCache.Get(taskIdKey); e {
+		id = tmp.(int)
+	}
+
+	tasks, err := t.TaskDao.GetByTaskState([]string{string(TaskPending), string(TaskRunning)}, id)
 	if err != nil {
 		logger.Error("get tasks failed. err: %s", err.Error())
 		return
@@ -99,10 +110,11 @@ func (t *taskDispatcher) handleTask() {
 	if len(tasks) == 0 {
 		return
 	}
+	cache.LocalCache.Set(taskIdKey, tasks[0].Id, 0)
 
 	var (
-		runningTasks    []*dao.Task
-		runningSubTasks []*dao.Subtask
+		runningTasks    []*taskxdao.Task
+		runningSubTasks []*taskxdao.Subtask
 	)
 	for _, v := range tasks {
 		subtasks, subtaskMap, err := t.SubTaskDao.GetSubTasksByTaskId(v.TaskId)
@@ -133,7 +145,7 @@ func (t *taskDispatcher) handleTask() {
 	t.allocateWorker(runningTasks, runningSubTasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
 }
 
-func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*dao.Subtask) (finished, retry bool, runningSubtasks []*dao.Subtask) {
+func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*taskxdao.Subtask) (finished, retry bool, runningSubtasks []*taskxdao.Subtask) {
 	taskState := task.GetTaskState()
 
 	if task.taskState == TaskPending || task.taskState == TaskRunning {
@@ -166,7 +178,7 @@ func (t *taskDispatcher) backupTask() {
 
 }
 
-func (t *taskDispatcher) allocateWorker(runningTasks []*dao.Task, runningSubTasks []*dao.Subtask, aliveNodes, lostNodes []string) {
+func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSubTasks []*taskxdao.Subtask, aliveNodes, lostNodes []string) {
 	subTaskWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
@@ -181,8 +193,8 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*dao.Task, runningSubTask
 			}
 
 			if nodeName != runningSubTask.Worker {
+				subtaskId := runningSubTask.SubtaskId
 				tx.Add(func(tx *bun.Tx) error {
-					subtaskId := runningSubTask.SubtaskId
 					return t.SubTaskDao.SetWorkerAndTaskState(subtaskId, nodeName, string(TaskRunning), tx)
 				})
 			}
@@ -201,8 +213,8 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*dao.Task, runningSubTask
 			}
 
 			if nodeName != runningTask.Worker {
+				taskId := runningTask.TaskId
 				tx.Add(func(tx *bun.Tx) error {
-					taskId := runningTask.TaskId
 					return t.TaskDao.SetWorkerAndTaskState(taskId, nodeName, string(TaskRunning), tx)
 				})
 			}
@@ -228,5 +240,36 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*dao.Task, runningSubTask
 		if err != nil {
 			logger.Error("deliver subTasks failed. err: %s", err.Error())
 		}
+	}
+}
+
+func (t *taskDispatcher) handleTaskImmediately(taskId string) {
+	tasks, err := t.TaskDao.GetTasksByTaskIds([]string{taskId})
+	if err != nil {
+		logger.Error("task %v getTasksByTaskIds failed. err: %v", taskId, err)
+		return
+	}
+	if len(tasks) == 0 {
+		return
+	}
+	subtasks, subtaskMap, err := t.SubTaskDao.GetSubTasksByTaskId(taskId)
+	if err != nil {
+		return
+	}
+
+	task := &Task{}
+	task, err = task.initByBean(tasks[0], subtasks)
+	if err != nil {
+		logger.Error("task %v initByBean failed. err: %v", taskId, err)
+		return
+	}
+
+	finished, retry, runningSubtasks := t.analysisTask(task, subtaskMap)
+	if retry {
+		return
+	} else if finished {
+		t.allocateWorker(tasks, nil, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
+	} else if len(runningSubtasks) > 0 {
+		t.allocateWorker(nil, runningSubtasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
 	}
 }
