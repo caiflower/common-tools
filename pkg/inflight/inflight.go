@@ -18,6 +18,8 @@ package inflight
 
 import (
 	"sync"
+
+	"github.com/caiflower/common-tools/pkg/syncx"
 )
 
 // Idempotent is the interface required to manage in flight requests.
@@ -31,14 +33,14 @@ type Idempotent interface {
 
 // InFlight is a struct used to manage in flight requests.
 type InFlight struct {
-	mux      *sync.Mutex
+	mux      sync.Locker
 	inFlight map[string]bool
 }
 
 // NewInFlight instantiates a InFlight structures.
 func NewInFlight() *InFlight {
 	return &InFlight{
-		mux:      &sync.Mutex{},
+		mux:      syncx.NewSpinLock(),
 		inFlight: make(map[string]bool),
 	}
 }
@@ -67,4 +69,13 @@ func (db *InFlight) Delete(h Idempotent) {
 	defer db.mux.Unlock()
 
 	delete(db.inFlight, h.String())
+}
+
+func (db *InFlight) InFlight(h Idempotent) bool {
+	db.mux.Lock()
+	defer db.mux.Unlock()
+	hash := h.String()
+
+	_, ok := db.inFlight[hash]
+	return ok
 }
