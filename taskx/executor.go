@@ -1,10 +1,13 @@
 package taskx
 
+import taskxdao "github.com/caiflower/common-tools/taskx/dao"
+
 type TaskData struct {
 	RequestId string
 	TaskId    string
 	SubTaskId string
 	Input     string
+	Subtasks  map[string]taskxdao.Subtask
 }
 
 type TaskExecutor interface {

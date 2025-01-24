@@ -2,6 +2,7 @@ package taskx
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/caiflower/common-tools/cluster"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -23,15 +24,15 @@ var _tr = &taskReceiver{
 }
 
 type SubTaskBag struct {
-	subTask *dao.Subtask
-	task    *dao.Task
+	subTask *taskxdao.Subtask
+	task    *taskxdao.Task
 }
 
 type taskReceiver struct {
-	Cluster        cluster.ICluster `autowired:""`
-	TaskDao        *dao.TaskDao     `autowired:""`
-	SubTaskDao     *dao.SubTaskDao  `autowired:""`
-	TaskDispatcher *taskDispatcher  `autowired:""`
+	Cluster        cluster.ICluster     `autowired:""`
+	TaskDao        *taskxdao.TaskDao    `autowired:""`
+	SubTaskDao     *taskxdao.SubTaskDao `autowired:""`
+	TaskDispatcher *taskDispatcher      `autowired:""`
 
 	closed           bool
 	subtaskWorker    int
@@ -41,13 +42,13 @@ type taskReceiver struct {
 	taskWorker       int
 	taskQueueSize    int
 	taskInflight     *inflight.InFlight
-	taskQueue        chan *dao.Task
+	taskQueue        chan *taskxdao.Task
 }
 
 func (t *taskReceiver) Start() {
 	logger.Info("taskReceiver start.")
 	t.subTaskQueue = make(chan *SubTaskBag, t.subtaskQueueSize)
-	t.taskQueue = make(chan *dao.Task, t.taskQueueSize)
+	t.taskQueue = make(chan *taskxdao.Task, t.taskQueueSize)
 
 	t.startTaskThreads()
 	t.startSubTaskThreads()
@@ -85,12 +86,12 @@ func (t *taskReceiver) deliverSubTask(data interface{}) (interface{}, error) {
 	}
 
 	var taskIds []string
-	taskIdMap := make(map[string]*dao.Task)
+	taskIdMap := make(map[string]*taskxdao.Task)
 	for _, subtask := range subtasks {
 		if _, ok := taskIdMap[subtask.TaskId]; !ok {
 			taskIds = append(taskIds, subtask.TaskId)
 		}
-		taskIdMap[subtask.TaskId] = &dao.Task{}
+		taskIdMap[subtask.TaskId] = &taskxdao.Task{}
 	}
 
 	tasks, err := t.TaskDao.GetTasksByTaskIds(taskIds)
@@ -109,6 +110,10 @@ func (t *taskReceiver) deliverSubTask(data interface{}) (interface{}, error) {
 		}
 		if subtask.IsFinished() {
 			logger.Warn("subtask %v is finished", subtask.SubtaskId)
+			continue
+		}
+		if t.subtaskInflight.InFlight(subtask) {
+			logger.Warn("subtask %v is inflight", subtask.SubtaskId)
 			continue
 		}
 		if t.closed {
@@ -151,6 +156,10 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 		}
 		if task.IsFinished() {
 			logger.Warn("task %v is finished", task.TaskId)
+			continue
+		}
+		if t.subtaskInflight.InFlight(task) {
+			logger.Warn("task %v is inflight", task.TaskId)
 			continue
 		}
 		if t.closed {
@@ -200,7 +209,7 @@ func (t *taskReceiver) startSubTaskThreads() {
 	}
 }
 
-func (t *taskReceiver) execTask(task *dao.Task) {
+func (t *taskReceiver) execTask(task *taskxdao.Task) {
 	golocalv1.PutTraceID(task.RequestId)
 	defer golocalv1.Clean()
 
@@ -222,6 +231,7 @@ func (t *taskReceiver) execTask(task *dao.Task) {
 	}
 	task = tasks[0]
 
+	var subtaskMap map[string]taskxdao.Subtask
 	subtasks, _, err := t.SubTaskDao.GetSubTasksByTaskId(task.TaskId)
 	if err != nil {
 		logger.Error("get task %v subtasks failed. err: %v", task.TaskId, err)
@@ -232,8 +242,8 @@ func (t *taskReceiver) execTask(task *dao.Task) {
 	for _, subtask := range subtasks {
 		if subtask.TaskState == string(TaskFailed) {
 			failed = true
-			break
 		}
+		subtaskMap[subtask.TaskName] = *subtask
 	}
 
 	if !failed {
@@ -241,6 +251,7 @@ func (t *taskReceiver) execTask(task *dao.Task) {
 			RequestId: task.RequestId,
 			TaskId:    task.TaskId,
 			Input:     task.Input,
+			Subtasks:  subtaskMap,
 		})
 		if retry {
 			if task.Retry > 0 {
@@ -266,6 +277,7 @@ func (t *taskReceiver) execTask(task *dao.Task) {
 			RequestId: task.RequestId,
 			TaskId:    task.TaskId,
 			Input:     task.Input,
+			Subtasks:  subtaskMap,
 		})
 		if retry {
 			if task.Retry > 0 {
@@ -299,7 +311,7 @@ func (t *taskReceiver) execTask(task *dao.Task) {
 	}
 }
 
-func (t *taskReceiver) execSubTask(task *dao.Task, subtask *dao.Subtask) {
+func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtask) {
 	golocalv1.PutTraceID(task.RequestId)
 	defer golocalv1.Clean()
 
@@ -319,7 +331,21 @@ func (t *taskReceiver) execSubTask(task *dao.Task, subtask *dao.Subtask) {
 		logger.Warn("subtask %v executor is not found", subtask.SubtaskId)
 		return
 	}
-	retry, output, err := executor(&TaskData{RequestId: task.RequestId, TaskId: subtask.TaskId, SubTaskId: subtask.SubtaskId, Input: subtask.Input})
+
+	var preSubtasks map[string]taskxdao.Subtask
+	if subtask.PreSubtaskId != "" {
+		preSubtaskIds := strings.Split(subtask.PreSubtaskId, ",")
+		preSubtaskList, err := t.SubTaskDao.GetSubtasksBySubtaskIds(preSubtaskIds)
+		if err != nil {
+			logger.Error("subtask %v get preSubtasks failed. err: %v", subtask.SubtaskId, err)
+			return
+		}
+		for _, v := range preSubtaskList {
+			preSubtasks[v.TaskName] = *v
+		}
+	}
+
+	retry, output, err := executor(&TaskData{RequestId: task.RequestId, TaskId: subtask.TaskId, SubTaskId: subtask.SubtaskId, Input: subtask.Input, Subtasks: preSubtasks})
 	if retry {
 		if subtask.Retry > 0 {
 			if err = t.SubTaskDao.SetRetry(subtask.SubtaskId, subtask.Retry-1, nil); err != nil {
@@ -337,13 +363,13 @@ func (t *taskReceiver) execSubTask(task *dao.Task, subtask *dao.Subtask) {
 			}
 			subtask.TaskState = string(TaskFailed)
 		}
+	} else if err != nil {
+		subtask.Output = err.Error()
+		subtask.TaskState = string(TaskFailed)
 	} else if output != nil {
 		_tmpBytes, _ := tools.ToByte(output)
 		subtask.Output = string(_tmpBytes)
 		subtask.TaskState = string(TaskSucceeded)
-	} else if err != nil {
-		subtask.Output = err.Error()
-		subtask.TaskState = string(TaskFailed)
 	}
 
 	_, err = t.SubTaskDao.SetOutputAndTaskState(subtask.SubtaskId, subtask.Output, subtask.TaskState, nil)
@@ -353,7 +379,7 @@ func (t *taskReceiver) execSubTask(task *dao.Task, subtask *dao.Subtask) {
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, task.TaskId, defaultTimeout))
+		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, task.TaskId, defaultTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Warn("task %v remote call 'taskDoneCallBack' failed. err: %v", task.TaskId, err)
 		}
@@ -362,35 +388,6 @@ func (t *taskReceiver) execSubTask(task *dao.Task, subtask *dao.Subtask) {
 
 func (t *taskReceiver) taskDoneCallBack(data interface{}) (interface{}, error) {
 	logger.Debug("[taskReceiver] task %v taskDoneCallBack", data)
-	taskId := data.(string)
-	tasks, err := t.TaskDao.GetTasksByTaskIds([]string{taskId})
-	if err != nil {
-		logger.Error("task %v getTasksByTaskIds failed. err: %v", taskId, err)
-		return nil, err
-	}
-	if len(tasks) == 0 {
-		return nil, nil
-	}
-	subtasks, subtaskMap, err := t.SubTaskDao.GetSubTasksByTaskId(taskId)
-	if err != nil {
-		return nil, err
-	}
-
-	task := &Task{}
-	task, err = task.initByBean(tasks[0], subtasks)
-	if err != nil {
-		logger.Error("task %v initByBean failed. err: %v", taskId, err)
-		return nil, err
-	}
-
-	finished, retry, runningSubtasks := t.TaskDispatcher.analysisTask(task, subtaskMap)
-	if retry {
-		return nil, nil
-	} else if finished {
-		t.TaskDispatcher.allocateWorker(tasks, nil, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
-	} else if len(runningSubtasks) > 0 {
-		t.TaskDispatcher.allocateWorker(nil, runningSubtasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
-	}
-
+	t.TaskDispatcher.handleTaskImmediately(data.(string))
 	return nil, nil
 }

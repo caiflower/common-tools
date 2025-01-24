@@ -186,7 +186,7 @@ func (t *TaskDemo) StepOne(data *TaskData) (retry bool, output interface{}, err 
 
 func (t *TaskDemo) StepTwo(data *TaskData) (retry bool, output interface{}, err error) {
 	logger.Info("step two")
-	return false, data.Input, err
+	return false, "", errors.New("StepTwo failed")
 }
 
 func (t *TaskDemo) StepThree(data *TaskData) (retry bool, output interface{}, err error) {
@@ -208,7 +208,7 @@ func TestDisPatch(t *testing.T) {
 	config := dbv1.Config{
 		Url:          "proxysql.app.svc.cluster.local:6033",
 		User:         "root",
-		Password:     "xxxx",
+		Password:     "xxx",
 		DbName:       "task_test",
 		Debug:        true,
 		EnableMetric: true,
@@ -225,10 +225,10 @@ func TestDisPatch(t *testing.T) {
 		panic(err)
 	}
 
-	taskDao := &dao.TaskDao{
+	taskDao := &taskxdao.TaskDao{
 		IDB: client,
 	}
-	subtaskDao := &dao.SubTaskDao{
+	subtaskDao := &taskxdao.SubTaskDao{
 		IDB: client,
 	}
 
@@ -286,6 +286,7 @@ func TestDisPatch(t *testing.T) {
 	receiver3.TaskDispatcher = dispatcher3
 
 	// 提交一个任务
+	submitTask(dispatcher1)
 	submitTask(dispatcher1)
 
 	// begin consume
