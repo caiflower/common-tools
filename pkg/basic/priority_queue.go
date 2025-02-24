@@ -7,17 +7,17 @@ import (
 )
 
 var (
-	nilElement = errors.New("heap size is 0")
+	nilElement = errors.New("PriorityQueue size is 0")
 )
 
-type Heap[T constraints.Ordered] struct {
+type PriorityQueue[T constraints.Ordered] struct {
 	arr  []T
 	zero T
 	size int
 	Max  bool
 }
 
-func (h *Heap[T]) Offer(e T) {
+func (h *PriorityQueue[T]) Offer(e T) {
 	if cap(h.arr) >= h.size {
 		h.arr = append(h.arr, e)
 	} else {
@@ -29,7 +29,7 @@ func (h *Heap[T]) Offer(e T) {
 	}
 }
 
-func (h *Heap[T]) down(i int) {
+func (h *PriorityQueue[T]) down(i int) {
 	t := i
 	if _t := i*2 + 1; _t < h.size && h.compare(t, _t) {
 		t = _t
@@ -44,7 +44,7 @@ func (h *Heap[T]) down(i int) {
 	}
 }
 
-func (h *Heap[T]) compare(i, j int) bool {
+func (h *PriorityQueue[T]) compare(i, j int) bool {
 	if h.Max {
 		return h.arr[i] < h.arr[j]
 	} else {
@@ -52,13 +52,13 @@ func (h *Heap[T]) compare(i, j int) bool {
 	}
 }
 
-func (h *Heap[T]) swap(i, j int) {
+func (h *PriorityQueue[T]) swap(i, j int) {
 	tmp := h.arr[i]
 	h.arr[i] = h.arr[j]
 	h.arr[j] = tmp
 }
 
-func (h *Heap[T]) Poll() (T, error) {
+func (h *PriorityQueue[T]) Poll() (T, error) {
 	if h.size > 0 {
 		res := h.arr[0]
 		h.arr[0] = h.arr[h.size-1]
@@ -77,7 +77,7 @@ func (h *Heap[T]) Poll() (T, error) {
 	}
 }
 
-func (h *Heap[T]) Peek(e T) (T, error) {
+func (h *PriorityQueue[T]) Peek() (T, error) {
 	if h.size > 0 {
 		return h.arr[0], nil
 	} else {
@@ -85,15 +85,15 @@ func (h *Heap[T]) Peek(e T) (T, error) {
 	}
 }
 
-func (h *Heap[T]) Size() int {
+func (h *PriorityQueue[T]) Size() int {
 	return h.size
 }
 
-func (h *Heap[T]) Contains(e T) bool {
+func (h *PriorityQueue[T]) Contains(e T) bool {
 	return h.indexOf(e) != -1
 }
 
-func (h *Heap[T]) indexOf(e T) int {
+func (h *PriorityQueue[T]) indexOf(e T) int {
 	for i := 0; i < h.size; i++ {
 		if h.arr[i] == e {
 			return i
