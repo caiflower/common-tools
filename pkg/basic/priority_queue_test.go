@@ -7,7 +7,7 @@ import (
 
 func TestHeap_Contains(t *testing.T) {
 	nums := []int{4, 5, 1, 6, 2, 7, 3, 8, 10, 20, 13, 30, 10}
-	h := Heap[int]{
+	h := PriorityQueue[int]{
 		Max: false,
 	}
 
