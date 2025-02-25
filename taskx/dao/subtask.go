@@ -9,18 +9,19 @@ import (
 )
 
 type Subtask struct {
-	Id           int
-	TaskId       string
-	SubtaskId    string
-	TaskName     string
-	Input        string
-	Output       string
-	TaskState    string
-	Worker       string
-	Retry        int
-	PreSubtaskId string
-	UpdateTime   basic.Time
-	Status       int
+	Id            int
+	TaskId        string
+	SubtaskId     string
+	TaskName      string
+	Input         string
+	Output        string
+	TaskState     string
+	Worker        string
+	Retry         int
+	RetryInterval int
+	PreSubtaskId  string
+	UpdateTime    basic.Time
+	Status        int
 }
 
 func (t *Subtask) String() string {
