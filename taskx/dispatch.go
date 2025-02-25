@@ -130,12 +130,10 @@ func (t *taskDispatcher) handleTask() {
 			continue
 		}
 
-		finished, retry, running := t.analysisTask(task, subtaskMap)
+		finished, retry, running := t.analysisTask(task, v, subtaskMap)
 		if retry {
 			continue
-		}
-
-		if len(running) > 0 {
+		} else if len(running) > 0 {
 			runningSubTasks = append(runningSubTasks, running...)
 		} else if finished {
 			runningTasks = append(runningTasks, v)
@@ -145,7 +143,7 @@ func (t *taskDispatcher) handleTask() {
 	t.allocateWorker(runningTasks, runningSubTasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
 }
 
-func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*taskxdao.Subtask) (finished, retry bool, runningSubtasks []*taskxdao.Subtask) {
+func (t *taskDispatcher) analysisTask(task *Task, taskFromDB *taskxdao.Task, subtaskMap map[string]*taskxdao.Subtask) (finished, retry bool, runningSubtasks []*taskxdao.Subtask) {
 	taskState := task.GetTaskState()
 
 	if task.taskState == TaskPending || task.taskState == TaskRunning {
@@ -156,10 +154,29 @@ func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*taskxda
 			}
 
 			for _, subtask := range nextPendingSubTasks {
-				runningSubtasks = append(runningSubtasks, subtaskMap[subtask.GetTaskId()])
+				runningSubtask := subtaskMap[subtask.GetTaskId()]
+				if runningSubtask.TaskState == string(TaskPending) ||
+					time.Now().Add(time.Duration(runningSubtask.RetryInterval)*time.Second).After(runningSubtask.UpdateTime.Time()) {
+					runningSubtasks = append(runningSubtasks, runningSubtask)
+				}
 			}
 		} else {
-			finished = true
+			if time.Now().Add(time.Duration(taskFromDB.RetryInterval) * time.Second).After(taskFromDB.UpdateTime.Time()) {
+				finished = true
+			}
+
+			if !finished {
+				// if task has not retry，task updateTime must before all subtasks updateTime
+				var subtaskLastUpdateTime time.Time
+				for _, subtask := range subtaskMap {
+					if subtask.UpdateTime.Time().After(subtaskLastUpdateTime) {
+						subtaskLastUpdateTime = subtask.UpdateTime.Time()
+					}
+				}
+				if subtaskLastUpdateTime.After(taskFromDB.UpdateTime.Time()) {
+					finished = true
+				}
+			}
 		}
 	}
 
@@ -179,6 +196,10 @@ func (t *taskDispatcher) backupTask() {
 }
 
 func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSubTasks []*taskxdao.Subtask, aliveNodes, lostNodes []string) {
+	if len(runningTasks) == 0 && len(runningSubTasks) == 0 {
+		return
+	}
+
 	subTaskWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
@@ -264,7 +285,7 @@ func (t *taskDispatcher) handleTaskImmediately(taskId string) {
 		return
 	}
 
-	finished, retry, runningSubtasks := t.analysisTask(task, subtaskMap)
+	finished, retry, runningSubtasks := t.analysisTask(task, tasks[0], subtaskMap)
 	if retry {
 		return
 	} else if finished {

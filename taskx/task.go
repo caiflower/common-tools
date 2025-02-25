@@ -20,7 +20,8 @@ const (
 	TaskFailed    TaskState = "Failed"
 	TaskSucceeded TaskState = "Succeeded"
 
-	DefaultRetryCount = 3
+	DefaultRetryCount  = 3
+	DefaultRetryTimout = 3
 )
 
 type ITask interface {
@@ -37,6 +38,7 @@ type ITask interface {
 	IsFinished() bool
 	SetRequestId(string string) *Task
 	SetRetry(retry int) *Task
+	SetRetryInterval(retryInterval int) *Task
 	SetUrgent() *Task
 
 	AddSubTask(Task *SubTask) error                          // add SubTask
@@ -59,6 +61,7 @@ type ISubTask interface {
 	GetInput() string
 	SetOutput(output interface{}) *SubTask
 	SetRetry(retry int) *SubTask
+	SetRetryInterval(retryInterval int) *SubTask
 	GetOutput() string
 	UnmarshalOutput(v interface{}) error
 	UnmarshalInput(v interface{}) error
@@ -79,6 +82,7 @@ type Task struct {
 	taskState     TaskState
 	requestId     string
 	retry         int
+	retryInterval int
 	urgent        bool
 	failedSubtask bool
 	subTasks      []*SubTask
@@ -88,31 +92,34 @@ type Task struct {
 }
 
 type SubTask struct {
-	taskName  string
-	input     string
-	output    string
-	taskId    string
-	retry     int
-	taskState TaskState
-	attribute map[string]interface{}
+	taskName      string
+	input         string
+	output        string
+	taskId        string
+	retry         int
+	retryInterval int
+	taskState     TaskState
+	attribute     map[string]interface{}
 }
 
 func NewTask(taskName string) *Task {
 	return &Task{
-		taskId:     tools.GenerateId("task"),
-		taskName:   taskName,
-		taskState:  TaskPending,
-		subTaskMap: make(map[string]*SubTask),
-		retry:      DefaultRetryCount,
-		g:          graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
+		taskId:        tools.GenerateId("task"),
+		taskName:      taskName,
+		taskState:     TaskPending,
+		subTaskMap:    make(map[string]*SubTask),
+		retry:         DefaultRetryCount,
+		g:             graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
+		retryInterval: DefaultRetryTimout,
 	}
 }
 
 func NewSubTask(taskName string) *SubTask {
 	return &SubTask{
-		taskName:  taskName,
-		taskState: TaskPending,
-		retry:     DefaultRetryCount,
+		taskName:      taskName,
+		taskState:     TaskPending,
+		retry:         DefaultRetryCount,
+		retryInterval: DefaultRetryTimout,
 	}
 }
 
@@ -183,6 +190,11 @@ func (t *SubTask) SetRetry(retry int) *SubTask {
 	return t
 }
 
+func (t *SubTask) SetRetryInterval(retryTimeout int) *SubTask {
+	t.retryInterval = retryTimeout
+	return t
+}
+
 func (t *Task) GetTaskId() string {
 	return t.taskId
 }
@@ -247,6 +259,11 @@ func (t *Task) SetRequestId(requestId string) *Task {
 
 func (t *Task) SetRetry(retry int) *Task {
 	t.retry = retry
+	return t
+}
+
+func (t *Task) SetRetryInterval(retryInterval int) *Task {
+	t.retryInterval = retryInterval
 	return t
 }
 
@@ -367,17 +384,18 @@ func (t *Task) Graph() string {
 func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 	now := time.Now()
 	task := &taskxdao.Task{
-		TaskId:      t.taskId,
-		TaskName:    t.taskName,
-		RequestId:   t.requestId,
-		Input:       t.input,
-		Retry:       t.retry,
-		Urgent:      t.urgent,
-		TaskState:   string(t.taskState),
-		Description: t.description,
-		CreateTime:  basic.Time(now),
-		UpdateTime:  basic.Time(now),
-		Status:      1,
+		TaskId:        t.taskId,
+		TaskName:      t.taskName,
+		RequestId:     t.requestId,
+		Input:         t.input,
+		Retry:         t.retry,
+		RetryInterval: t.retryInterval,
+		Urgent:        t.urgent,
+		TaskState:     string(t.taskState),
+		Description:   t.description,
+		CreateTime:    basic.Time(now),
+		UpdateTime:    basic.Time(now),
+		Status:        1,
 	}
 
 	predecessorMap, _ := t.g.PredecessorMap()
@@ -392,15 +410,16 @@ func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 			preSubtaskId += k
 		}
 		subtasks = append(subtasks, &taskxdao.Subtask{
-			TaskId:       t.GetTaskId(),
-			SubtaskId:    v.GetTaskId(),
-			TaskName:     v.taskName,
-			Input:        v.input,
-			Retry:        v.retry,
-			TaskState:    string(v.taskState),
-			UpdateTime:   basic.Time(now),
-			PreSubtaskId: preSubtaskId,
-			Status:       1,
+			TaskId:        t.GetTaskId(),
+			SubtaskId:     v.GetTaskId(),
+			TaskName:      v.taskName,
+			Input:         v.input,
+			Retry:         v.retry,
+			RetryInterval: v.retryInterval,
+			TaskState:     string(v.taskState),
+			UpdateTime:    basic.Time(now),
+			PreSubtaskId:  preSubtaskId,
+			Status:        1,
 		})
 	}
 
@@ -417,6 +436,7 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 	t.retry = task.Retry
 	t.subTaskMap = make(map[string]*SubTask)
 	t.urgent = task.Urgent
+	t.retryInterval = task.RetryInterval
 	t.g = graph.New(taskHash, graph.Directed(), graph.PreventCycles())
 	for _, subtask := range subtasks {
 		st := &SubTask{

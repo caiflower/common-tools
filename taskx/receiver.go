@@ -231,7 +231,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 	}
 	task = tasks[0]
 
-	var subtaskMap map[string]taskxdao.Subtask
+	subtaskMap := make(map[string]taskxdao.Output)
 	subtasks, _, err := t.SubTaskDao.GetSubTasksByTaskId(task.TaskId)
 	if err != nil {
 		logger.Error("get task %v subtasks failed. err: %v", task.TaskId, err)
@@ -243,7 +243,9 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 		if subtask.TaskState == string(TaskFailed) {
 			failed = true
 		}
-		subtaskMap[subtask.TaskName] = *subtask
+		var output taskxdao.Output
+		_ = tools.Unmarshal([]byte(subtask.Output), &output)
+		subtaskMap[subtask.TaskName] = output
 	}
 
 	if !failed {
@@ -254,21 +256,21 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 			Subtasks:  subtaskMap,
 		})
 		if retry {
+			// retry
+			return
+		} else if err != nil {
 			if task.Retry > 0 {
-				if err = t.SubTaskDao.SetRetry(task.TaskId, task.Retry-1, nil); err != nil {
+				if err = t.TaskDao.SetRetry(task.TaskId, task.Retry-1, nil); err != nil {
 					logger.Error("task %v setRetry failed. err: %v", task.TaskId, err)
 				}
 				return
 			} else {
-				task.Output = "retry exceed the count"
-				if err != nil {
-					task.Output = ". err=" + err.Error()
-				}
+				task.Output = tools.ToJson(taskxdao.Output{
+					Err: err.Error(),
+					Msg: "retry exceed the count",
+				})
 				task.TaskState = string(TaskFailed)
 			}
-		} else if err != nil {
-			task.Output = err.Error()
-			task.TaskState = string(TaskFailed)
 		} else {
 			task.TaskState = string(TaskSucceeded)
 		}
@@ -280,19 +282,19 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 			Subtasks:  subtaskMap,
 		})
 		if retry {
+			return
+		} else if err != nil {
 			if task.Retry > 0 {
-				if err = t.SubTaskDao.SetRetry(task.TaskId, task.Retry-1, nil); err != nil {
+				if err = t.TaskDao.SetRetry(task.TaskId, task.Retry-1, nil); err != nil {
 					logger.Error("task %v setRetry failed. err: %v", task.TaskId, err)
 				}
 				return
 			} else {
-				task.Output = "retry exceed the count"
-				if err != nil {
-					task.Output = ". err=" + err.Error()
-				}
+				task.Output = tools.ToJson(taskxdao.Output{
+					Err: err.Error(),
+					Msg: "retry exceed the count",
+				})
 			}
-		} else if err != nil {
-			task.Output = err.Error()
 		}
 		task.TaskState = string(TaskFailed)
 	}
@@ -303,12 +305,12 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 		return
 	}
 
-	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, task.TaskId, defaultTimeout))
-		if err != nil {
-			logger.Warn("task %v remote call 'taskDoneCallBack' failed. err: %v", task.TaskId, err)
-		}
-	}
+	//if task.Urgent {
+	//	_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, task.TaskId, defaultTimeout))
+	//	if err != nil {
+	//		logger.Warn("task %v remote call 'taskDoneCallBack' failed. err: %v", task.TaskId, err)
+	//	}
+	//}
 }
 
 func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtask) {
@@ -332,7 +334,7 @@ func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtas
 		return
 	}
 
-	var preSubtasks map[string]taskxdao.Subtask
+	preSubtasks := make(map[string]taskxdao.Output)
 	if subtask.PreSubtaskId != "" {
 		preSubtaskIds := strings.Split(subtask.PreSubtaskId, ",")
 		preSubtaskList, err := t.SubTaskDao.GetSubtasksBySubtaskIds(preSubtaskIds)
@@ -341,34 +343,34 @@ func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtas
 			return
 		}
 		for _, v := range preSubtaskList {
-			preSubtasks[v.TaskName] = *v
+			var output taskxdao.Output
+			_ = tools.Unmarshal([]byte(subtask.Output), &output)
+			preSubtasks[v.TaskName] = output
 		}
 	}
 
 	retry, output, err := executor(&TaskData{RequestId: task.RequestId, TaskId: subtask.TaskId, SubTaskId: subtask.SubtaskId, Input: subtask.Input, Subtasks: preSubtasks})
 	if retry {
+		// retry
+		return
+	} else if err != nil {
 		if subtask.Retry > 0 {
 			if err = t.SubTaskDao.SetRetry(subtask.SubtaskId, subtask.Retry-1, nil); err != nil {
 				logger.Error("subtask %v setRetry failed. err: %v", subtask.SubtaskId, err)
 			}
 			return
 		} else {
-			subtask.Output = "retry exceed the count"
-			if output != "" {
-				_tmpBytes, _ := tools.ToByte(output)
-				subtask.Output += ". output=" + string(_tmpBytes)
-			}
-			if err != nil {
-				subtask.Output = ". err=" + err.Error()
-			}
+			subtask.Output = tools.ToJson(taskxdao.Output{
+				Output: tools.ToJson(output),
+				Err:    err.Error(),
+				Msg:    "retry exceed the count",
+			})
 			subtask.TaskState = string(TaskFailed)
 		}
-	} else if err != nil {
-		subtask.Output = err.Error()
-		subtask.TaskState = string(TaskFailed)
 	} else if output != nil {
-		_tmpBytes, _ := tools.ToByte(output)
-		subtask.Output = string(_tmpBytes)
+		subtask.Output = tools.ToJson(taskxdao.Output{
+			Output: tools.ToJson(output),
+		})
 		subtask.TaskState = string(TaskSucceeded)
 	}
 

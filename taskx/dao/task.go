@@ -9,20 +9,27 @@ import (
 )
 
 type Task struct {
-	Id          int
-	RequestId   string
-	TaskId      string
-	TaskName    string
-	Input       string
-	Output      string
-	Worker      string
-	Retry       int
-	Urgent      bool
-	TaskState   string
-	Description string
-	CreateTime  basic.Time
-	UpdateTime  basic.Time
-	Status      int
+	Id            int
+	RequestId     string
+	TaskId        string
+	TaskName      string
+	Input         string
+	Output        string
+	Worker        string
+	Retry         int
+	RetryInterval int
+	Urgent        bool
+	TaskState     string
+	Description   string
+	CreateTime    basic.Time
+	UpdateTime    basic.Time
+	Status        int
+}
+
+type Output struct {
+	Output string `json:",omitempty"`
+	Err    string `json:",omitempty" json:"err,omitempty"`
+	Msg    string `json:",omitempty" json:"msg,omitempty"`
 }
 
 func (t *Task) String() string {
@@ -39,7 +46,7 @@ type TaskDao struct {
 
 func (d *TaskDao) GetByTaskState(taskState []string, id int) ([]*Task, error) {
 	res := make([]*Task, 0)
-	err := d.GetSelect(&res).Where("task_state IN (?)", bun.In(taskState)).Where("id > ?", id).Order("id asc").Scan(context.TODO(), &res)
+	err := d.GetSelect(&res).Where("task_state IN (?)", bun.In(taskState)).Where("id >= ?", id).Order("id asc").Scan(context.TODO(), &res)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +78,6 @@ func (d *TaskDao) SetOutputAndTaskState(taskId, output, taskState string, tx *bu
 }
 
 func (d *TaskDao) SetRetry(taskId string, retry int, tx *bun.Tx) (err error) {
-	_, err = d.GetRowsAffected(d.GetUpdate(&Subtask{}, tx).Where("task_id = ?", taskId).Set("retry = ?", retry).Exec(context.TODO()))
+	_, err = d.GetRowsAffected(d.GetUpdate(&Task{}, tx).Where("task_id = ?", taskId).Set("retry = ?", retry).Exec(context.TODO()))
 	return
 }

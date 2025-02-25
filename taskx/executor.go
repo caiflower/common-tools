@@ -7,7 +7,7 @@ type TaskData struct {
 	TaskId    string
 	SubTaskId string
 	Input     string
-	Subtasks  map[string]taskxdao.Subtask
+	Subtasks  map[string]taskxdao.Output
 }
 
 type TaskExecutor interface {

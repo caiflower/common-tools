@@ -186,7 +186,7 @@ func (t *TaskDemo) StepOne(data *TaskData) (retry bool, output interface{}, err 
 
 func (t *TaskDemo) StepTwo(data *TaskData) (retry bool, output interface{}, err error) {
 	logger.Info("step two")
-	return false, "", errors.New("StepTwo failed")
+	return false, "", nil
 }
 
 func (t *TaskDemo) StepThree(data *TaskData) (retry bool, output interface{}, err error) {
