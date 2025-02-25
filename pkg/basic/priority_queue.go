@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	nilElement = errors.New("PriorityQueue size is 0")
+	nilElement = errors.New("size is 0")
 )
 
 type PriorityQueue[T constraints.Ordered] struct {
