@@ -4,33 +4,34 @@ import (
 	"sync"
 )
 
-type LRUCache struct {
+type LRUCache[K comparable, T any] struct {
 	capacity int
-	itemMap  map[string]*node
+	itemMap  map[K]*node[K, T]
 	lock     sync.RWMutex
-	head     *node
-	tail     *node
+	head     *node[K, T]
+	tail     *node[K, T]
+	zero     T
 }
 
-type node struct {
-	key  string
-	item interface{}
-	prev *node
-	next *node
+type node[K comparable, T any] struct {
+	key  K
+	item T
+	prev *node[K, T]
+	next *node[K, T]
 }
 
-func NewLRUCache(capacity int) *LRUCache {
+func NewLRUCache[K comparable, T any](capacity int) *LRUCache[K, T] {
 	if capacity <= 0 {
 		panic("invalid lru cache capacity")
 	}
-	return &LRUCache{
+	return &LRUCache[K, T]{
 		capacity: capacity,
-		itemMap:  make(map[string]*node),
+		itemMap:  make(map[K]*node[K, T]),
 		lock:     sync.RWMutex{},
 	}
 }
 
-func (c *LRUCache) Get(key string) (interface{}, bool) {
+func (c *LRUCache[K, T]) Get(key K) (T, bool) {
 	c.lock.RLock()
 	if v, ok := c.itemMap[key]; ok {
 		c.lock.RUnlock()
@@ -41,17 +42,17 @@ func (c *LRUCache) Get(key string) (interface{}, bool) {
 		return v.item, ok
 	} else {
 		c.lock.RUnlock()
-		return nil, false
+		return c.zero, false
 	}
 }
 
-func (c *LRUCache) Put(key string, value interface{}) {
-	var n *node
+func (c *LRUCache[K, T]) Put(key K, value T) {
+	var n *node[K, T]
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	if v, ok := c.itemMap[key]; !ok {
-		n = &node{
+		n = &node[K, T]{
 			key:  key,
 			item: value,
 		}
@@ -70,7 +71,7 @@ func (c *LRUCache) Put(key string, value interface{}) {
 	return
 }
 
-func (c *LRUCache) removeTail() {
+func (c *LRUCache[K, T]) removeTail() {
 	key := c.tail.key
 	if len(c.itemMap) == 1 {
 		c.head = nil
@@ -82,7 +83,7 @@ func (c *LRUCache) removeTail() {
 	delete(c.itemMap, key)
 }
 
-func (c *LRUCache) moveToHead(n *node) {
+func (c *LRUCache[K, T]) moveToHead(n *node[K, T]) {
 	if c.head == n {
 		return
 	}
@@ -112,7 +113,7 @@ func (c *LRUCache) moveToHead(n *node) {
 	}
 }
 
-func (c *LRUCache) Size() int {
+func (c *LRUCache[K, T]) Size() int {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return len(c.itemMap)
