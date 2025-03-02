@@ -7,26 +7,27 @@ import (
 	"github.com/caiflower/common-tools/pkg/syncx"
 )
 
-type LFUCache struct {
-	itemMap  map[string]interface{}
-	freq     map[string]int
-	freqMap  map[int]*basic.LinkedHashMap
+type LFUCache[K comparable, V any] struct {
+	itemMap  map[K]V
+	freq     map[K]int
+	freqMap  map[int]*basic.LinkedHashMap[K, interface{}]
 	capacity int
 	minUsed  int
 	lock     sync.Locker
+	zeroV    V
 }
 
-func NewLFUCache(capacity int) *LFUCache {
-	return &LFUCache{
+func NewLFUCache[K comparable, V any](capacity int) *LFUCache[K, V] {
+	return &LFUCache[K, V]{
 		capacity: capacity,
-		freq:     make(map[string]int),
-		freqMap:  make(map[int]*basic.LinkedHashMap),
-		itemMap:  make(map[string]interface{}),
+		freq:     make(map[K]int),
+		freqMap:  make(map[int]*basic.LinkedHashMap[K, interface{}]),
+		itemMap:  make(map[K]V),
 		lock:     syncx.NewSpinLock(),
 	}
 }
 
-func (c *LFUCache) Put(key string, value interface{}) {
+func (c *LFUCache[K, V]) Put(key K, value V) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -44,7 +45,7 @@ func (c *LFUCache) Put(key string, value interface{}) {
 	c.increase(key)
 }
 
-func (c *LFUCache) Get(key string) (interface{}, bool) {
+func (c *LFUCache[K, V]) Get(key K) (V, bool) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -52,11 +53,11 @@ func (c *LFUCache) Get(key string) (interface{}, bool) {
 		c.increase(key)
 		return v, true
 	} else {
-		return nil, false
+		return c.zeroV, false
 	}
 }
 
-func (c *LFUCache) increase(key string) {
+func (c *LFUCache[K, V]) increase(key K) {
 	useCnt := c.freq[key]
 	if useCnt != 0 {
 		c.freqMap[useCnt].Remove(key)
@@ -66,7 +67,7 @@ func (c *LFUCache) increase(key string) {
 		}
 	}
 	if c.freqMap[useCnt+1] == nil {
-		c.freqMap[useCnt+1] = basic.NewLinkHashMap()
+		c.freqMap[useCnt+1] = basic.NewLinkHashMap[K, interface{}]()
 	}
 	c.freq[key] = useCnt + 1
 	c.freqMap[useCnt+1].Put(key, struct{}{})
