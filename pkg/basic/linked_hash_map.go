@@ -1,29 +1,31 @@
 package basic
 
-type LinkedHashMap struct {
-	itemMap map[string]*linkedHashMapNode
-	head    *linkedHashMapNode
-	tail    *linkedHashMapNode
+type LinkedHashMap[K comparable, T any] struct {
+	itemMap map[K]*linkedHashMapNode[K, T]
+	head    *linkedHashMapNode[K, T]
+	tail    *linkedHashMapNode[K, T]
+	zeroK   K
+	zeroT   T
 }
 
-func NewLinkHashMap() *LinkedHashMap {
-	return &LinkedHashMap{
-		itemMap: make(map[string]*linkedHashMapNode),
+func NewLinkHashMap[K comparable, T any]() *LinkedHashMap[K, T] {
+	return &LinkedHashMap[K, T]{
+		itemMap: make(map[K]*linkedHashMapNode[K, T]),
 	}
 }
 
-type linkedHashMapNode struct {
-	key   string
-	value interface{}
-	prev  *linkedHashMapNode
-	next  *linkedHashMapNode
+type linkedHashMapNode[K comparable, T any] struct {
+	key   K
+	value T
+	prev  *linkedHashMapNode[K, T]
+	next  *linkedHashMapNode[K, T]
 }
 
-func (m *LinkedHashMap) Put(k string, v interface{}) {
-	var n *linkedHashMapNode
+func (m *LinkedHashMap[K, T]) Put(k K, v T) {
+	var n *linkedHashMapNode[K, T]
 
 	if _n, ok := m.itemMap[k]; !ok {
-		n = &linkedHashMapNode{
+		n = &linkedHashMapNode[K, T]{
 			key:   k,
 			value: v,
 		}
@@ -36,16 +38,16 @@ func (m *LinkedHashMap) Put(k string, v interface{}) {
 	m.movetoHead(n)
 }
 
-func (m *LinkedHashMap) Get(k string) (interface{}, bool) {
+func (m *LinkedHashMap[K, T]) Get(k K) (T, bool) {
 	if _n, ok := m.itemMap[k]; ok {
 		m.movetoHead(_n)
 		return _n.value, true
 	} else {
-		return nil, false
+		return m.zeroT, false
 	}
 }
 
-func (m *LinkedHashMap) Remove(k string) {
+func (m *LinkedHashMap[K, T]) Remove(k K) {
 	if n, ok := m.itemMap[k]; ok {
 		if n.prev != nil {
 			n.prev.next = n.next
@@ -64,38 +66,38 @@ func (m *LinkedHashMap) Remove(k string) {
 	}
 }
 
-func (m *LinkedHashMap) RemoveFirst() string {
+func (m *LinkedHashMap[K, T]) RemoveFirst() K {
 	if m.tail != nil {
 		key := m.head.key
 		m.Remove(key)
 		return key
 	} else {
-		return ""
+		return m.zeroK
 	}
 }
 
-func (m *LinkedHashMap) RemoveLast() string {
+func (m *LinkedHashMap[K, T]) RemoveLast() K {
 	if m.tail != nil {
 		key := m.tail.key
 		m.Remove(key)
 		return key
 	} else {
-		return ""
+		return m.zeroK
 	}
 }
 
-func (m *LinkedHashMap) Size() int {
+func (m *LinkedHashMap[K, T]) Size() int {
 	return len(m.itemMap)
 }
 
-func (m *LinkedHashMap) Contains(key string) bool {
+func (m *LinkedHashMap[K, T]) Contains(key K) bool {
 	_, ok := m.itemMap[key]
 	return ok
 }
 
-func (m *LinkedHashMap) Keys() []string {
+func (m *LinkedHashMap[K, T]) Keys() []K {
 	p := m.head
-	var res []string
+	var res []K
 	for p != nil {
 		res = append(res, p.key)
 		p = p.next
@@ -103,9 +105,9 @@ func (m *LinkedHashMap) Keys() []string {
 	return res
 }
 
-func (m *LinkedHashMap) Values() []interface{} {
+func (m *LinkedHashMap[K, T]) Values() []T {
 	p := m.head
-	var res []interface{}
+	var res []T
 	for p != nil {
 		res = append(res, p.value)
 		p = p.next
@@ -113,7 +115,7 @@ func (m *LinkedHashMap) Values() []interface{} {
 	return res
 }
 
-func (m *LinkedHashMap) movetoHead(n *linkedHashMapNode) {
+func (m *LinkedHashMap[K, T]) movetoHead(n *linkedHashMapNode[K, T]) {
 	if m.head == n {
 		return
 	}

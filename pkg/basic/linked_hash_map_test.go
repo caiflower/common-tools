@@ -6,7 +6,7 @@ import (
 )
 
 func TestLinkedHashMap(t *testing.T) {
-	linkedHashMap := NewLinkHashMap()
+	linkedHashMap := NewLinkHashMap[string, string]()
 	linkedHashMap.Put("key1", "value1")
 	linkedHashMap.Put("key2", "value2")
 	linkedHashMap.Put("key3", "value3")
