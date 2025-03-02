@@ -1,3 +1,7 @@
+# 如何使用？
+
+https://github.com/caiflower/cf-tools
+
 # common-tools
 
 | 名称              | 路径                                             | 描述                                                         |
