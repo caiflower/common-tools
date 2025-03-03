@@ -42,7 +42,7 @@ func (dq *DelayQueue) Add(value interface{}, delay time.Time) {
 	item := delayItem{priority: delay.UnixNano(), value: value}
 	dq.heap.Offer(item)
 	first, err := dq.heap.Peek()
-	if err != nil && first.String() == item.String() {
+	if err == nil && first.String() == item.String() {
 		dq.timer.Reset(first.getDelay())
 	}
 }
