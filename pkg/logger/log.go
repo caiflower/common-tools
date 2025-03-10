@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/e"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 
 	"github.com/caiflower/common-tools/pkg/syncx"
@@ -274,6 +275,8 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 		}
 	}
 	file = short
+
+	defer e.OnError("logger crash")
 
 	if lh.dataQueue != nil {
 		lh.dataQueue <- data{
