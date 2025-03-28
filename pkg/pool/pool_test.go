@@ -41,3 +41,18 @@ func Test_DoFuncInterface(t *testing.T) {
 
 	fmt.Printf("%v %v", slices[0], slices[1])
 }
+
+func Test_DoFunc(t *testing.T) {
+	var slices []*Object
+	slices = append(slices, &Object{}, &Object{}, &Object{})
+	fn := func(v *Object) {
+		v.Age = 1
+	}
+
+	err := DoFunc[*Object](10, fn, slices...)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%v %v %v", slices[0], slices[1], slices[2])
+}
