@@ -5,6 +5,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"errors"
+
+	"github.com/caiflower/common-tools/global/env"
 )
 
 var DefaultAesKey = []byte("01234567890123456789012345678901")
@@ -56,4 +58,43 @@ func AesDecrypt(data []byte, key []byte) ([]byte, error) {
 		return nil, err
 	}
 	return crypto, nil
+}
+
+// AesDecryptBase64 AesDecrypt + base64
+func AesDecryptBase64(data string) (string, error) {
+	key := DefaultAesKey
+	if env.AESKey != "" {
+		key = []byte(env.AESKey)
+	}
+	return AesDecryptBase64WithKey(data, key)
+}
+
+func AesDecryptBase64WithKey(data string, key []byte) (string, error) {
+	decoding, err := Base64Decoding(data)
+	if err != nil {
+		return "", err
+	}
+
+	encrypt, err := AesDecrypt([]byte(decoding), key)
+	if err != nil {
+		return "", err
+	}
+	return string(encrypt), nil
+}
+
+// AesEncryptBase64 AesEncrypt + base64
+func AesEncryptBase64(data string) (string, error) {
+	key := DefaultAesKey
+	if env.AESKey != "" {
+		key = []byte(env.AESKey)
+	}
+	return AesEncryptBase64WithKey(data, key)
+}
+
+func AesEncryptBase64WithKey(data string, key []byte) (string, error) {
+	encrypt, err := AesEncrypt([]byte(data), key)
+	if err != nil {
+		return "", err
+	}
+	return Base64Encoding(string(encrypt)), nil
 }

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	_ "github.com/go-sql-driver/mysql"
@@ -78,11 +79,23 @@ func NewDBClient(config Config) (c *Client, err error) {
 		startMetric(ctx, c.DB, &config)
 	}
 
+	if err = c.DB.Ping(); err != nil {
+		return nil, errors.New("connect to db failed")
+	}
+
+	global.DefaultResourceManger.Add(c)
 	return c, nil
 }
 
 func createMysqlClient(config *Config) (*Client, error) {
 	password := config.Password
+	if config.EnablePasswordEncrypt {
+		_tmpPassword, err := tools.AesDecryptBase64(password)
+		if err != nil {
+			return nil, err
+		}
+		password = _tmpPassword
+	}
 	dns := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=%s", config.User, password, config.Url, config.DbName, config.Charset)
 	db, err := sql.Open("mysql", dns)
 	if err != nil {
