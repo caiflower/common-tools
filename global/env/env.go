@@ -9,11 +9,13 @@ import (
 var (
 	LocalhostIP string
 	ConfigPath  string
+	AESKey      string
 )
 
 func init() {
 	findLocalHostIP()
 	initConfigPath()
+	initEnv()
 }
 
 func initConfigPath() {
@@ -38,6 +40,13 @@ func findLocalHostIP() {
 				LocalhostIP = ipnet.IP.String()
 			}
 		}
+	}
+}
+
+func initEnv() {
+	AESKey = os.Getenv("AES_KEY")
+	if AESKey != "" && len(AESKey) != 32 && len(AESKey) != 24 && len(AESKey) != 16 {
+		panic("invalid AES_KEY length, AES_KEY must 16 or 24 or 32")
 	}
 }
 

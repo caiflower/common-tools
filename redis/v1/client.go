@@ -39,15 +39,16 @@ type RedisClient interface {
 }
 
 type Config struct {
-	Mode         string        `yaml:"mode"`
-	Addrs        []string      `yaml:"addrs"`
-	Password     string        `yaml:"password"`
-	DB           int           `yaml:"db"`
-	ReadTimeout  time.Duration `yaml:"readTimeout" default:"10s"`
-	WriteTimeout time.Duration `yaml:"writeTimeout" default:"20s"`
-	PoolSize     int           `yaml:"poolSize"`
-	MinIdleConns int           `yaml:"minIdleConns" default:"20"`
-	MaxConnAge   time.Duration `yaml:"maxConnAge" default:"80s"`
+	Mode                  string        `yaml:"mode"`
+	Addrs                 []string      `yaml:"addrs"`
+	Password              string        `yaml:"password"`
+	EnablePasswordEncrypt bool          `yaml:"enable_password_encrypt"`
+	DB                    int           `yaml:"db"`
+	ReadTimeout           time.Duration `yaml:"readTimeout" default:"10s"`
+	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s"`
+	PoolSize              int           `yaml:"poolSize"`
+	MinIdleConns          int           `yaml:"minIdleConns" default:"20"`
+	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"80s"`
 }
 
 type redisClient struct {
@@ -57,17 +58,25 @@ type redisClient struct {
 }
 
 func NewRedisClient(config Config) RedisClient {
-	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	logger.Info("**** Create Redis Client **** \n Redis config: %v", tools.ToJson(config))
 	c := &redisClient{
 		config: &config,
 	}
+	password := config.Password
+	if config.EnablePasswordEncrypt {
+		_tmpPassword, err := tools.AesDecryptBase64(password)
+		if err != nil {
+			panic(fmt.Sprintf("new redis client failed. err: %v", err))
+		}
+		password = _tmpPassword
+	}
 	switch config.Mode {
 	case ClusterMode:
 		c.clusterClient = redis.NewClusterClient(&redis.ClusterOptions{
 			Addrs:        config.Addrs,
-			Password:     config.Password,
+			Password:     password,
 			ReadTimeout:  config.ReadTimeout,
 			WriteTimeout: config.WriteTimeout,
 			PoolSize:     config.PoolSize,
@@ -77,7 +86,7 @@ func NewRedisClient(config Config) RedisClient {
 	default:
 		c.client = redis.NewClient(&redis.Options{
 			Addr:         config.Addrs[0],
-			Password:     config.Password,
+			Password:     password,
 			DB:           config.DB,
 			ReadTimeout:  config.ReadTimeout,
 			WriteTimeout: config.WriteTimeout,
