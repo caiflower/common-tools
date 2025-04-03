@@ -270,16 +270,19 @@ func TestDisPatch(t *testing.T) {
 		Cluster:    cluster1,
 		TaskDao:    taskDao,
 		SubTaskDao: subtaskDao,
+		DBClient:   client,
 	}
 	dispatcher2 := &taskDispatcher{
 		Cluster:    cluster2,
 		TaskDao:    taskDao,
 		SubTaskDao: subtaskDao,
+		DBClient:   client,
 	}
 	dispatcher3 := &taskDispatcher{
 		Cluster:    cluster3,
 		TaskDao:    taskDao,
 		SubTaskDao: subtaskDao,
+		DBClient:   client,
 	}
 	receiver1.TaskDispatcher = dispatcher1
 	receiver2.TaskDispatcher = dispatcher2

@@ -8,6 +8,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type TaskBak Task
+
 type Task struct {
 	Id            int
 	RequestId     string

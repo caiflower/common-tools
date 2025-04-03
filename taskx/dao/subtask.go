@@ -8,6 +8,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type SubtaskBak Subtask
+
 type Subtask struct {
 	Id            int
 	TaskId        string

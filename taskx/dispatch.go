@@ -28,6 +28,7 @@ type taskDispatcher struct {
 	Cluster    cluster.ICluster     `autowired:""`
 	TaskDao    *taskxdao.TaskDao    `autowired:""`
 	SubTaskDao *taskxdao.SubTaskDao `autowired:""`
+	DBClient   dbv1.IDB             `autowired:""`
 	running    bool
 }
 
@@ -189,10 +190,6 @@ func (t *taskDispatcher) analysisTask(task *Task, taskFromDB *taskxdao.Task, sub
 	}
 
 	return
-}
-
-func (t *taskDispatcher) backupTask() {
-
 }
 
 func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSubTasks []*taskxdao.Subtask, aliveNodes, lostNodes []string) {
