@@ -813,6 +813,7 @@ func (c *Cluster) heartbeat() {
 	}()
 
 	ticker := time.NewTicker(time.Second * time.Duration(c.config.Timeout/4))
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():

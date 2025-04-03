@@ -76,6 +76,7 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -120,6 +121,7 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
