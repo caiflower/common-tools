@@ -627,9 +627,7 @@ func (c *Cluster) listen() {
 }
 
 func (c *Cluster) fighting() {
-	defer func() {
-		e.OnError("fighting")
-	}()
+	defer e.OnError("cluster fighting")
 
 	if c.config.Mode == modeSingle {
 		c.signLeader(c.curNode, 0)
@@ -808,9 +806,7 @@ func (c *Cluster) fighting() {
 }
 
 func (c *Cluster) heartbeat() {
-	defer func() {
-		e.OnError("heartbeat")
-	}()
+	defer e.OnError("cluster heartbeat")
 
 	ticker := time.NewTicker(time.Second * time.Duration(c.config.Timeout/4))
 	defer ticker.Stop()
@@ -955,9 +951,7 @@ func (c *Cluster) createEvent(name, leaderName string) {
 }
 
 func (c *Cluster) consumeEvent() {
-	defer func() {
-		e.OnError("consumeEvent")
-	}()
+	defer e.OnError("cluster consumeEvent")
 
 	for {
 		select {
