@@ -1,4 +1,4 @@
-package v1
+package webv1
 
 import (
 	"encoding/json"
@@ -16,6 +16,7 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/e"
 	"github.com/caiflower/common-tools/web/interceptor"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -95,8 +96,8 @@ type RequestCtx struct {
 	success      int
 }
 
-func (c *RequestCtx) convert2InterceptorCtx() *interceptor.Context {
-	return &interceptor.Context{Ctx: c, Attributes: make(map[string]interface{})}
+func (c *RequestCtx) convertToWebCtx() *web.Context {
+	return &web.Context{RequestContext: c, Attributes: make(map[string]interface{})}
 }
 
 func (c *RequestCtx) SetResponse(v interface{}) {
@@ -112,12 +113,24 @@ func (c *RequestCtx) GetPath() string {
 	return c.path
 }
 
-func (c *RequestCtx) GetPathParam() map[string]string {
+func (c *RequestCtx) GetPathParams() map[string]string {
 	return c.paths
 }
 
 func (c *RequestCtx) GetParams() map[string][]string {
 	return c.params
+}
+
+func (c *RequestCtx) GetMethod() string {
+	return c.method
+}
+
+func (c *RequestCtx) GetAction() string {
+	return c.action
+}
+
+func (c *RequestCtx) GetVersion() string {
+	return c.version
 }
 
 type CommonResponse struct {
@@ -147,7 +160,8 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 设置args
-	if err := h.setArgs(r, ctx); err != nil {
+	webContext := ctx.convertToWebCtx()
+	if err := h.setArgs(r, ctx, webContext); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
@@ -158,8 +172,7 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	interceptorCtx := ctx.convert2InterceptorCtx()
-	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx, interceptorCtx, e.NewApiError(e.Internal, "InternalError", nil))
+	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// 执行目标方法
 	doTargetMethod := func() e.ApiError {
@@ -167,7 +180,7 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// aop切入
-	if err := h.interceptors.DoInterceptor(interceptorCtx, doTargetMethod); err != nil {
+	if err := h.interceptors.DoInterceptor(webContext, doTargetMethod); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
@@ -235,7 +248,7 @@ func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 	return ctx.targetMethod != nil
 }
 
-func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
+func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *web.Context) e.ApiError {
 	method := ctx.targetMethod
 
 	if !method.HasArgs() {
@@ -338,6 +351,19 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx) e.ApiError {
 			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{setPath}); err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
 			}
+		}
+	}
+
+	// 设置context
+	indirect := reflect.Indirect(reflect.ValueOf(ctx.args[0].Interface()))
+	for i := 0; i < indirect.NumField(); i++ {
+		field := indirect.Field(i)
+		if field.Type().AssignableTo(reflect.TypeOf(new(web.Context)).Elem()) {
+			field.Set(reflect.ValueOf(*webContext))
+			break
+		} else if field.Type().AssignableTo(reflect.TypeOf(new(web.Context))) {
+			field.Set(reflect.ValueOf(webContext))
+			break
 		}
 	}
 
@@ -500,7 +526,7 @@ func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ct
 	}
 }
 
-func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *interceptor.Context, defaultErr e.ApiError) {
+func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *web.Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Error("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
 

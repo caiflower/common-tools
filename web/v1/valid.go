@@ -1,4 +1,4 @@
-package v1
+package webv1
 
 import (
 	"fmt"
@@ -143,7 +143,8 @@ type validObject struct {
 }
 
 func valid(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
-	if structField.Tag.Get(verf) == "nilable" && vValue.IsZero() {
+	value, ok := structField.Tag.Lookup(verf)
+	if (value == "nilable" || !ok) && vValue.IsZero() {
 		return
 	}
 
