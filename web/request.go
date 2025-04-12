@@ -4,6 +4,7 @@ import "net/http"
 
 type RequestContext interface {
 	SetResponse(data interface{})
+	GetResponse() interface{}
 	IsFinish() bool
 	GetPath() string
 	GetPathParams() map[string]string
