@@ -81,6 +81,7 @@ func (s *HttpServer) AddController(v interface{}) {
 	}
 
 	for _, path := range c.paths {
+		logger.Info("Register path %v", path)
 		s.handler.controllers[path] = c
 	}
 
@@ -106,6 +107,7 @@ func (s *HttpServer) Register(controller *RestfulController) {
 	if controller.targetMethod == nil {
 		panic(fmt.Sprintf("Register restfulApi failed. Not found controller[%s] action[%s]. ", controller.controllerName, controller.action))
 	}
+	logger.Info("Register path %v, Method: %v", "/"+controller.version+controller.originPath, controller.method)
 }
 
 //func AddParamValidFunc(fn ValidFunc) {
