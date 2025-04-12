@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/logger"
 	testv1 "github.com/caiflower/common-tools/test/controller/v1/test"
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/e"
@@ -55,6 +56,9 @@ func (t *TestInterceptor2) OnPanic(ctx *web.Context) (err e.ApiError) {
 }
 
 func TestHttpServer(t *testing.T) {
+	logger.InitLogger(&logger.Config{
+		EnableColor: "True",
+	})
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		fmt.Println("加载时区出错:", err)
