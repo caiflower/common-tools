@@ -94,6 +94,8 @@ type RequestCtx struct {
 	targetMethod *basic.Method
 	response     interface{}
 	success      int
+	w            http.ResponseWriter
+	r            *http.Request
 }
 
 func (c *RequestCtx) convertToWebCtx() *web.Context {
@@ -133,6 +135,10 @@ func (c *RequestCtx) GetVersion() string {
 	return c.version
 }
 
+func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
+	return c.w, c.r
+}
+
 type CommonResponse struct {
 	RequestId string
 	Code      *int        `json:",omitempty"`
@@ -146,6 +152,8 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 		params: r.URL.Query(),
 		paths:  make(map[string]string),
 		path:   r.URL.Path,
+		w:      w,
+		r:      r,
 	}
 
 	defer h.onCrash("dispatch", w, r, ctx, e.NewApiError(e.Internal, "InternalError", nil))
