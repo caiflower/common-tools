@@ -1,5 +1,7 @@
 package web
 
+import "net/http"
+
 type RequestContext interface {
 	SetResponse(data interface{})
 	IsFinish() bool
@@ -9,6 +11,7 @@ type RequestContext interface {
 	GetMethod() string
 	GetAction() string
 	GetVersion() string
+	GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request)
 }
 
 type Context struct {
