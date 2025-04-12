@@ -26,6 +26,13 @@ const (
 	beginTime = "beginTime"
 )
 
+var (
+	assignableApiErrorElem   = reflect.TypeOf(new(e.ApiError)).Elem()
+	assignableErrorElem      = reflect.TypeOf(new(error)).Elem()
+	assignableWebContextElem = reflect.TypeOf(new(web.Context)).Elem()
+	assignableWebContext     = reflect.TypeOf(new(web.Context))
+)
+
 // BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
 type BeforeDispatchCallbackFunc func(w http.ResponseWriter, r *http.Request) bool
 
@@ -366,10 +373,10 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *web.Cont
 	indirect := reflect.Indirect(reflect.ValueOf(ctx.args[0].Interface()))
 	for i := 0; i < indirect.NumField(); i++ {
 		field := indirect.Field(i)
-		if field.Type().AssignableTo(reflect.TypeOf(new(web.Context)).Elem()) {
+		if field.Type().AssignableTo(assignableWebContextElem) {
 			field.Set(reflect.ValueOf(*webContext))
 			break
-		} else if field.Type().AssignableTo(reflect.TypeOf(new(web.Context))) {
+		} else if field.Type().AssignableTo(assignableWebContext) {
 			field.Set(reflect.ValueOf(webContext))
 			break
 		}
@@ -424,12 +431,12 @@ func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 	results := ctx.targetMethod.Invoke(ctx.args)
 	rets := ctx.targetMethod.GetRets()
 	for i, ret := range rets {
-		if ret.AssignableTo(reflect.TypeOf(new(e.ApiError)).Elem()) {
+		if ret.AssignableTo(assignableApiErrorElem) {
 			_err := results[i].Interface()
 			if _err != nil {
 				return _err.(e.ApiError)
 			}
-		} else if ret.AssignableTo(reflect.TypeOf(new(error)).Elem()) {
+		} else if ret.AssignableTo(assignableErrorElem) {
 			_err := results[i].Interface().(error)
 			if _err != nil {
 				return e.NewApiError(e.Unknown, _err.Error(), _err)
