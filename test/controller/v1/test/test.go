@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/e"
 )
 
@@ -26,6 +27,7 @@ type InnerParam struct {
 }
 
 type Param struct {
+	web.Context
 	RequestID         string `header:"X-Request-Id"`
 	InnerStructHeader InnerHeader
 	InnerPrtHeader    *InnerHeader
@@ -52,6 +54,12 @@ type Param2 struct {
 }
 
 func (t *StructService) Test1(param Param) Param {
+	context := param.Context
+	fmt.Println(context.GetVersion())
+	fmt.Println(context.GetAction())
+	fmt.Println(context.GetMethod())
+	fmt.Println(context.GetPath())
+	fmt.Println(context.GetParams())
 	return param
 }
 
