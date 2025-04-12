@@ -146,6 +146,10 @@ func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.R
 	return c.w, c.r
 }
 
+func (c *RequestCtx) GetResponse() interface{} {
+	return c.response
+}
+
 type CommonResponse struct {
 	RequestId string
 	Code      *int        `json:",omitempty"`
