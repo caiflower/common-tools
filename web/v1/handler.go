@@ -103,6 +103,7 @@ type RequestCtx struct {
 	success      int
 	w            http.ResponseWriter
 	r            *http.Request
+	special      string
 }
 
 func (c *RequestCtx) convertToWebCtx() *web.Context {
@@ -148,6 +149,10 @@ func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.R
 
 func (c *RequestCtx) GetResponse() interface{} {
 	return c.response
+}
+
+func (c *RequestCtx) UpgradeWebsocket() {
+	c.special = "websocket"
 }
 
 type CommonResponse struct {
@@ -454,6 +459,10 @@ func (h *handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 }
 
 func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
+	if ctx.special != "" {
+		return
+	}
+
 	// 记录metric
 	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
 	go h.metric.saveMetric(h.config.Name, strconv.Itoa(e.GetCode()), ctx.method, ctx.path, sub.Milliseconds())
@@ -497,6 +506,10 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 }
 
 func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
+	if ctx.special != "" {
+		return
+	}
+
 	// 记录metric
 	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
 	go h.metric.saveMetric(h.config.Name, strconv.Itoa(ctx.success), ctx.method, ctx.path, sub.Milliseconds())

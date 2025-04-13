@@ -13,6 +13,7 @@ type RequestContext interface {
 	GetAction() string
 	GetVersion() string
 	GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request)
+	UpgradeWebsocket()
 }
 
 type Context struct {
