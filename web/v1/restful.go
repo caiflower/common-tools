@@ -33,8 +33,8 @@ func (c *RestfulController) Version(version string) *RestfulController {
 }
 
 func (c *RestfulController) Path(path string) *RestfulController {
+	c.originPath = path
 	if tools.MatchReg(path, pathParamReg) {
-		c.originPath = path
 		strList := tools.RegFind(path, pathParamReg)
 		for _, str := range strList {
 			c.pathParams = append(c.pathParams, str[2:len(str)-1])
