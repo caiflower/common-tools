@@ -18,6 +18,10 @@ type Handler struct {
 	OnException        func(session *Session)
 }
 
+func (h *Handler) SetCodec(codec ICodec) {
+	h.codec = codec
+}
+
 func (h *Handler) readIO(socket *socket, session *Session) {
 	conn := session.connection
 

@@ -13,9 +13,9 @@ type test struct {
 	want  interface{}
 }
 
-func (v *test) valid() {
+func (v *test) valid(coderName string) {
 
-	codec := GetZipCodec(logger.DefaultLogger())
+	codec := NewCodec(logger.DefaultLogger(), coderName)
 	buffer := codec.Encode(&Msg{
 		flag: 1,
 		body: v.input,
@@ -94,7 +94,8 @@ func TestGzipCodec(t *testing.T) {
 	}
 
 	for _, v := range tests {
-		v.valid()
+		v.valid("")
+		v.valid("gzip")
 	}
 }
 
