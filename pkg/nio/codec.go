@@ -46,18 +46,23 @@ func (m *Msg) Unmarshal(v interface{}) error {
 	return tools.DeByte(m.bytes, v)
 }
 
-type GzipCodec struct {
-	logger logger.ILog
+type Codec struct {
+	logger    logger.ILog
+	coderName string
 }
 
-func GetZipCodec(logger logger.ILog) *GzipCodec {
-	return &GzipCodec{logger: logger}
+func NewCodec(logger logger.ILog, coderName string) *Codec {
+	return &Codec{logger: logger, coderName: coderName}
 }
 
-func (gc *GzipCodec) Encode(msg *Msg) *bytes.Buffer {
+func GetZipCodec(logger logger.ILog) ICodec {
+	return &Codec{logger: logger, coderName: "gzip"}
+}
+
+func (c *Codec) Encode(msg *Msg) *bytes.Buffer {
 	buf := new(bytes.Buffer)
 
-	var gzipBytes []byte
+	var _bytes []byte
 	var err error
 
 	if msg.body == nil {
@@ -65,32 +70,37 @@ func (gc *GzipCodec) Encode(msg *Msg) *bytes.Buffer {
 	} else {
 		msg.bytes, err = tools.ToByte(msg.body)
 		if err != nil {
-			gc.logger.Error("encode msg error: %s", err.Error())
+			c.logger.Error("encode msg error: %s", err.Error())
 		}
-		gzipBytes, err = tools.Gzip(msg.bytes)
+		switch c.coderName {
+		case "gzip":
+			_bytes, err = tools.Gzip(msg.bytes)
+		default:
+			_bytes = msg.bytes
+		}
 		if err != nil {
-			gc.logger.Error("encode msg error: %s", err.Error())
+			c.logger.Error("encode msg error: %s", err.Error())
 		}
-		msg.length = uint32(len(gzipBytes) + 1)
+		msg.length = uint32(len(_bytes) + 1)
 	}
 
 	if err = binary.Write(buf, binary.BigEndian, msg.length); err != nil {
-		gc.logger.Error("encode msg error: %s", err.Error())
+		c.logger.Error("encode msg error: %s", err.Error())
 	}
 
 	if err = binary.Write(buf, binary.BigEndian, msg.flag); err != nil {
-		gc.logger.Error("encode msg error: %s", err.Error())
+		c.logger.Error("encode msg error: %s", err.Error())
 	}
-	if gzipBytes != nil && len(gzipBytes) != 0 {
-		buf.Write(gzipBytes)
+	if _bytes != nil && len(_bytes) != 0 {
+		buf.Write(_bytes)
 	}
 
 	return buf
 }
 
-func (gc *GzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
+func (c *Codec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 	if reader == nil || msg == nil {
-		gc.logger.Warn("decode msg failed. msg or reader is nil. ")
+		c.logger.Warn("decode msg failed. msg or reader is nil. ")
 		return false
 	}
 
@@ -100,7 +110,7 @@ func (gc *GzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 		// 读取4个字节
 		var length uint32
 		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
-			gc.logger.Error("decode msg error: %s", err.Error())
+			c.logger.Error("decode msg error: %s", err.Error())
 			return false
 		}
 		msg.length = length
@@ -108,7 +118,7 @@ func (gc *GzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 		// 读取1个字节
 		var flag uint8
 		if err := binary.Read(reader, binary.BigEndian, &flag); err != nil {
-			gc.logger.Error("decode msg error: %s", err.Error())
+			c.logger.Error("decode msg error: %s", err.Error())
 			return false
 		}
 		msg.flag = flag
@@ -127,15 +137,20 @@ func (gc *GzipCodec) Decode(msg *Msg, reader *bytes.Buffer) bool {
 
 	// >为粘包情况
 	if msg.body == nil && reader.Len() >= int(msg.length-1) {
-		gizBytes := make([]byte, msg.length-1)
-		_, err = reader.Read(gizBytes)
+		_bytes := make([]byte, msg.length-1)
+		_, err = reader.Read(_bytes)
 		if err != nil {
-			gc.logger.Error("decode msg error: %s", err.Error())
+			c.logger.Error("decode msg error: %s", err.Error())
 		}
 
-		msg.bytes, err = tools.Gunzip(gizBytes)
-		if err != nil {
-			gc.logger.Error("decode msg error: %s", err.Error())
+		switch c.coderName {
+		case "gzip":
+			msg.bytes, err = tools.Gunzip(_bytes)
+			if err != nil {
+				c.logger.Error("decode msg error: %s", err.Error())
+			}
+		default:
+			msg.bytes = _bytes
 		}
 		return true
 	} else {
