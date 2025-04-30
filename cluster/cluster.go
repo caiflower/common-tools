@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/redis/v1"
 	"reflect"
 	"runtime/debug"
 	"strconv"
@@ -62,18 +64,28 @@ const (
 
 	modeCluster = "cluster"
 	modeSingle  = "single"
+	modeRedis   = "redis"
 )
 
 type Config struct {
-	Mode    string `yaml:"mode" default:"cluster"`
-	Timeout int    `yaml:"timeout" default:"10"`
-	Enable  string `yaml:"enable" default:"false"`
+	Mode    string `yaml:"mode" default:"cluster" json:"mode"`
+	Timeout int    `yaml:"timeout" default:"10" json:"timeout"`
+	Enable  string `yaml:"enable" default:"false" json:"enable"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string
 		Port  int
 		Local bool //true表示当前进程与当前node匹配。适用本机测试等情况。线上为了配置文件一致性尽量不要使用。
-	}
+	} `yaml:"nodes" json:"nodes"`
+	RedisDiscovery RedisDiscovery `yaml:"redisDiscovery" json:"redisDiscovery"`
+}
+
+type RedisDiscovery struct {
+	BeanName           string        `yaml:"beanName"`                         // 如果为空，则Ioc分配
+	DataPath           string        `yaml:"dataPath"`                         // redis key
+	ElectionInterval   time.Duration `yaml:"electionInterval" default:"15s"`   //多久进行一次选主/续约
+	ElectionPeriod     time.Duration `yaml:"electionPeriod" default:"30s"`     //选主/续约后有效租期时间
+	SyncLeaderInterval time.Duration `yaml:"syncLeaderInterval" default:"10s"` //多久同步一次leader
 }
 
 type Cluster struct {
@@ -95,6 +107,7 @@ type Cluster struct {
 	votesMap       map[int]string                                         // 投票map term->nodeName
 	votesLock      sync.Locker                                            // 投票锁
 	localFuncs     map[string]func(data interface{}) (interface{}, error) // 本地函数
+	Redis          redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
 	ctx            context.Context
 	cancelFunc     context.CancelFunc
 	events         chan *event
@@ -102,7 +115,7 @@ type Cluster struct {
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
-	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	if config.Timeout <= 0 {
 		config.Timeout = 10
@@ -115,7 +128,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	}
 
 	switch config.Mode {
-	case modeCluster, modeSingle:
+	case modeCluster, modeSingle, modeRedis:
 	default:
 		config.Mode = modeCluster
 	}
@@ -156,6 +169,15 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		}
 	}
 
+	// redis beanName
+	if config.Mode == modeRedis && config.RedisDiscovery.BeanName != "" {
+		if b := bean.GetBean(config.RedisDiscovery.BeanName); b == nil {
+			panic(fmt.Sprintf("[cluster] redis mode, can not find redis bean %s." + config.RedisDiscovery.BeanName))
+		} else {
+			cluster.Redis = b.(redisv1.RedisClient)
+		}
+	}
+
 	return cluster, nil
 }
 
@@ -186,11 +208,18 @@ func (c *Cluster) StartUp() {
 		c.reconnect()
 	}
 
-	// 开始选举
-	go c.fighting()
-
-	if c.config.Mode != modeSingle {
+	switch c.config.Mode {
+	case modeCluster:
+		// 开始选举
+		go c.fighting()
 		// 开始心跳
+		go c.heartbeat()
+	case modeSingle:
+		c.signLeader(c.GetMyNode(), 0)
+	case modeRedis:
+		c.redisClusterStartUp()
+	default:
+		go c.fighting()
 		go c.heartbeat()
 	}
 
@@ -248,7 +277,14 @@ func (c *Cluster) IsClosed() bool {
 }
 
 func (c *Cluster) IsReady() bool {
-	return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
+	switch c.config.Mode {
+	case modeCluster:
+		return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
+	case modeRedis:
+		return c.GetLeaderName() != ""
+	default:
+		return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
+	}
 }
 
 func (c *Cluster) IsLeader() bool {
@@ -629,11 +665,6 @@ func (c *Cluster) listen() {
 func (c *Cluster) fighting() {
 	defer e.OnError("cluster fighting")
 
-	if c.config.Mode == modeSingle {
-		c.signLeader(c.curNode, 0)
-		return
-	}
-
 	if c.IsFighting() || c.IsReady() || c.IsClose() {
 		return
 	}
@@ -955,6 +986,8 @@ func (c *Cluster) consumeEvent() {
 
 	for {
 		select {
+		case <-c.ctx.Done():
+			return
 		case ev := <-c.events:
 			switch ev.name {
 			case eventNameStartUp:

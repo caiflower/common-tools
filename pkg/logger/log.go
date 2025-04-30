@@ -85,21 +85,21 @@ type LoggerHandler struct {
 }
 
 type Config struct {
-	Level          string `yaml:"level"`             // 日志级别
-	EnableTrace    string `yaml:"trace"`             // 是否开启Trace, True/False。默认False
-	QueueLength    int    `yaml:"queueLength"`       // 缓存队列大小，默认50000
-	AppenderNum    int    `yaml:"appenderNum"`       // 日志输出器数量，默认2
-	TimeFormat     string `yaml:"timeFormat"`        // 日志时间输出格式
-	Path           string `yaml:"path"`              // 日志存储目录
-	FileName       string `yaml:"fileName"`          // 日志文件名称
-	RollingPolicy  string `yaml:"rollingPolicy"`     // 日志切分策略。
-	MaxSize        string `yaml:"maxSize"`           // 1MB, 10KB, 1GB
-	MaxTime        string `yaml:"maxTime"`           // 60s, 60m, 1h
-	Compress       string `yaml:"compress"`          // 是否对备份日志进行压缩, True/False。默认True
-	CleanBackup    string `yaml:"cleanBackup"`       // 是否清理备份日志文件, True/False。默认True
-	BackupMaxCount int    `yaml:"backupMaxCount"`    // 保留备份日志文件最大数量。log.cleanBackup=true生效，默认10
-	BackupMaxDisk  string `yaml:"backupMaxDiskSize"` // 保留备份日志文件磁盘最大大小, 1MB, 10KB, 1GB。log.cleanBackup=true生效，默认1GB
-	EnableColor    string `yaml:"color"`             // 是否开启颜色
+	Level          string `yaml:"level" json:"level"`                     // 日志级别
+	EnableTrace    string `yaml:"trace" json:"trace"`                     // 是否开启Trace, True/False。默认False
+	QueueLength    int    `yaml:"queueLength" json:"queueLength"`         // 缓存队列大小，默认50000
+	AppenderNum    int    `yaml:"appenderNum" json:"appenderNum"`         // 日志输出器数量，默认2
+	TimeFormat     string `yaml:"timeFormat" json:"timeFormat"`           // 日志时间输出格式
+	Path           string `yaml:"path" json:"path"`                       // 日志存储目录
+	FileName       string `yaml:"fileName" json:"fileName"`               // 日志文件名称
+	RollingPolicy  string `yaml:"rollingPolicy" json:"rollingPolicy"`     // 日志切分策略。
+	MaxSize        string `yaml:"maxSize" json:"maxSize"`                 // 1MB, 10KB, 1GB
+	MaxTime        string `yaml:"maxTime" json:"maxTime"`                 // 60s, 60m, 1h
+	Compress       string `yaml:"compress" json:"compress"`               // 是否对备份日志进行压缩, True/False。默认True
+	CleanBackup    string `yaml:"cleanBackup" json:"cleanBackup"`         // 是否清理备份日志文件, True/False。默认True
+	BackupMaxCount int    `yaml:"backupMaxCount" json:"backupMaxCount"`   // 保留备份日志文件最大数量。log.cleanBackup=true生效，默认10
+	BackupMaxDisk  string `yaml:"backupMaxDiskSize" json:"backupMaxDisk"` // 保留备份日志文件磁盘最大大小, 1MB, 10KB, 1GB。log.cleanBackup=true生效，默认1GB
+	EnableColor    string `yaml:"color" json:"color"`                     // 是否开启颜色
 }
 
 func (lh *LoggerHandler) Close() {
