@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/caiflower/common-tools/pkg/bean"
-	"github.com/caiflower/common-tools/redis/v1"
 	"reflect"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/redis/v1"
 
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
@@ -996,21 +997,21 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					jobTracker.OnNewLeader(ev.leaderName)
+					go jobTracker.OnNewLeader(ev.leaderName)
 					return true
 				})
 			case eventNameSignMaster:
 				c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					jobTracker.OnStartedLeading()
+					go jobTracker.OnStartedLeading()
 					return true
 				})
 			case eventNameStopMaster:
 				c.logger.Debug("[cluster] %s stop master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					jobTracker.OnStoppedLeading()
+					go jobTracker.OnStoppedLeading()
 					return true
 				})
 			case eventNameElectionStart:
@@ -1021,7 +1022,7 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s release master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					tracker := value.(JobTracker)
-					tracker.OnReleaseMaster()
+					go tracker.OnReleaseMaster()
 					return true
 				})
 			case eventNameClose:
