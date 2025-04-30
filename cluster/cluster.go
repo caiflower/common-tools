@@ -983,7 +983,12 @@ func (c *Cluster) createEvent(name, leaderName string) {
 }
 
 func (c *Cluster) consumeEvent() {
-	defer e.OnError("cluster consumeEvent")
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), "consumeEvent", r, string(debug.Stack()))
+			go c.consumeEvent()
+		}
+	}()
 
 	for {
 		select {
