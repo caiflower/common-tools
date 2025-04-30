@@ -1,7 +1,9 @@
 package bean
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/caiflower/common-tools/pkg/tools/jsonpath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -11,6 +13,8 @@ import (
 const (
 	AutoWrite = "autowrite"
 	Autowired = "autowired"
+
+	ConditionalOnProperty = "conditional_on_property"
 )
 
 var beanContext = beanManager{
@@ -30,7 +34,7 @@ func Ioc() {
 	}
 }
 
-func writeBean(name string, bean interface{}) {
+func writeBean(beanName string, bean interface{}) {
 	beanType := reflect.TypeOf(bean)
 	beanValue := reflect.Indirect(reflect.ValueOf(bean))
 
@@ -38,12 +42,12 @@ func writeBean(name string, bean interface{}) {
 		field := beanValue.Field(i)
 		fieldType := beanType.Elem().Field(i)
 
-		if !needAutoWrite(string(fieldType.Tag)) {
+		if !needAutoWrite(fieldType.Tag) {
 			continue
 		}
 
 		if field.Kind() != reflect.Ptr && field.Kind() != reflect.Interface {
-			panic(fmt.Sprintf("Ioc failed. Only can autowrite pointer or interface. Bean=%s DependentBean=%s. ", name, fieldType.Name))
+			panic(fmt.Sprintf("Ioc failed. Only can autowrite pointer or interface. Bean=%s DependentBean=%s. ", beanName, fieldType.Name))
 		}
 
 		// 如果字段不是nil忽略
@@ -53,7 +57,7 @@ func writeBean(name string, bean interface{}) {
 
 		// 非公开值
 		if !field.CanSet() {
-			panic(fmt.Sprintf("Ioc failed. Field can't set. Bean=%s DependentBean=%s. ", name, fieldType.Name))
+			panic(fmt.Sprintf("Ioc failed. Field can't set. Bean=%s DependentBean=%s. ", beanName, fieldType.Name))
 		}
 
 		// 1. 根据autowrite的value获取bean
@@ -75,7 +79,7 @@ func writeBean(name string, bean interface{}) {
 		if fieldBean == nil {
 			switch field.Kind() {
 			case reflect.Interface:
-				name = field.Type().PkgPath() + "/" + field.Type().String()
+				name := field.Type().PkgPath() + "/" + field.Type().String()
 				fieldBean = GetBean(name)
 				if fieldBean == nil {
 					beanContext.lock.RLock()
@@ -90,8 +94,10 @@ func writeBean(name string, bean interface{}) {
 				pkgPath := fieldType.Type.Elem().PkgPath()
 				splits := strings.Split(pkgPath, "/")
 				path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
-				name = path + strings.Replace(fieldType.Type.String(), "*", "", 1)
+				name := path + strings.Replace(fieldType.Type.String(), "*", "", 1)
 				fieldBean = GetBean(name)
+			default:
+				panic("unhandled default case")
 			}
 		}
 		if fieldBean == nil {
@@ -104,7 +110,7 @@ func writeBean(name string, bean interface{}) {
 		if fieldBean != nil {
 			field.Set(reflect.ValueOf(fieldBean))
 		} else {
-			panic(fmt.Sprintf("Ioc failed. Field autowrite failed. Bean=%s DependentBean=%s. ", name, fieldType.Name))
+			panic(fmt.Sprintf("Ioc failed. Field autowrite failed. Bean=%s DependentBean=%s. ", beanName, fieldType.Name))
 		}
 
 		// 递归
@@ -114,7 +120,29 @@ func writeBean(name string, bean interface{}) {
 	}
 }
 
-func needAutoWrite(tag string) bool {
+func needAutoWrite(tag reflect.StructTag) bool {
+	conditionalOnProperty := tag.Get(ConditionalOnProperty)
+	if strings.HasPrefix(conditionalOnProperty, "default.") {
+		splits := strings.Split(strings.TrimPrefix(conditionalOnProperty, "default."), "=")
+		if len(splits) != 2 {
+			panic("not supported conditionalOnProperty: " + conditionalOnProperty)
+		}
+		path := jsonpath.New("tagFilter")
+		t := "{." + splits[0] + "}"
+		if err := path.Parse(t); err != nil {
+			panic(fmt.Sprintf("autowired failed. parse '%s' failed. error: %v", ConditionalOnProperty, err))
+		}
+		buf := new(bytes.Buffer)
+		err := path.Execute(buf, GetBean("default"))
+		if err != nil {
+			panic(fmt.Sprintf("autowired failed. exec '%s' failed. error: %v", ConditionalOnProperty, err))
+		}
+
+		if buf.String() != splits[1] {
+			return false
+		}
+	}
+
 	return regexp.MustCompile(`\b`+AutoWrite+`\b`).Match([]byte(tag)) || regexp.MustCompile(`\b`+Autowired+`\b`).Match([]byte(tag))
 }
 
@@ -135,6 +163,17 @@ func AddBean(bean interface{}) {
 	}
 
 	SetBean(name, bean)
+}
+
+func SetBeanOverwrite(name string, bean interface{}) {
+	if bean == nil {
+		panic("Bean error. Bean can't be nil.")
+	}
+
+	beanContext.lock.Lock()
+	defer beanContext.lock.Unlock()
+
+	beanContext.beanMap[name] = bean
 }
 
 func SetBean(name string, bean interface{}) {

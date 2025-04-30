@@ -1,4 +1,4 @@
-package v1
+package redisv1
 
 import (
 	"context"
@@ -39,16 +39,16 @@ type RedisClient interface {
 }
 
 type Config struct {
-	Mode                  string        `yaml:"mode"`
-	Addrs                 []string      `yaml:"addrs"`
-	Password              string        `yaml:"password"`
-	EnablePasswordEncrypt bool          `yaml:"enable_password_encrypt"`
-	DB                    int           `yaml:"db"`
-	ReadTimeout           time.Duration `yaml:"readTimeout" default:"10s"`
-	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s"`
-	PoolSize              int           `yaml:"poolSize"`
-	MinIdleConns          int           `yaml:"minIdleConns" default:"20"`
-	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"80s"`
+	Mode                  string        `yaml:"mode" json:"mode"`
+	Addrs                 []string      `yaml:"addrs" json:"addrs"`
+	Password              string        `yaml:"password" json:"password"`
+	EnablePasswordEncrypt bool          `yaml:"enablePasswordEncrypt" json:"enablePasswordEncrypt"`
+	DB                    int           `yaml:"db" json:"db"`
+	ReadTimeout           time.Duration `yaml:"readTimeout" default:"10s" json:"readTimeout"`
+	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s" json:"writeTimeout"`
+	PoolSize              int           `yaml:"poolSize" json:"poolSize"`
+	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
+	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"80s" json:"maxConnAge"`
 }
 
 type redisClient struct {
