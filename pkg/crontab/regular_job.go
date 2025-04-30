@@ -23,6 +23,8 @@ type regularJob struct {
 	interval time.Duration
 	// ignorePanic run again when panic
 	ignorePanic bool
+	// immediately do job immediately
+	immediately bool
 	delay       time.Duration
 	running     bool
 	ctx         context.Context
@@ -73,6 +75,12 @@ func WithIgnorePanic() Opt {
 	}
 }
 
+func WithImmediately() Opt {
+	return func(job *regularJob) {
+		job.immediately = true
+	}
+}
+
 func (j *regularJob) Run() {
 	go func() {
 		defer func() {
@@ -90,6 +98,10 @@ func (j *regularJob) Run() {
 		}()
 
 		logger.Info("%s regular job start", j.name)
+
+		if j.immediately {
+			go j.fn()
+		}
 
 		ticker := time.NewTicker(j.interval)
 		defer ticker.Stop()
