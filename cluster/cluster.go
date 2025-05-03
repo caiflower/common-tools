@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/redis/v1"
 
 	"github.com/caiflower/common-tools/global"
-	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/cache"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/nio"
@@ -397,24 +397,29 @@ func (c *Cluster) loadNodes() {
 			c.curNode = node
 		}
 	}
-	if c.config.Mode == modeSingle {
-		if c.curNode == nil {
-			c.curNode = newNode("127.0.0.1:10000", "single")
-		}
-	}
+
 }
 
 func (c *Cluster) findCurNode() {
 	if c.curNode == nil { // 说明没有开启调试
-		ip := env.GetLocalHostIP()
-		c.allNode.Range(func(key, value interface{}) bool {
-			node := value.(*Node)
-			if strings.Contains(node.address, ip) {
-				c.curNode = node
-				return false
-			}
-			return true
-		})
+		if c.config.Mode == modeSingle {
+			c.curNode = newNode("127.0.0.1:10000", "single")
+		} else {
+			dns := env.GetLocalDNS()
+			ip := env.GetLocalHostIP()
+			c.allNode.Range(func(key, value interface{}) bool {
+				node := value.(*Node)
+				if dns != "" && strings.Contains(node.address, dns) {
+					c.curNode = node
+					return false
+				}
+				if ip != "" && strings.Contains(node.address, ip) {
+					c.curNode = node
+					return false
+				}
+				return true
+			})
+		}
 	}
 }
 
