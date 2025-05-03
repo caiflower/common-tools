@@ -1,12 +1,16 @@
-//+build go1.4
+//go:build go1.4
+// +build go1.4
 
 package v1
 
 import (
 	"sync"
 
-	"github.com/caiflower/common-tools/pkg/constant"
 	"github.com/modern-go/gls"
+)
+
+const (
+	RequestID = "X-Request-ID"
 )
 
 var localMap sync.Map
@@ -27,12 +31,12 @@ func getMapByGoID(goID int64) *sync.Map {
 
 func PutTraceID(value string) {
 	m := getMapByGoID(getGoID())
-	m.Store(constant.RequestID, value)
+	m.Store(RequestID, value)
 }
 
 func GetTraceID() string {
 	m := getMapByGoID(getGoID())
-	if v, ok := m.Load(constant.RequestID); ok {
+	if v, ok := m.Load(RequestID); ok {
 		return v.(string)
 	} else {
 		return ""

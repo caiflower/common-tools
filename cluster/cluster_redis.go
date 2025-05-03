@@ -18,6 +18,7 @@ func (c *Cluster) redisClusterStartUp() {
 
 func (c *Cluster) redisFighting() {
 	go c.createEvent(eventNameElectionStart, "")
+	c.sate = fighting
 	defer func() {
 		go c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
