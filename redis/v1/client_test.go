@@ -130,9 +130,9 @@ func commonTestcase(client RedisClient) {
 
 func TestNewRedisClient(t *testing.T) {
 	client := NewRedisClient(Config{
-		Addrs:    []string{"10.226.138.162:6379"},
-		Password: "CloudIaas@123",
-		DB:       8,
+		Addrs:    []string{"redis-headless.svc.app.cluster.local:6379"},
+		Password: "",
+		DB:       1,
 	})
 	if client == nil {
 		panic("client init failed")
@@ -143,9 +143,9 @@ func TestNewRedisClient(t *testing.T) {
 
 func TestNewRedisClientWithPrefix(t *testing.T) {
 	client := NewRedisClient(Config{
-		Addrs:     []string{"10.226.138.162:6379"},
-		Password:  "CloudIaas@123",
-		DB:        8,
+		Addrs:     []string{"redis-headless.svc.app.cluster.local:6379"},
+		Password:  "",
+		DB:        1,
 		KeyPrefix: "test:",
 	})
 	if client == nil {
