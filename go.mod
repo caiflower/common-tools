@@ -10,6 +10,7 @@ require (
 	github.com/dominikbraun/graph v0.23.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-sql-driver/mysql v1.7.1
+	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/json-iterator/go v1.1.12
 	github.com/modern-go/gls v0.0.0-20220109145502-612d0167dce5

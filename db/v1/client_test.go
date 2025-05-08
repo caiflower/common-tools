@@ -1,6 +1,8 @@
-package v1
+package dbv1
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -24,10 +26,10 @@ type ContainerRegistry struct {
 
 func TestNewDBClient(t *testing.T) {
 	config := Config{
-		Url:          "10.226.138.71:3306",
+		Url:          "127.0.0.1:3306",
 		User:         "root",
 		Password:     "admin",
-		DbName:       "fc-placement",
+		DbName:       "test",
 		Debug:        true,
 		EnableMetric: true,
 	}
@@ -56,4 +58,59 @@ func TestNewDBClient(t *testing.T) {
 	fmt.Println(count)
 
 	time.Sleep(100 * time.Second)
+}
+
+func TestTransactionTimeout(t *testing.T) {
+	transactionTimeout := time.Second * 5
+
+	config := Config{
+		Url:                "127.0.0.1:3306",
+		User:               "root",
+		Password:           "admin",
+		DbName:             "test",
+		Debug:              true,
+		EnableMetric:       true,
+		TransactionTimeout: transactionTimeout,
+	}
+
+	l := logger.Config{
+		Level: logger.DebugLevel,
+	}
+
+	logger.InitLogger(&l)
+
+	client, err := NewDBClient(config)
+	if err != nil {
+		panic(err)
+	}
+
+	tx, cancel, err := client.Begin()
+	if err != nil {
+		return
+	}
+	defer cancel()
+	defer tx.Commit()
+
+	var containerRegistry []ContainerRegistry
+	containerRegistry = append(containerRegistry, ContainerRegistry{
+		RegistryName: "Test",
+		UserName:     "root",
+		Pass:         "test",
+		SecretName:   "test",
+		ExpireTime:   "2024-10-31 20:17:42",
+		Server:       "test",
+		CreateTime:   time.Now(),
+		UpdateTime:   time.Now(),
+		Status:       1,
+	})
+
+	//// 超时
+	time.Sleep(transactionTimeout + time.Second)
+
+	_, err = client.Insert(&containerRegistry, tx)
+	if err != nil && errors.Is(err, sql.ErrTxDone) {
+		logger.Info("test transaction timeout successfully")
+	} else {
+		logger.Error("test failed. Error: %v", err)
+	}
 }

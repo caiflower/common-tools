@@ -1,4 +1,4 @@
-package v1
+package dbv1
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 type IDB interface {
 	GetDB() *bun.DB                                                          // 获取数据库连接，无事物
 	GetTx(tx *bun.Tx) bun.IDB                                                // 获取数据库连接，如果tx=nil，那么获取的是无事物的连接，否者返回tx。
-	Begin() (*bun.Tx, error)                                                 // 获取一个连接，并且开始事务
+	Begin() (*bun.Tx, context.CancelFunc, error)                             // 获取一个连接，并且开始事务
 	Close()                                                                  // 关闭DB
 	GetSelect(model interface{}) *bun.SelectQuery                            // 获得通用处理器：查询
 	GetInsert(model interface{}, tx *bun.Tx) *bun.InsertQuery                // 获得通用处理器：写入
@@ -122,12 +122,14 @@ func (c *Client) GetTx(tx *bun.Tx) bun.IDB {
 	return tx
 }
 
-func (c *Client) Begin() (*bun.Tx, error) {
-	tx, err := c.DB.Begin()
+func (c *Client) Begin() (*bun.Tx, context.CancelFunc, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.config.TransactionTimeout)
+	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		cancel()
+		return nil, nil, err
 	}
-	return &tx, nil
+	return &tx, cancel, nil
 }
 
 func (c *Client) Close() {
@@ -229,7 +231,7 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 			rows = fmt.Sprintf(". rows_affected=%d.", c)
 		}
 		if event.Err == nil {
-			logger.Debug("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
+			logger.Info("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
 		} else {
 			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, time.Since(event.StartTime), rows, event.Err)
 		}

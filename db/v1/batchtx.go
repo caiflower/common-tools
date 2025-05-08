@@ -1,4 +1,4 @@
-package v1
+package dbv1
 
 import (
 	"github.com/caiflower/common-tools/pkg/logger"
