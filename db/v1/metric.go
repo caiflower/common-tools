@@ -1,4 +1,4 @@
-package v1
+package dbv1
 
 import (
 	"context"
@@ -18,6 +18,7 @@ func startMetric(ctx context.Context, db *bun.DB, config *Config) {
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 		var preWaitDuration float64
 
 		for {

@@ -6,7 +6,7 @@ import (
 )
 
 func TestLFUCache(t *testing.T) {
-	cache := NewLFUCache(2)
+	cache := NewLFUCache[string, string](2)
 
 	cache.Put("key1", "value1")
 	cache.Put("key2", "value2")

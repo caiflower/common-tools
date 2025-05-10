@@ -2,6 +2,8 @@ package crontab
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/caiflower/common-tools/global"
@@ -19,12 +21,16 @@ type Opt func(job *regularJob)
 
 type regularJob struct {
 	interval time.Duration
-	delay    time.Duration
-	running  bool
-	ctx      context.Context
-	cancel   context.CancelFunc
-	fn       func()
-	name     string
+	// ignorePanic run again when panic
+	ignorePanic bool
+	// immediately do job immediately
+	immediately bool
+	delay       time.Duration
+	running     bool
+	ctx         context.Context
+	cancel      context.CancelFunc
+	fn          func()
+	name        string
 }
 
 func NewRegularJob(name string, fn func(), opts ...Opt) RegularJob {
@@ -62,14 +68,40 @@ func WithInterval(interval time.Duration) Opt {
 //	}
 //}
 
+// WithIgnorePanic run again when panic
+func WithIgnorePanic() Opt {
+	return func(job *regularJob) {
+		job.ignorePanic = true
+	}
+}
+
+func WithImmediately() Opt {
+	return func(job *regularJob) {
+		job.immediately = true
+	}
+}
+
 func (j *regularJob) Run() {
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), "exec regular job", r, string(debug.Stack()))
+				if j.ignorePanic {
+					j.Run()
+				}
+			}
+		}()
+
 		j.running = true
 		defer func() {
 			j.running = false
 		}()
 
 		logger.Info("%s regular job start", j.name)
+
+		if j.immediately {
+			go j.fn()
+		}
 
 		ticker := time.NewTicker(j.interval)
 		defer ticker.Stop()

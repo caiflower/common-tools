@@ -34,6 +34,7 @@ func (l *TokenBucket) Startup() {
 
 	go func(ctx context.Context) {
 		ticker := time.NewTicker(l.clock)
+		defer ticker.Stop()
 
 		for {
 			select {

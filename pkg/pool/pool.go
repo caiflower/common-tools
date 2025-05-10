@@ -66,3 +66,34 @@ func DoFuncInterface(poolSize int, fn func(interface{}), slices map[int]interfac
 	waitGroup.Wait()
 	return nil
 }
+
+func DoFunc[T any](poolSize int, fn func(T), slices ...T) error {
+	if fn == nil {
+		return fmt.Errorf("nil func error")
+	}
+
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(len(slices))
+	c := make(chan T, 100)
+	defer close(c)
+	go func() {
+		for _, v := range slices {
+			c <- v
+		}
+	}()
+
+	if poolSize <= 0 {
+		poolSize = len(slices)
+	}
+	for i := 0; i < poolSize; i++ {
+		go func() {
+			for v := range c {
+				fn(v)
+				waitGroup.Done()
+			}
+		}()
+	}
+
+	waitGroup.Wait()
+	return nil
+}

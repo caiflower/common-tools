@@ -7,14 +7,14 @@ import (
 )
 
 func TestNewLRUCache(t *testing.T) {
-	cache := NewLRUCache(2)
+	cache := NewLRUCache[string, string](2)
 	go cache.Put("key1", "value1")
 	go cache.Put("key2", "value2")
 	go cache.Put("key3", "value3")
 	go cache.Put("key1", "value1")
 	fmt.Println(cache)
 
-	cache1 := NewLRUCache(3)
+	cache1 := NewLRUCache[string, string](3)
 	go cache1.Put("key1", "value1")
 	go cache1.Put("key2", "value2")
 	go cache1.Put("key3", "value3")

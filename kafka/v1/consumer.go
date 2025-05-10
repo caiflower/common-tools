@@ -105,7 +105,7 @@ func (c *KafkaClient) doListen() {
 					msg, err := c.Consumer.ReadMessage(-1)
 					if err == nil {
 						func() {
-							defer e.OnError("Kafka consumer")
+							defer e.OnError("kafka consumer listen")
 							for _, fn := range c.consumerFuncList {
 								fn(msg.Value)
 							}
