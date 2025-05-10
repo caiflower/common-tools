@@ -2,6 +2,7 @@ package taskx
 
 import (
 	"math/rand"
+	"reflect"
 	"time"
 
 	"github.com/caiflower/common-tools/cluster"
@@ -32,24 +33,23 @@ type taskDispatcher struct {
 	running    bool
 }
 
-func InitTaskDispatcher(taskWorker, subtaskWorker, taskQueueSize, subtaskQueueSize int) {
-	if taskWorker <= 0 {
-		taskWorker = 200
-	}
-	if subtaskWorker <= 0 {
-		subtaskWorker = 500
-	}
-	if taskQueueSize <= 0 {
-		taskQueueSize = 1000
-	}
-	if subtaskQueueSize <= 0 {
-		subtaskQueueSize = 1000
-	}
+type Config struct {
+	TaskWorker               int `yaml:"taskWorker" default:"200"`
+	TaskQueueSize            int `yaml:"taskQueueSize" default:"1000"`
+	SubtaskWorker            int `yaml:"subtaskWorker" default:"400"`
+	SubtaskQueueSize         int `yaml:"subtaskQueueSize" default:"2000"`
+	SubtaskRollbackWorker    int `yaml:"subtaskRollbackWorker" default:"50"`
+	SubtaskRollbackQueueSize int `yaml:"subtaskRollbackQueueSize" default:"500"`
+}
 
-	_tr.subtaskWorker = subtaskWorker
-	_tr.taskWorker = taskWorker
-	_tr.subtaskQueueSize = subtaskQueueSize
-	_tr.taskQueueSize = taskQueueSize
+func InitTaskDispatcher(cfg *Config) {
+	_ = tools.DoTagFunc(&cfg, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_tr.subtaskWorker = cfg.SubtaskWorker
+	_tr.taskWorker = cfg.TaskWorker
+	_tr.subtaskRollbackWorker = cfg.SubtaskRollbackWorker
+	_tr.subtaskQueueSize = cfg.SubtaskQueueSize
+	_tr.taskQueueSize = cfg.TaskQueueSize
+	_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
 	bean.AddBean(&taskxdao.Task{})
 	bean.AddBean(&taskxdao.Subtask{})
 	bean.AddBean(SingletonTaskDispatcher)

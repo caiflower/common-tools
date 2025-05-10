@@ -19,8 +19,9 @@ const (
 )
 
 var _tr = &taskReceiver{
-	subtaskInflight: inflight.NewInFlight(),
-	taskInflight:    inflight.NewInFlight(),
+	subtaskInflight:         inflight.NewInFlight(),
+	taskInflight:            inflight.NewInFlight(),
+	subtaskRollbackInflight: inflight.NewInFlight(),
 }
 
 type SubTaskBag struct {
@@ -34,15 +35,19 @@ type taskReceiver struct {
 	SubTaskDao     *taskxdao.SubTaskDao `autowired:""`
 	TaskDispatcher *taskDispatcher      `autowired:""`
 
-	closed           bool
-	subtaskWorker    int
-	subtaskQueueSize int
-	subtaskInflight  *inflight.InFlight
-	subTaskQueue     chan *SubTaskBag
-	taskWorker       int
-	taskQueueSize    int
-	taskInflight     *inflight.InFlight
-	taskQueue        chan *taskxdao.Task
+	closed                   bool
+	subtaskWorker            int
+	subtaskQueueSize         int
+	subtaskInflight          *inflight.InFlight
+	subTaskQueue             chan *SubTaskBag
+	taskWorker               int
+	taskQueueSize            int
+	taskInflight             *inflight.InFlight
+	taskQueue                chan *taskxdao.Task
+	subtaskRollbackWorker    int
+	subtaskRollbackQueueSize int
+	subtaskRollbackInflight  *inflight.InFlight
+	subtaskRollbackQueue     chan *SubTaskBag
 }
 
 func (t *taskReceiver) Start() {
@@ -202,8 +207,24 @@ func (t *taskReceiver) startSubTaskThreads() {
 					continue
 				}
 
-				t.execSubTask(v.task, v.subTask)
+				t.execSubtask(v.task, v.subTask)
 				t.subtaskInflight.Delete(v.subTask)
+			}
+		}()
+	}
+}
+
+func (t *taskReceiver) startRollbackTaskThreads() {
+	for i := 0; i < t.subtaskRollbackWorker; i++ {
+		go func() {
+			for v := range t.subtaskRollbackQueue {
+				if !t.subtaskRollbackInflight.Insert(v.subTask) {
+					logger.Warn("subtask rollback task %v already inflight", v.subTask.SubtaskId)
+					continue
+				}
+
+				t.execSubtaskRollback(v.task, v.subTask)
+				t.subtaskRollbackInflight.Delete(v.subTask)
 			}
 		}()
 	}
@@ -313,7 +334,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 	//}
 }
 
-func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtask) {
+func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtask) {
 	golocalv1.PutTraceID(task.RequestId)
 	defer golocalv1.Clean()
 
@@ -386,6 +407,10 @@ func (t *taskReceiver) execSubTask(task *taskxdao.Task, subtask *taskxdao.Subtas
 			logger.Warn("task %v remote call 'taskDoneCallBack' failed. err: %v", task.TaskId, err)
 		}
 	}
+}
+
+func (t *taskReceiver) execSubtaskRollback(task *taskxdao.Task, subtask *taskxdao.Subtask) {
+
 }
 
 func (t *taskReceiver) taskDoneCallBack(data interface{}) (interface{}, error) {

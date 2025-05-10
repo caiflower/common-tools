@@ -179,8 +179,25 @@ func (t *TaskDemo) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
 	}
 }
 
+func (t *TaskDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
+	return t, map[string]SubTaskExecutor{
+			stepOne:   t.StepOne,
+			stepTwo:   t.StepTwo,
+			stepThree: t.StepThree,
+			stepFour:  t.StepFour,
+			stepFive:  t.StepFive,
+		}, map[string]SubTaskExecutor{
+			stepOne: t.StepOneRollback,
+		}
+}
+
 func (t *TaskDemo) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
 	logger.Info("step one")
+	return false, data.Input, err
+}
+
+func (t *TaskDemo) StepOneRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step one rollback")
 	return false, data.Input, err
 }
 

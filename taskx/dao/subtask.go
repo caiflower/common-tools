@@ -22,6 +22,7 @@ type Subtask struct {
 	Retry         int
 	RetryInterval int
 	PreSubtaskId  string
+	Rollback      int
 	UpdateTime    basic.Time
 	Status        int
 }
