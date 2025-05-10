@@ -145,7 +145,8 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 }
 
 const (
-	taskName = "taskDemo"
+	taskName         = "taskDemo"
+	taskRollbackName = "taskRollbackDemo"
 
 	stepOne   = "stepOne"
 	stepTwo   = "stepTwo"
@@ -179,8 +180,25 @@ func (t *TaskDemo) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
 	}
 }
 
+func (t *TaskDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
+	return t, map[string]SubTaskExecutor{
+			stepOne:   t.StepOne,
+			stepTwo:   t.StepTwo,
+			stepThree: t.StepThree,
+			stepFour:  t.StepFour,
+			stepFive:  t.StepFive,
+		}, map[string]SubTaskExecutor{
+			stepOne: t.StepOneRollback,
+		}
+}
+
 func (t *TaskDemo) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
 	logger.Info("step one")
+	return false, data.Input, err
+}
+
+func (t *TaskDemo) StepOneRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step one rollback")
 	return false, data.Input, err
 }
 
@@ -204,7 +222,7 @@ func (t *TaskDemo) StepFive(data *TaskData) (retry bool, output interface{}, err
 	return false, data.Input, err
 }
 
-func TestDisPatch(t *testing.T) {
+func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver) {
 	config := dbv1.Config{
 		Url:          "proxysql.app.svc.cluster.local:6033",
 		User:         "root",
@@ -228,80 +246,96 @@ func TestDisPatch(t *testing.T) {
 	taskDao := &taskxdao.TaskDao{
 		IDB: client,
 	}
-	subtaskDao := &taskxdao.SubTaskDao{
+	subtaskDao := &taskxdao.SubtaskDao{
 		IDB: client,
 	}
+	cfg := &Config{
+		RemoteCallTimout: time.Second * 3,
+	}
 
-	cluster1, cluster2, cluster3 := commonCluster()
-	receiver1 := &taskReceiver{
-		Cluster:          cluster1,
-		TaskDao:          taskDao,
-		SubTaskDao:       subtaskDao,
-		subtaskInflight:  inflight.NewInFlight(),
-		taskInflight:     inflight.NewInFlight(),
-		subtaskWorker:    50,
-		taskWorker:       5,
-		taskQueueSize:    1000,
-		subtaskQueueSize: 1000,
+	receiver1 = &taskReceiver{
+		Cluster:                  cluster1,
+		TaskDao:                  taskDao,
+		SubtaskDao:               subtaskDao,
+		subtaskInflight:          inflight.NewInFlight(),
+		taskInflight:             inflight.NewInFlight(),
+		subtaskWorker:            50,
+		taskWorker:               5,
+		subtaskRollbackWorker:    10,
+		taskQueueSize:            1000,
+		subtaskQueueSize:         1000,
+		subtaskRollbackQueueSize: 200,
+		cfg:                      cfg,
 	}
-	receiver2 := &taskReceiver{
-		Cluster:          cluster2,
-		TaskDao:          taskDao,
-		SubTaskDao:       subtaskDao,
-		subtaskInflight:  inflight.NewInFlight(),
-		taskInflight:     inflight.NewInFlight(),
-		subtaskWorker:    50,
-		taskWorker:       5,
-		taskQueueSize:    1000,
-		subtaskQueueSize: 1000,
+	receiver2 = &taskReceiver{
+		Cluster:                  cluster2,
+		TaskDao:                  taskDao,
+		SubtaskDao:               subtaskDao,
+		subtaskInflight:          inflight.NewInFlight(),
+		taskInflight:             inflight.NewInFlight(),
+		subtaskWorker:            50,
+		taskWorker:               5,
+		subtaskRollbackWorker:    10,
+		taskQueueSize:            1000,
+		subtaskQueueSize:         1000,
+		subtaskRollbackQueueSize: 200,
+		cfg:                      cfg,
 	}
-	receiver3 := &taskReceiver{
-		Cluster:          cluster3,
-		TaskDao:          taskDao,
-		SubTaskDao:       subtaskDao,
-		subtaskInflight:  inflight.NewInFlight(),
-		taskInflight:     inflight.NewInFlight(),
-		subtaskWorker:    50,
-		taskWorker:       5,
-		taskQueueSize:    1000,
-		subtaskQueueSize: 1000,
+	receiver3 = &taskReceiver{
+		Cluster:                  cluster3,
+		TaskDao:                  taskDao,
+		SubtaskDao:               subtaskDao,
+		subtaskInflight:          inflight.NewInFlight(),
+		taskInflight:             inflight.NewInFlight(),
+		subtaskWorker:            50,
+		taskWorker:               5,
+		subtaskRollbackWorker:    10,
+		taskQueueSize:            1000,
+		subtaskQueueSize:         1000,
+		subtaskRollbackQueueSize: 200,
+		cfg:                      cfg,
 	}
-	dispatcher1 := &taskDispatcher{
-		Cluster:    cluster1,
-		TaskDao:    taskDao,
-		SubTaskDao: subtaskDao,
-		DBClient:   client,
+	dispatcher1 = &taskDispatcher{
+		Cluster:      cluster1,
+		TaskDao:      taskDao,
+		SubTaskDao:   subtaskDao,
+		DBClient:     client,
+		cfg:          cfg,
+		TaskReceiver: receiver1,
 	}
-	dispatcher2 := &taskDispatcher{
-		Cluster:    cluster2,
-		TaskDao:    taskDao,
-		SubTaskDao: subtaskDao,
-		DBClient:   client,
+	dispatcher2 = &taskDispatcher{
+		Cluster:      cluster2,
+		TaskDao:      taskDao,
+		SubTaskDao:   subtaskDao,
+		DBClient:     client,
+		cfg:          cfg,
+		TaskReceiver: receiver2,
 	}
-	dispatcher3 := &taskDispatcher{
-		Cluster:    cluster3,
-		TaskDao:    taskDao,
-		SubTaskDao: subtaskDao,
-		DBClient:   client,
+	dispatcher3 = &taskDispatcher{
+		Cluster:      cluster3,
+		TaskDao:      taskDao,
+		SubTaskDao:   subtaskDao,
+		DBClient:     client,
+		cfg:          cfg,
+		TaskReceiver: receiver3,
 	}
 	receiver1.TaskDispatcher = dispatcher1
 	receiver2.TaskDispatcher = dispatcher2
 	receiver3.TaskDispatcher = dispatcher3
 
-	// 提交一个任务
-	submitTask(dispatcher1)
-	submitTask(dispatcher1)
+	return
+}
 
-	// begin consume
-	receiver1.Start()
-	receiver2.Start()
-	receiver3.Start()
-	//receiver1.Close()
-	//receiver2.Close()
-	//receiver3.Close()
+func TestDisPatch(t *testing.T) {
+	cluster1, cluster2, cluster3 := commonCluster()
+	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3 := commonTaskx(cluster1, cluster2, cluster3)
 
 	demo := &TaskDemo{}
 	RegisterTaskExecutor(demo.GetExecutor())
+
+	receiver1.Start()
+	receiver2.Start()
+	receiver3.Start()
 
 	tracker1 := cluster.NewDefaultJobTracker(5, cluster1, dispatcher1)
 	tracker2 := cluster.NewDefaultJobTracker(5, cluster2, dispatcher2)
@@ -314,11 +348,169 @@ func TestDisPatch(t *testing.T) {
 	go cluster2.StartUp()
 	go cluster3.StartUp()
 
+	// 提交一个任务
+	submitTask(dispatcher1)
+
 	global.DefaultResourceManger.Signal()
 }
 
 func submitTask(dispatcher1 *taskDispatcher) {
 	task := NewTask(taskName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
+	one := NewSubTask(stepOne).SetInput("one")
+	two := NewSubTask(stepTwo).SetInput("two")
+	three := NewSubTask(stepThree).SetInput("three")
+	four := NewSubTask(stepFour).SetInput("four")
+	five := NewSubTask(stepFive).SetInput("five")
+	err := task.AddSubTask(one)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddSubTask(two)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddSubTask(three)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddSubTask(four)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddSubTask(five)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddDirectedEdge(one, two)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddDirectedEdge(two, three)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddDirectedEdge(two, four)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddDirectedEdge(three, five)
+	if err != nil {
+		panic(err)
+	}
+	err = task.AddDirectedEdge(four, five)
+	if err != nil {
+		panic(err)
+	}
+
+	err = dispatcher1.SubmitTask(task)
+	if err != nil {
+		panic(err)
+	}
+}
+
+type TaskRollbackDemo struct {
+}
+
+func (t *TaskRollbackDemo) Name() string {
+	return taskRollbackName
+}
+
+func (t *TaskRollbackDemo) FinishedTask(data *TaskData) (retry bool, err error) {
+	logger.Info("FinishedTask")
+	return false, nil
+}
+func (t *TaskRollbackDemo) FailedTask(data *TaskData) (retry bool, err error) {
+	return false, errors.New("FailedTask")
+}
+
+func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
+	return t, map[string]SubTaskExecutor{
+			stepOne:   t.StepOne,
+			stepTwo:   t.StepTwo,
+			stepThree: t.StepThree,
+			stepFour:  t.StepFour,
+			stepFive:  t.StepFive,
+		}, map[string]SubTaskExecutor{
+			stepTwo:   t.StepTwoRollback,
+			stepThree: t.StepThreeRollback,
+			stepFour:  t.StepFourRollback,
+		}
+}
+
+func (t *TaskRollbackDemo) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step one")
+	return false, data.Input, err
+}
+
+func (t *TaskRollbackDemo) StepOneRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step one rollback")
+	return false, data.Input, err
+}
+
+func (t *TaskRollbackDemo) StepTwo(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step two")
+	return false, "", nil
+}
+
+func (t *TaskRollbackDemo) StepTwoRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step two rollback")
+	return false, data.Input + " rollback", err
+}
+
+func (t *TaskRollbackDemo) StepThree(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step three")
+	return false, data.Input, err
+}
+
+func (t *TaskRollbackDemo) StepThreeRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step three rollback")
+	return false, data.Input + " rollback", err
+}
+
+func (t *TaskRollbackDemo) StepFour(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step four")
+	return false, data.Input, err
+}
+
+func (t *TaskRollbackDemo) StepFourRollback(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step four rollback")
+	return false, data.Input + " rollback", err
+}
+
+func (t *TaskRollbackDemo) StepFive(data *TaskData) (retry bool, output interface{}, err error) {
+	logger.Info("step five")
+	return false, data.Input, errors.New("test five err")
+}
+
+func TestDisPatchRollback(t *testing.T) {
+	cluster1, cluster2, cluster3 := commonCluster()
+	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3 := commonTaskx(cluster1, cluster2, cluster3)
+	demo := &TaskRollbackDemo{}
+	RegisterTaskExecutorWithRollback(demo.GetExecutorWithRollback())
+
+	receiver1.Start()
+	receiver2.Start()
+	receiver3.Start()
+
+	tracker1 := cluster.NewDefaultJobTracker(5, cluster1, dispatcher1)
+	tracker2 := cluster.NewDefaultJobTracker(5, cluster2, dispatcher2)
+	tracker3 := cluster.NewDefaultJobTracker(5, cluster3, dispatcher3)
+	tracker1.Start()
+	tracker2.Start()
+	tracker3.Start()
+
+	go cluster1.StartUp()
+	go cluster2.StartUp()
+	go cluster3.StartUp()
+
+	// 提交一个任务
+	submitRollbackTask(dispatcher1)
+
+	global.DefaultResourceManger.Signal()
+}
+
+func submitRollbackTask(dispatcher1 *taskDispatcher) {
+	task := NewTask(taskRollbackName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
 	one := NewSubTask(stepOne).SetInput("one")
 	two := NewSubTask(stepTwo).SetInput("two")
 	three := NewSubTask(stepThree).SetInput("three")

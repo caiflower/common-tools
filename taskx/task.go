@@ -13,12 +13,20 @@ import (
 )
 
 type TaskState string
+type TaskRollbackState string
 
 const (
-	TaskPending   TaskState = "Pending"
-	TaskRunning   TaskState = "Running"
-	TaskFailed    TaskState = "Failed"
-	TaskSucceeded TaskState = "Succeeded"
+	TaskPending        TaskState = "Pending"
+	TaskRunning        TaskState = "Running"
+	TaskSubtaskRunning TaskState = "SubtaskRunning"
+	TaskFailed         TaskState = "Failed"
+	TaskSucceeded      TaskState = "Succeeded"
+
+	RollingBack       TaskRollbackState = "RollingBack"
+	RollbackSucceeded TaskRollbackState = "RollbackSucceeded"
+	RollbackFailed    TaskRollbackState = "RollbackFailed"
+	RollbackPending   TaskRollbackState = "RollbackPending"
+	NoneRollback      TaskRollbackState = "NoneRollback"
 
 	DefaultRetryCount  = 3
 	DefaultRetryTimout = 3
@@ -86,9 +94,10 @@ type Task struct {
 	urgent        bool
 	failedSubtask bool
 	subTasks      []*SubTask
-	subTaskMap    map[string]*SubTask
-	//isSort      bool
-	g graph.Graph[string, *SubTask]
+	subtaskMap    map[string]*SubTask
+	g             graph.Graph[string, *SubTask]
+	copyg         graph.Graph[string, *SubTask]
+	rollbacks     []*SubTask
 }
 
 type SubTask struct {
@@ -97,6 +106,7 @@ type SubTask struct {
 	output        string
 	taskId        string
 	retry         int
+	rollback      string
 	retryInterval int
 	taskState     TaskState
 	attribute     map[string]interface{}
@@ -107,7 +117,7 @@ func NewTask(taskName string) *Task {
 		taskId:        tools.GenerateId("task"),
 		taskName:      taskName,
 		taskState:     TaskPending,
-		subTaskMap:    make(map[string]*SubTask),
+		subtaskMap:    make(map[string]*SubTask),
 		retry:         DefaultRetryCount,
 		g:             graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
 		retryInterval: DefaultRetryTimout,
@@ -120,6 +130,7 @@ func NewSubTask(taskName string) *SubTask {
 		taskState:     TaskPending,
 		retry:         DefaultRetryCount,
 		retryInterval: DefaultRetryTimout,
+		rollback:      string(RollbackPending),
 	}
 }
 
@@ -195,6 +206,10 @@ func (t *SubTask) SetRetryInterval(retryTimeout int) *SubTask {
 	return t
 }
 
+func (t *SubTask) needRollback() bool {
+	return (t.taskState == TaskRunning || t.taskState == TaskSucceeded) && (t.rollback == string(RollbackPending) || t.rollback == string(RollingBack))
+}
+
 func (t *Task) GetTaskId() string {
 	return t.taskId
 }
@@ -243,7 +258,7 @@ func (t *Task) UnmarshalInput(v interface{}) error {
 func (t *Task) AddSubTask(task *SubTask) error {
 	task.AllocateTaskId()
 	t.subTasks = append(t.subTasks, task)
-	t.subTaskMap[task.GetTaskId()] = task
+	t.subtaskMap[task.GetTaskId()] = task
 	return t.g.AddVertex(task)
 }
 
@@ -267,41 +282,31 @@ func (t *Task) SetRetryInterval(retryInterval int) *Task {
 	return t
 }
 
+// SetUrgent handle task immediately
 func (t *Task) SetUrgent() *Task {
 	t.urgent = true
 	return t
 }
 
-func (t *Task) NextSubTasks() []*SubTask {
-	//if t.isSort == false {
-	//	t.Sort()
-	//}
-
+func (t *Task) NextSubTasks() ([]*SubTask, bool) {
 	var res []*SubTask
 	// has failedSubtask
 	if t.failedSubtask {
-		return res
+		return t.rollbacks, true
 	}
 
 	predecessorMap, _ := t.g.PredecessorMap()
 	for k, v := range predecessorMap {
 		if len(v) == 0 {
-			res = append(res, t.subTaskMap[k])
+			res = append(res, t.subtaskMap[k])
 		}
 	}
-	//for _, v := range t.subTasks {
-	//	if v.GetTaskState() == TaskPending || v.GetTaskState() == TaskRunning {
-	//		if len(predecessorMap[v.GetTaskId()]) == 0 {
-	//			res = append(res, v)
-	//		}
-	//	}
-	//}
 
-	return res
+	return res, false
 }
 
-func (t *Task) UpdateSubTaskState(taskId string, taskState TaskState) error {
-	subtask := t.subTaskMap[taskId]
+func (t *Task) UpdateSubtaskState(taskId string, taskState TaskState) error {
+	subtask := t.subtaskMap[taskId]
 	if subtask == nil {
 		return fmt.Errorf("%s Task not found", taskId)
 	}
@@ -312,6 +317,16 @@ func (t *Task) UpdateSubTaskState(taskId string, taskState TaskState) error {
 			return err
 		}
 		for _, v := range adjacencyMap[subtask.GetTaskId()] {
+			if err = t.g.RemoveEdge(v.Source, v.Target); err != nil {
+				return err
+			}
+		}
+
+		predecessorMap, err := t.g.PredecessorMap()
+		if err != nil {
+			return err
+		}
+		for _, v := range predecessorMap[subtask.GetTaskId()] {
 			if err = t.g.RemoveEdge(v.Source, v.Target); err != nil {
 				return err
 			}
@@ -351,7 +366,7 @@ func (t *Task) Graph() string {
 	adjacencyMap, _ := t.g.AdjacencyMap()
 	sorts, _ := graph.TopologicalSort(t.g)
 	for _, v := range sorts {
-		buf.WriteString(fmt.Sprintf("[%s]", t.subTaskMap[v].GetTaskName()))
+		buf.WriteString(fmt.Sprintf("[%s]", t.subtaskMap[v].GetTaskName()))
 		var edgeStr string
 		for _, edge := range adjacencyMap[v] {
 			if edgeStr == "" {
@@ -359,7 +374,7 @@ func (t *Task) Graph() string {
 			} else {
 				edgeStr += ","
 			}
-			edgeStr += t.subTaskMap[edge.Target].GetTaskName()
+			edgeStr += t.subtaskMap[edge.Target].GetTaskName()
 		}
 		if edgeStr != "" {
 			edgeStr += "]"
@@ -371,15 +386,6 @@ func (t *Task) Graph() string {
 	}
 	return buf.String()
 }
-
-//func (t *Task) Sort() {
-//	sorts, _ := graph.TopologicalSort(t.g)
-//	for i, v := range sorts {
-//		subtask := t.subTaskMap[v]
-//		t.subTasks[i] = subtask
-//	}
-//t.isSort = true
-//}
 
 func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 	now := time.Now()
@@ -416,6 +422,7 @@ func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 			Input:         v.input,
 			Retry:         v.retry,
 			RetryInterval: v.retryInterval,
+			Rollback:      v.rollback,
 			TaskState:     string(v.taskState),
 			UpdateTime:    basic.Time(now),
 			PreSubtaskId:  preSubtaskId,
@@ -434,7 +441,7 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 	t.description = task.Description
 	t.input = task.Input
 	t.retry = task.Retry
-	t.subTaskMap = make(map[string]*SubTask)
+	t.subtaskMap = make(map[string]*SubTask)
 	t.urgent = task.Urgent
 	t.retryInterval = task.RetryInterval
 	t.g = graph.New(taskHash, graph.Directed(), graph.PreventCycles())
@@ -444,6 +451,7 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 			taskName:  subtask.TaskName,
 			input:     subtask.Input,
 			output:    subtask.Output,
+			rollback:  subtask.Rollback,
 			taskState: TaskState(subtask.TaskState),
 		}
 		err := t.AddSubTask(st)
@@ -457,19 +465,83 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 			continue
 		}
 		for _, v := range strings.Split(subtask.PreSubtaskId, ",") {
-			subTask := t.subTaskMap[v]
-			subTask2 := t.subTaskMap[subtask.SubtaskId]
+			subTask := t.subtaskMap[v]
+			subTask2 := t.subtaskMap[subtask.SubtaskId]
 			err := t.AddDirectedEdge(subTask, subTask2)
 			if err != nil {
 				return nil, err
 			}
 		}
-	}
-
-	for _, subtask := range subtasks {
-		if err := t.UpdateSubTaskState(subtask.SubtaskId, TaskState(subtask.TaskState)); err != nil {
-			return nil, err
+		if subtask.TaskState == string(TaskFailed) {
+			t.failedSubtask = true
 		}
 	}
+
+	if t.failedSubtask {
+		if err := t.rollbackSubtasks(); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, subtask := range subtasks {
+			if err := t.UpdateSubtaskState(subtask.SubtaskId, TaskState(subtask.TaskState)); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return t, nil
+}
+
+func (t *Task) rollbackSubtasks() error {
+	var res [][]*SubTask
+	predecessorMap, err := t.g.PredecessorMap()
+	if err != nil {
+		return err
+	}
+
+	for len(predecessorMap) != 0 {
+		var tmp, removeTmp []*SubTask
+
+		for k, v := range predecessorMap {
+			if len(v) == 0 {
+				if t.subtaskMap[k].needRollback() {
+					tmp = append(tmp, t.subtaskMap[k])
+				}
+
+				removeTmp = append(removeTmp, t.subtaskMap[k])
+			}
+		}
+
+		adjacencyMap, err1 := t.g.AdjacencyMap()
+		if err1 != nil {
+			return err1
+		}
+		for _, v := range removeTmp {
+			for _, v1 := range adjacencyMap[v.taskId] {
+				if err = t.g.RemoveEdge(v1.Source, v1.Target); err != nil {
+					return err
+				}
+			}
+
+			if err = t.g.RemoveVertex(v.taskId); err != nil {
+				return err
+			}
+		}
+
+		if len(tmp) > 0 {
+			res = append(res, tmp)
+		}
+
+		predecessorMap, err = t.g.PredecessorMap()
+		if err != nil {
+			return err
+		}
+	}
+
+	// rollback subtask
+	if len(res) > 0 {
+		t.rollbacks = res[len(res)-1]
+	}
+
+	return nil
 }

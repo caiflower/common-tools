@@ -22,6 +22,7 @@ type Subtask struct {
 	Retry         int
 	RetryInterval int
 	PreSubtaskId  string
+	Rollback      string
 	UpdateTime    basic.Time
 	Status        int
 }
@@ -34,11 +35,15 @@ func (t *Subtask) IsFinished() bool {
 	return t.TaskState == "Succeeded" || t.TaskState == "Failed"
 }
 
-type SubTaskDao struct {
+func (t *Subtask) RollbackFinished() bool {
+	return t.Rollback == "RollbackFailed" || t.Rollback == "RollbackSucceeded"
+}
+
+type SubtaskDao struct {
 	dbv1.IDB `autowired:""`
 }
 
-func (d *SubTaskDao) GetSubTasksByTaskId(taskId string) ([]*Subtask, map[string]*Subtask, error) {
+func (d *SubtaskDao) GetSubtasksByTaskId(taskId string) ([]*Subtask, map[string]*Subtask, error) {
 	res := make([]*Subtask, 0)
 	err := d.GetSelect(&res).Where("task_id = ?", taskId).Scan(context.TODO(), &res)
 	if err != nil {
@@ -51,24 +56,35 @@ func (d *SubTaskDao) GetSubTasksByTaskId(taskId string) ([]*Subtask, map[string]
 	return res, subtaskMap, nil
 }
 
-func (d *SubTaskDao) SetOutputAndTaskState(subtaskId, output, taskState string, tx *bun.Tx) (int64, error) {
+func (d *SubtaskDao) SetOutputAndTaskState(subtaskId, output, taskState string, tx *bun.Tx) (int64, error) {
 	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("task_state = ?", taskState).Set("output = ?", output)
 	return d.GetRowsAffected(update.Exec(context.TODO()))
 }
 
-func (d *SubTaskDao) SetWorkerAndTaskState(subtaskId string, worker string, taskState string, tx *bun.Tx) error {
+func (d *SubtaskDao) SetWorkerAndTaskState(subtaskId string, worker string, taskState string, tx *bun.Tx) error {
 	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("worker = ?", worker).Set("task_state = ?", taskState)
 	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
 	return err
 }
 
-func (d *SubTaskDao) GetSubtasksBySubtaskIds(subtaskIds []string) ([]*Subtask, error) {
+func (d *SubtaskDao) SetWorkerAndRollback(subtaskId, worker, rollback string, tx *bun.Tx) error {
+	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("worker = ?", worker).Set("rollback = ?", rollback)
+	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
+	return err
+}
+
+func (d *SubtaskDao) GetSubtasksBySubtaskIds(subtaskIds []string) ([]*Subtask, error) {
 	var subTasks []*Subtask
 	err := d.GetSelect(&subTasks).Where("subtask_id IN (?)", bun.In(subtaskIds)).Scan(context.TODO(), &subTasks)
 	return subTasks, err
 }
 
-func (d *SubTaskDao) SetRetry(subtaskId string, retry int, tx *bun.Tx) (err error) {
+func (d *SubtaskDao) SetRetry(subtaskId string, retry int, tx *bun.Tx) (err error) {
 	_, err = d.GetRowsAffected(d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("retry = ?", retry).Exec(context.TODO()))
 	return
+}
+
+func (d *SubtaskDao) SetRollbackAndTaskState(subtaskId, output, rollback string, tx *bun.Tx) (int64, error) {
+	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("rollback = ?", rollback).Set("output = ?", output)
+	return d.GetRowsAffected(update.Exec(context.TODO()))
 }

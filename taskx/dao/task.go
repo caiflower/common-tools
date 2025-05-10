@@ -29,9 +29,12 @@ type Task struct {
 }
 
 type Output struct {
-	Output string `json:",omitempty"`
-	Err    string `json:",omitempty" json:"err,omitempty"`
-	Msg    string `json:",omitempty" json:"msg,omitempty"`
+	Output         string `json:",omitempty"`
+	Err            string `json:"err,omitempty"`
+	Msg            string `json:"msg,omitempty"`
+	RollbackErr    string `json:"rollbackErr,omitempty"`
+	RollbackMsg    string `json:"rollbackMsg,omitempty"`
+	RollbackOutput string `json:"rollbackOutput,omitempty"`
 }
 
 func (t *Task) String() string {

@@ -12,11 +12,11 @@ func TestTask(t *testing.T) {
 	stp3 := NewSubTask("stp3").SetInput("stp3")
 	stp4 := NewSubTask("stp4").SetInput("stp4")
 	stp5 := NewSubTask("stp5").SetInput("stp5")
-	myTask.AddSubTask(stp1)
-	myTask.AddSubTask(stp2)
-	myTask.AddSubTask(stp3)
-	myTask.AddSubTask(stp4)
-	myTask.AddSubTask(stp5)
+	_ = myTask.AddSubTask(stp1)
+	_ = myTask.AddSubTask(stp2)
+	_ = myTask.AddSubTask(stp3)
+	_ = myTask.AddSubTask(stp4)
+	_ = myTask.AddSubTask(stp5)
 
 	if err := myTask.AddDirectedEdge(stp1, stp2); err != nil {
 		panic(err)
@@ -44,7 +44,7 @@ func TestTask(t *testing.T) {
 }
 
 func doStream(myTask *Task) {
-	tasks := myTask.NextSubTasks()
+	tasks, _ := myTask.NextSubTasks()
 	if len(tasks) == 0 {
 		return
 	}
@@ -56,7 +56,7 @@ func doStream(myTask *Task) {
 
 		// finish
 		v.GetTaskState()
-		myTask.UpdateSubTaskState(v.GetTaskId(), TaskSucceeded)
+		_ = myTask.UpdateSubtaskState(v.GetTaskId(), TaskSucceeded)
 	}
 
 	fmt.Printf("size = %v \n", myTask.Size())
