@@ -51,9 +51,9 @@ type ITask interface {
 
 	AddSubTask(Task *SubTask) error                          // add SubTask
 	AddDirectedEdge(src, dst *SubTask) error                 // add directedEdge
-	NextSubTasks() []*SubTask                                // get next pending subTasks
+	NextSubTasks() ([]*SubTask, bool)                        // get next pending subTasks
 	UpdateTaskState(state TaskState)                         // update Task state
-	UpdateSubTaskState(taskId string, state TaskState) error // update subtaskSate
+	UpdateSubtaskState(taskId string, state TaskState) error // update subtaskSate
 	Size() int                                               // directedEdge count
 	Order() int                                              // SubTask count
 	Graph() string                                           // graph
@@ -207,7 +207,7 @@ func (t *SubTask) SetRetryInterval(retryTimeout int) *SubTask {
 }
 
 func (t *SubTask) needRollback() bool {
-	return (t.taskState == TaskRunning || t.taskState == TaskSucceeded) && (t.rollback == string(RollbackPending) || t.rollback == string(RollingBack))
+	return (t.taskState == TaskRunning || t.taskState == TaskSucceeded || t.taskState == TaskFailed) && (t.rollback == string(RollbackPending) || t.rollback == string(RollingBack))
 }
 
 func (t *Task) GetTaskId() string {
