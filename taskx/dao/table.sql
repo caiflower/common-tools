@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS task (
       output TEXT,
       worker VARCHAR(128),
       retry TINYINT,
-      retry_interval int,
+      retry_interval INT,
       urgent TINYINT,
       task_state VARCHAR(20),
       description VARCHAR(512),
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS task (
       status TINYINT,
       INDEX idx_request_id (request_id),
       UNIQUE INDEX idx_task_id (task_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 
 -- 创建 SubTask 表
 CREATE TABLE IF NOT EXISTS subtask (
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS subtask (
      status TINYINT,
      UNIQUE INDEX idx_subtask_id (subtask_id),
      INDEX idx_task_id (task_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8_bin;
 
 -- 创建 Task 表
 CREATE TABLE IF NOT EXISTS task_bak (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS task_bak (
     output TEXT,
     worker VARCHAR(128),
     retry TINYINT,
-    retry_interval int,
+    retry_interval INT,
     urgent TINYINT,
     task_state VARCHAR(20),
     description VARCHAR(512),
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS task_bak (
     status TINYINT,
     INDEX idx_request_id (request_id),
     UNIQUE INDEX idx_task_id (task_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8_bin;
 
 -- 创建 SubTask 表
 CREATE TABLE IF NOT EXISTS subtask_bak (
@@ -78,4 +78,4 @@ CREATE TABLE IF NOT EXISTS subtask_bak (
     status TINYINT,
     UNIQUE INDEX idx_subtask_id (subtask_id),
     INDEX idx_task_id (task_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8_bin;
