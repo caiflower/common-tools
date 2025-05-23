@@ -68,7 +68,7 @@ func NewRedisClient(config Config) RedisClient {
 	}
 	password := config.Password
 	if config.EnablePasswordEncrypt {
-		_tmpPassword, err := tools.AesDecryptBase64(password)
+		_tmpPassword, err := tools.AesDecryptRawBase64(password)
 		if err != nil {
 			panic(fmt.Sprintf("new redis client failed. err: %v", err))
 		}

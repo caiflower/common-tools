@@ -90,7 +90,7 @@ func NewDBClient(config Config) (c *Client, err error) {
 func createMysqlClient(config *Config) (*Client, error) {
 	password := config.Password
 	if config.EnablePasswordEncrypt {
-		_tmpPassword, err := tools.AesDecryptBase64(password)
+		_tmpPassword, err := tools.AesDecryptRawBase64(password)
 		if err != nil {
 			return nil, err
 		}

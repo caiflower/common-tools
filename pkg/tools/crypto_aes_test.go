@@ -46,4 +46,16 @@ func TestCrypto(t *testing.T) {
 		panic("testCrypto failed.")
 	}
 
+	rawBase64Encrypt, err := AesEncryptRawBase64(str)
+	if err != nil {
+		panic(fmt.Sprintf("testCrypto aesEncrypt failed. err: %v", err))
+	}
+
+	decrypt2, err := AesDecryptRawBase64(rawBase64Encrypt)
+	if err != nil {
+		panic(fmt.Sprintf("testCrypto aesDecrypt failed. err: %v", err))
+	}
+	if decrypt2 != str {
+		panic("testCrypto failed.")
+	}
 }

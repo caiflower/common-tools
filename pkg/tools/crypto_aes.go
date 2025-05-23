@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"encoding/base64"
 	"errors"
 
 	"github.com/caiflower/common-tools/global/env"
@@ -97,4 +98,43 @@ func AesEncryptBase64WithKey(data string, key []byte) (string, error) {
 		return "", err
 	}
 	return Base64Encoding(string(encrypt)), nil
+}
+
+// AesDecryptRawBase64 AesDecrypt + base64
+func AesDecryptRawBase64(data string) (string, error) {
+	key := DefaultAesKey
+	if env.AESKey != "" {
+		key = []byte(env.AESKey)
+	}
+	return AesDecryptRawBase64WithKey(data, key)
+}
+
+func AesDecryptRawBase64WithKey(data string, key []byte) (string, error) {
+	decoding, err := base64.RawStdEncoding.DecodeString(data)
+	if err != nil {
+		return "", err
+	}
+
+	encrypt, err := AesDecrypt(decoding, key)
+	if err != nil {
+		return "", err
+	}
+	return string(encrypt), nil
+}
+
+// AesEncryptRawBase64 AesEncrypt + base64
+func AesEncryptRawBase64(data string) (string, error) {
+	key := DefaultAesKey
+	if env.AESKey != "" {
+		key = []byte(env.AESKey)
+	}
+	return AesEncryptRawBase64WithKey(data, key)
+}
+
+func AesEncryptRawBase64WithKey(data string, key []byte) (string, error) {
+	encrypt, err := AesEncrypt([]byte(data), key)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawStdEncoding.EncodeToString(encrypt), nil
 }
