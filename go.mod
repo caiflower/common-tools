@@ -20,6 +20,9 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
+	github.com/uptrace/uptrace-go v1.3.1
 	github.com/xuri/excelize/v2 v2.6.1
+	go.opentelemetry.io/otel v1.3.0
+	go.opentelemetry.io/otel/trace v1.3.0
 	gopkg.in/yaml.v2 v2.4.0
 )

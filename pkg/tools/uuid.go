@@ -2,14 +2,27 @@ package tools
 
 import (
 	"bytes"
+	crand "crypto/rand"
+	"encoding/binary"
 	"math/rand"
+	"strings"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func UUID() string {
 	u, _ := uuid.NewUUID()
-	return u.String()
+	return strings.Replace(u.String(), "-", "", 4)
+}
+
+func UptraceUUID() trace.TraceID {
+	tid := trace.TraceID{}
+	var rngSeed int64
+	_ = binary.Read(crand.Reader, binary.LittleEndian, &rngSeed)
+	randSource := rand.New(rand.NewSource(rngSeed))
+	randSource.Read(tid[:])
+	return tid
 }
 
 func GenerateId(prefix string) string {
