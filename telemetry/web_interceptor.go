@@ -10,6 +10,7 @@ import (
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/e"
 	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 )
 
 const (
@@ -22,14 +23,18 @@ type WebInterceptor struct {
 
 func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
 	content := new(Content)
-	attrs := make([]attribute.KeyValue, 3)
-	attrs[0] = attribute.String("action", ctx.GetAction())
+	attrs := make([]attribute.KeyValue, 6, 10)
+	attrs[0] = attribute.String("http.action", ctx.GetAction())
+	attrs[1] = semconv.HTTPMethodKey.String(ctx.GetMethod())
+	_, r := ctx.GetResponseWriterAndRequest()
+	attrs[2] = semconv.HTTPClientIPKey.String(r.RemoteAddr)
+	attrs[3] = semconv.HTTPRouteKey.String(ctx.GetPath())
 	content.Attrs = attrs
 	traceId := golocalv1.GetTraceID()
 
-	done, err := DefaultClient.Record(traceId, "webv1", content)
+	done, err := DefaultClient.Record(traceId, "github.com/caiflower/common-tools/web/v1", ctx.GetAction(), content)
 	if err != nil {
-		logger.Error("telemetry failed. Error: %v", err)
+		logger.Error("telemetry record failed. Error: %v", err)
 	}
 	ctx.Put(uptraceDone, done)
 	ctx.Put(uptraceContent, content)
@@ -44,12 +49,12 @@ func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
 
 	content := ctx.Get(uptraceContent).(*Content)
 	if err != nil {
-		content.Attrs[1] = attribute.Int("code", err.GetCode())
-		content.Attrs[2] = attribute.String("error.message", err.GetMessage())
+		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(err.GetCode())
+		content.Attrs[5] = attribute.String("http.error.message", err.GetMessage())
 		content.Failed = err.GetCause()
 	} else {
-		content.Attrs[1] = attribute.Int("code", http.StatusOK)
-		content.Attrs[2] = attribute.String("data", tools.ToJson(ctx.GetResponse()))
+		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusOK)
+		content.Attrs[5] = attribute.String("http.data", tools.ToJson(ctx.GetResponse()))
 	}
 
 	return nil
@@ -62,7 +67,7 @@ func (wi *WebInterceptor) OnPanic(ctx *web.Context, recover interface{}) e.ApiEr
 	}()
 
 	content := ctx.Get(uptraceContent).(*Content)
-	content.Attrs[1] = attribute.Int("code", http.StatusInternalServerError)
+	content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusInternalServerError)
 	content.Failed = errors.New(tools.ToJson(recover))
 
 	return nil

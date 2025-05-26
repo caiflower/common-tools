@@ -22,7 +22,8 @@ require (
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	github.com/uptrace/uptrace-go v1.3.1
 	github.com/xuri/excelize/v2 v2.6.1
-	go.opentelemetry.io/otel v1.3.0
-	go.opentelemetry.io/otel/trace v1.3.0
+	go.opentelemetry.io/otel v1.7.0
+	go.opentelemetry.io/otel/metric v0.26.0
+	go.opentelemetry.io/otel/trace v1.7.0
 	gopkg.in/yaml.v2 v2.4.0
 )

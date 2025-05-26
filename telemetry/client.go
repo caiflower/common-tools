@@ -2,13 +2,7 @@ package telemetry
 
 import (
 	"context"
-	"reflect"
-	"sync"
-	"time"
-
 	"github.com/caiflower/common-tools/global"
-	"github.com/caiflower/common-tools/pkg/cache"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/uptrace/uptrace-go/uptrace"
@@ -16,10 +10,11 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"reflect"
+	"sync"
 )
 
 type Config struct {
-	Enable         bool   `yaml:"enable" json:"enable"`
 	DNS            string `yaml:"dns" json:"dns"`
 	ServiceName    string `yaml:"serviceName" json:"serviceName"`
 	ServiceVersion string `yaml:"serviceVersion" json:"serviceVersion" default:"v1.0.0"`
@@ -34,10 +29,6 @@ type client struct {
 }
 
 func Init(config Config) {
-	if config.DNS == "" {
-		config.Enable = false
-	}
-
 	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	uptrace.ConfigureOpentelemetry(
@@ -48,6 +39,7 @@ func Init(config Config) {
 		uptrace.WithServiceVersion(config.ServiceVersion),
 		uptrace.WithDeploymentEnvironment(config.DeploymentEnv),
 	)
+	uptrace.SetLogger(logger.DefaultLogger())
 
 	once.Do(func() {
 		DefaultClient = &client{config: config}
@@ -60,41 +52,43 @@ type Content struct {
 	Failed error
 }
 
-func (c *client) Record(traceId string, name string, content *Content) (chan<- struct{}, error) {
+func (c *client) Record(traceId string, tracerName, name string, content *Content) (chan<- struct{}, error) {
 	done := make(chan struct{}, 1)
 
-	if c.config.Enable {
-		tracer := otel.Tracer(traceId)
+	tracer := otel.Tracer(tracerName)
 
-		traceID, err := trace.TraceIDFromHex(traceId)
-		if err != nil {
-			return done, err
-		}
-		_, span := tracer.Start(trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
-			TraceID: traceID,
-		})), name, trace.WithTimestamp(time.Now()))
-
-		go func() {
-			<-done
-			if content != nil {
-				span.SetAttributes(content.Attrs...)
-				if content.Failed != nil {
-					span.RecordError(content.Failed)
-					span.SetStatus(codes.Error, content.Failed.Error())
-				}
-			}
-			span.End(trace.WithTimestamp(time.Now()))
-			logger.Info("trace: %s\n", uptrace.TraceURL(span))
-		}()
+	traceID, err := trace.TraceIDFromHex(traceId)
+	if err != nil {
+		return done, err
 	}
+	_, span := tracer.Start(trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID,
+	})), name)
+
+	go func() {
+		<-done
+		if !span.IsRecording() {
+			return
+		}
+
+		if content != nil {
+			span.SetAttributes(content.Attrs...)
+			if content.Failed != nil {
+				span.RecordError(content.Failed)
+				span.SetStatus(codes.Error, content.Failed.Error())
+			}
+		}
+		span.End()
+		logger.Debug("uptrace: %s\n", uptrace.TraceURL(span))
+	}()
 
 	return done, nil
 }
 
-func (c *client) Clean() {
-	cache.LocalCache.Delete(golocalv1.GetTraceID())
-}
-
 func (c *client) Close() {
-	uptrace.Shutdown(context.Background())
+	err := uptrace.Shutdown(context.Background())
+	if err != nil {
+		logger.Error("telemetry client shutdown failed. Error: %s", err)
+	}
+	logger.Info("telemetry client shutdown successfully.")
 }
