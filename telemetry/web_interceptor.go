@@ -2,10 +2,10 @@ package telemetry
 
 import (
 	"errors"
+	"go.opentelemetry.io/otel/trace"
 	"net/http"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
-	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/e"
@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	uptraceDone    = "uptraceDone"
+	uptraceSpan    = "uptraceDone"
 	uptraceContent = "uptraceContent"
 )
 
@@ -32,22 +32,18 @@ func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
 	content.Attrs = attrs
 	traceId := golocalv1.GetTraceID()
 
-	done, err := DefaultClient.Record(traceId, "github.com/caiflower/common-tools/web/v1", ctx.GetAction(), content)
-	if err != nil {
-		logger.Error("telemetry record failed. Error: %v", err)
-	}
-	ctx.Put(uptraceDone, done)
+	span := DefaultClient.Start(traceId, "github.com/caiflower/common-tools/web/v1", ctx.GetAction(), trace.SpanKindServer)
+	ctx.Put(uptraceSpan, span)
 	ctx.Put(uptraceContent, content)
+
 	return nil
 }
 
 func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
-	defer func() {
-		done := ctx.Get(uptraceDone).(chan<- struct{})
-		done <- struct{}{}
-	}()
-
+	span := ctx.Get(uptraceSpan).(trace.Span)
 	content := ctx.Get(uptraceContent).(*Content)
+	defer DefaultClient.End(span, content)
+
 	if err != nil {
 		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(err.GetCode())
 		content.Attrs[5] = attribute.String("http.error.message", err.GetMessage())
@@ -61,12 +57,10 @@ func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
 }
 
 func (wi *WebInterceptor) OnPanic(ctx *web.Context, recover interface{}) e.ApiError {
-	defer func() {
-		done := ctx.Get(uptraceDone).(chan<- struct{})
-		done <- struct{}{}
-	}()
-
+	span := ctx.Get(uptraceSpan).(trace.Span)
 	content := ctx.Get(uptraceContent).(*Content)
+	defer DefaultClient.End(span, content)
+
 	content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusInternalServerError)
 	content.Failed = errors.New(tools.ToJson(recover))
 
