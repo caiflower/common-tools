@@ -8,6 +8,7 @@ require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/confluentinc/confluent-kafka-go/v2 v2.0.2
+	github.com/go-redis/redis/extra/rediscmd/v8 v8.11.4
 	github.com/go-redis/redis/v8 v8.11.4
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/google/go-cmp v0.6.0

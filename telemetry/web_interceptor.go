@@ -21,6 +21,10 @@ const (
 type WebInterceptor struct {
 }
 
+func NewWebInterceptor() *WebInterceptor {
+	return &WebInterceptor{}
+}
+
 func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
 	content := new(Content)
 	attrs := make([]attribute.KeyValue, 6, 10)
