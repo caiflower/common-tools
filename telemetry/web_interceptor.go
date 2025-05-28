@@ -28,7 +28,7 @@ func NewWebInterceptor() *WebInterceptor {
 func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
 	content := new(Content)
 	attrs := make([]attribute.KeyValue, 6, 10)
-	attrs[0] = attribute.String("http.action", ctx.GetAction())
+	attrs[0] = attribute.String("http.request.action", ctx.GetAction())
 	attrs[1] = semconv.HTTPMethodKey.String(ctx.GetMethod())
 	_, r := ctx.GetResponseWriterAndRequest()
 	attrs[2] = semconv.HTTPClientIPKey.String(r.RemoteAddr)
@@ -50,11 +50,11 @@ func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
 
 	if err != nil {
 		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(err.GetCode())
-		content.Attrs[5] = attribute.String("http.error.message", err.GetMessage())
+		content.Attrs[5] = attribute.String("http.response.error.message", err.GetMessage())
 		content.Failed = err.GetCause()
 	} else {
 		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusOK)
-		content.Attrs[5] = attribute.String("http.data", tools.ToJson(ctx.GetResponse()))
+		content.Attrs[5] = attribute.String("http.response.data", tools.ToJson(ctx.GetResponse()))
 	}
 
 	return nil

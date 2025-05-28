@@ -58,13 +58,13 @@ type Content struct {
 }
 
 func (c *client) Start(traceId string, tracerName, spanName string, kind trace.SpanKind) trace.Span {
-	tracer := otel.Tracer(tracerName)
+	_tracer := otel.Tracer(tracerName)
 	traceID, err := trace.TraceIDFromHex(traceId)
 	if err != nil {
 		logger.Error("telemetry get traceId from hex failed. Error: %v", err)
 	}
 
-	_, span := tracer.Start(
+	_, span := _tracer.Start(
 		trace.ContextWithSpanContext(context.Background(),
 			trace.NewSpanContext(trace.SpanContextConfig{
 				TraceID: traceID,
@@ -89,7 +89,7 @@ func (c *client) End(span trace.Span, content *Content) {
 		}
 	}
 
-	logger.Debug("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
 }
 
 func (c *client) Close() {

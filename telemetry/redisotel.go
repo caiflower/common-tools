@@ -52,7 +52,7 @@ func (TracingHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 		recordError(ctx, span, err)
 	}
 
-	logger.Debug("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
 	return nil
 }
 
@@ -76,7 +76,7 @@ func (TracingHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder)
 		recordError(ctx, span, err)
 	}
 
-	logger.Debug("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
 	return nil
 }
 

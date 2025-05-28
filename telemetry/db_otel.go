@@ -130,7 +130,7 @@ func (h *QueryHook) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 	}
 
 	span.SetAttributes(attrs...)
-	logger.Debug("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
 }
 
 func funcFileLine(pkg string) (string, string, int) {
