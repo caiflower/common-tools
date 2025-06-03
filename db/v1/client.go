@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
+	"github.com/uptrace/bun/schema"
 	"reflect"
 	"time"
 
@@ -14,7 +16,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/mysqldialect"
-	"github.com/uptrace/bun/schema"
 )
 
 type IDB interface {
@@ -74,7 +75,7 @@ func NewDBClient(config Config) (c *Client, err error) {
 	}
 
 	if config.EnableMetric {
-		ctx, cancelFunc := context.WithCancel(context.Background())
+		ctx, cancelFunc := context.WithCancel(GetContext(context.Background()))
 		c.cancel = cancelFunc
 		startMetric(ctx, c.DB, &config)
 	}
@@ -123,7 +124,7 @@ func (c *Client) GetTx(tx *bun.Tx) bun.IDB {
 }
 
 func (c *Client) Begin() (*bun.Tx, context.CancelFunc, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.config.TransactionTimeout)
+	ctx, cancel := context.WithTimeout(GetContext(context.Background()), c.config.TransactionTimeout)
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		cancel()
@@ -164,7 +165,7 @@ func (c *Client) GetSoftDelete(model interface{}, tx *bun.Tx) *bun.UpdateQuery {
 }
 
 func (c *Client) Insert(data interface{}, tx *bun.Tx) (int64, error) {
-	return c.GetRowsAffected(c.GetTx(tx).NewInsert().Model(data).Exec(context.Background()))
+	return c.GetRowsAffected(c.GetTx(tx).NewInsert().Model(data).Exec(GetContext(context.Background())))
 }
 
 func (c *Client) SoftDelete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
@@ -174,7 +175,7 @@ func (c *Client) SoftDelete(model interface{}, tx *bun.Tx, id interface{}) (int6
 	} else {
 		handler.Where("id=?", id)
 	}
-	return c.GetRowsAffected(handler.Exec(context.Background()))
+	return c.GetRowsAffected(handler.Exec(GetContext(context.Background())))
 }
 
 func (c *Client) Delete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
@@ -184,21 +185,21 @@ func (c *Client) Delete(model interface{}, tx *bun.Tx, id interface{}) (int64, e
 	} else {
 		handler.Where("id=?", id)
 	}
-	return c.GetRowsAffected(handler.Exec(context.Background()))
+	return c.GetRowsAffected(handler.Exec(GetContext(context.Background())))
 }
 
 func (c *Client) QueryAll(result interface{}) (int, error) {
-	return c.GetSelect(result).Order("id desc").ScanAndCount(context.Background(), result)
+	return c.GetSelect(result).Order("id desc").ScanAndCount(GetContext(context.Background()), result)
 }
 
 func (c *Client) QueryByCondition(result interface{}, filter Filter) (int, error) {
 	if filter != nil {
 		offset, limit, disable := filter.GetPage()
 		if !disable {
-			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(context.Background(), result)
+			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(GetContext(context.Background()), result)
 		}
 
-		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(context.Background(), result)
+		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(GetContext(context.Background()), result)
 	}
 
 	return c.QueryAll(result)
@@ -236,4 +237,9 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, time.Since(event.StartTime), rows, event.Err)
 		}
 	}
+}
+
+// GetContext getContext with traceId
+func GetContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, "traceId", golocalv1.GetTraceID())
 }

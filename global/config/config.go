@@ -10,6 +10,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	"github.com/caiflower/common-tools/telemetry"
 	webv1 "github.com/caiflower/common-tools/web/v1"
 )
 
@@ -21,6 +22,7 @@ type DefaultConfig struct {
 	WebConfig        []webv1.Config   `yaml:"web" json:"web"`
 	RedisConfig      []redisv1.Config `yaml:"redis" json:"redis"`
 	KafkaConfig      []kafkav1.Config `yaml:"kafka" json:"kafkaConfig"`
+	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
 }
 
 func LoadDefaultConfig(v *DefaultConfig) (err error) {

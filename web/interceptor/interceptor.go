@@ -6,9 +6,9 @@ import (
 )
 
 type Interceptor interface {
-	Before(ctx *web.Context) e.ApiError                // 执行业务前执行
-	After(ctx *web.Context, err e.ApiError) e.ApiError // 执行业务后执行，参数err为业务返回的ApiErr信息
-	OnPanic(ctx *web.Context) e.ApiError               // 发生panic时执行
+	Before(ctx *web.Context) e.ApiError                   // 执行业务前执行
+	After(ctx *web.Context, err e.ApiError) e.ApiError    // 执行业务后执行，参数err为业务返回的ApiErr信息
+	OnPanic(ctx *web.Context, err interface{}) e.ApiError // 发生panic时执行
 }
 
 type ItemSort []Item

@@ -63,3 +63,12 @@ func NewApiError(errCode *ErrorCode, msg string, err error) ApiError {
 		Cause:   err,
 	}
 }
+
+func NewInternalError(err error) ApiError {
+	return &apiError{
+		Code:    Internal.Code,
+		Type:    Internal.Type,
+		Message: "internal server error",
+		Cause:   err,
+	}
+}

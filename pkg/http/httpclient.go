@@ -2,13 +2,16 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/cenkalti/backoff/v4"
 	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -52,11 +55,12 @@ type httpClient struct {
 	log          logger.ILog
 	verbose      bool
 	setRequestId func(requestId string, header map[string]string)
+	hooks        []Hook
 }
 
 func NewHttpClient(config Config) HttpClient {
 	// 初始化默认配置
-	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -137,15 +141,19 @@ func (h *httpClient) SetRequestIdCallBack(fn func(requestId string, header map[s
 	h.setRequestId = fn
 }
 
-func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) error {
+func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) (err error) {
+	if !strings.HasPrefix(url, "http") {
+		url = "http://" + url
+	}
+
 	var requestBytes []byte
 	if request != nil && contentType == ContentTypeJson {
-		bytes, err := tools.Marshal(request)
+		_bytes, err := tools.Marshal(request)
 		if err != nil {
-			h.log.Error("marshal request failed. err: %s", err.Error())
+			h.log.Error("marshal request failed. Error: %s", err.Error())
 			return MarshalErr
 		}
-		requestBytes = bytes
+		requestBytes = _bytes
 	}
 
 	// 执行配置traceId函数
@@ -155,7 +163,7 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 
 	httpRequest, err := h.createHttpRequest(method, url, contentType, requestBytes, values, header)
 	if err != nil {
-		h.log.Error("new httpRequest failed. err: %s", err.Error())
+		h.log.Error("new httpRequest failed. Error: %s", err.Error())
 		return NewHttpRequestErr
 	}
 
@@ -166,40 +174,89 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 	start := time.Now()
 	client := &http.Client{Timeout: h.timeout, Transport: h.transport}
 	var remoteResponse *http.Response
-	var respErr error
-	// 如果失败重试两次
-	for i := 1; i <= 3; i++ {
+	fn := func() error {
+		var respErr error
 		remoteResponse, respErr = client.Do(httpRequest)
 		if h.verbose {
 			h.log.Info("%s, %s, Elapsed: %v", requestId, url, time.Now().Sub(start))
 		}
 		if respErr != nil {
 			h.log.Error("Http远程访问出错, error: %s", respErr.Error())
-			if h.disableRetry || i == 3 {
-				break
-			}
 			if request != nil && httpRequest.Body != nil {
 				httpRequest.Body = io.NopCloser(bytes.NewBuffer(requestBytes)) //重置body
 			}
 			client.Timeout = 3 * time.Second //重试请求超时时间设置短一些
-		} else {
-			break
+		}
+		return respErr
+	}
+
+	doTarget := func() error {
+		var backOff backoff.BackOff
+		_backOff := backoff.NewExponentialBackOff()
+		max := 2 // 重试2次，一共三次
+		if h.disableRetry {
+			max = 0
+		}
+		backOff = backoff.WithMaxRetries(_backOff, uint64(max))
+		respErr := backoff.Retry(fn, backOff)
+		if respErr != nil {
+			return HttpRequestErr
+		}
+		return nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), "httpclient hook", r, string(debug.Stack()))
+
+			if remoteResponse == nil {
+				err = doTarget()
+				if err != nil {
+					return
+				}
+			}
+
+			var data []byte
+			data, err = h.parseHttpResponse(remoteResponse)
+			if data != nil && response.Data != nil {
+				if err = tools.Unmarshal(data, response.Data); err != nil {
+					h.log.Error("unmarshal remoteResponse to response failed. Error: %s", err)
+					err = UnmarshalErr
+				}
+			}
+			response.StatusCode = remoteResponse.StatusCode
+		}
+	}()
+
+	todo := context.TODO()
+	var _err error
+	for _, hook := range h.hooks {
+		if todo, _err = hook.BeforeRequest(todo, httpRequest); _err != nil {
+			h.log.Error("exec hook beforeRequest failed. Error: %s", _err.Error())
 		}
 	}
-	if respErr != nil {
-		return HttpRequestErr
+
+	err = doTarget()
+
+	for _, hook := range h.hooks {
+		if _err = hook.AfterRequest(todo, httpRequest, remoteResponse, err); _err != nil {
+			h.log.Error("exec hook afterRequest failed. Error: %s", _err.Error())
+		}
+	}
+	if err != nil {
+		return
 	}
 
 	data, err := h.parseHttpResponse(remoteResponse)
-	if data != nil {
+	if data != nil && response.Data != nil {
 		if err = tools.Unmarshal(data, response.Data); err != nil {
-			h.log.Error("unmarshal remoteResponse to response failed. err: %s", err)
+			h.log.Error("unmarshal remoteResponse to response failed. Error: %s", err)
 			return UnmarshalErr
 		}
 	}
 	response.StatusCode = remoteResponse.StatusCode
 
-	return nil
+	return
 }
 
 func (h *httpClient) createHttpRequest(method, url string, contentType string, requestBytes []byte, values url.Values, header map[string]string) (*http.Request, error) {
@@ -235,30 +292,39 @@ func (h *httpClient) createHttpRequest(method, url string, contentType string, r
 
 func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, error) {
 	if remoteResponse.Body != nil {
-		defer remoteResponse.Body.Close()
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				h.log.Error("close remote response body failed. Error: %s", err.Error())
+			}
+		}(remoteResponse.Body)
 	}
 
 	body, err := ioutil.ReadAll(remoteResponse.Body)
 	if err != nil {
-		h.log.Error("read remoteResponse body failed. err: %s", err.Error())
+		h.log.Error("read remoteResponse body failed. Error: %s", err.Error())
 		return nil, UnmarshalErr
 	}
 
 	if isGzip(remoteResponse.Header) {
 		body, err = tools.Gunzip(body)
 		if err != nil {
-			h.log.Error("unzip failed. err: %s", err.Error())
+			h.log.Error("unzip failed. Error: %s", err.Error())
 			return nil, UnGzipErr
 		}
 	} else if isBr(remoteResponse.Header) {
 		body, err = tools.UnBrotil(body)
 		if err != nil {
-			h.log.Error("unzip failed. err: %s", err.Error())
+			h.log.Error("unzip failed. Error: %s", err.Error())
 			return nil, UnGzipErr
 		}
 	}
 
 	return body, err
+}
+
+func (h *httpClient) AddHook(hook Hook) {
+	h.hooks = append(h.hooks, hook)
 }
 
 func isGzip(header http.Header) bool {

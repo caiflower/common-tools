@@ -223,6 +223,10 @@ func (lh *LoggerHandler) Fatal(text string, v ...interface{}) {
 	lh.log(FatalLevel, text, v...)
 }
 
+func (lh *LoggerHandler) Printf(text string, v ...interface{}) {
+	lh.log(InfoLevel, text, v...)
+}
+
 func getLevel(level string) int {
 	switch level {
 	case TraceLevel:

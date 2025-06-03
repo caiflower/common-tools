@@ -29,7 +29,7 @@ func (t *TestInterceptor1) After(ctx *web.Context, err e.ApiError) e.ApiError {
 	return nil
 }
 
-func (t *TestInterceptor1) OnPanic(ctx *web.Context) (err e.ApiError) {
+func (t *TestInterceptor1) OnPanic(ctx *web.Context, recover interface{}) (err e.ApiError) {
 	fmt.Println("OnPanic order:1")
 	return e.NewApiError(e.Unknown, "请稍后再试", nil)
 }
@@ -50,7 +50,7 @@ func (t *TestInterceptor2) After(ctx *web.Context, err e.ApiError) e.ApiError {
 	return nil
 }
 
-func (t *TestInterceptor2) OnPanic(ctx *web.Context) (err e.ApiError) {
+func (t *TestInterceptor2) OnPanic(ctx *web.Context, recover interface{}) (err e.ApiError) {
 	fmt.Println("OnPanic order:2")
 	return
 }

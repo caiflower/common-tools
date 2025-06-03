@@ -237,6 +237,7 @@ func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 			if c.method == ctx.method && tools.MatchReg(ctx.path, "/"+c.version+c.path) {
 				ctx.version = c.version
 				ctx.targetMethod = c.targetMethod
+				ctx.action = c.action
 
 				path := strings.TrimPrefix(ctx.path, "/"+c.version)
 				k := 0
@@ -564,7 +565,7 @@ func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *ht
 
 		// onPanic
 		for _, v := range h.interceptors {
-			apiError := v.Interceptor.OnPanic(interceptorCtx)
+			apiError := v.Interceptor.OnPanic(interceptorCtx, err)
 			if apiError != nil {
 				defaultErr = apiError
 				break
