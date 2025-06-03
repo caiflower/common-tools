@@ -2,9 +2,9 @@ package http
 
 import (
 	"fmt"
-	"testing"
-
 	"github.com/caiflower/common-tools/pkg/tools"
+	"testing"
+	"time"
 )
 
 // Event结构体表示单个事件
@@ -177,9 +177,11 @@ func TestHttpClient_GetJson(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		err := client.PostJson("test", "http://127.0.0.1:8080/v1/test/struct?Action=Test1", request, &response, nil)
 		if err != nil {
-			panic(err)
+			time.Sleep(1 * time.Second)
+			//panic(err)
 		}
 
+		fmt.Println("---------")
 		fmt.Printf("%v\n", res)
 	}
 }

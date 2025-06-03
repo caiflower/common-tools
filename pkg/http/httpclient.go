@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"fmt"
+	"github.com/cenkalti/backoff/v4"
 	"io"
 	"io/ioutil"
 	"net"
@@ -166,26 +167,30 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 	start := time.Now()
 	client := &http.Client{Timeout: h.timeout, Transport: h.transport}
 	var remoteResponse *http.Response
-	var respErr error
-	// 如果失败重试两次
-	for i := 1; i <= 3; i++ {
+	fn := func() error {
+		var respErr error
 		remoteResponse, respErr = client.Do(httpRequest)
 		if h.verbose {
 			h.log.Info("%s, %s, Elapsed: %v", requestId, url, time.Now().Sub(start))
 		}
 		if respErr != nil {
 			h.log.Error("Http远程访问出错, error: %s", respErr.Error())
-			if h.disableRetry || i == 3 {
-				break
-			}
 			if request != nil && httpRequest.Body != nil {
 				httpRequest.Body = io.NopCloser(bytes.NewBuffer(requestBytes)) //重置body
 			}
 			client.Timeout = 3 * time.Second //重试请求超时时间设置短一些
-		} else {
-			break
 		}
+		return respErr
 	}
+
+	var backOff backoff.BackOff
+	_backOff := backoff.NewExponentialBackOff()
+	max := 2 // 重试2次，一共三次
+	if h.disableRetry {
+		max = 0
+	}
+	backOff = backoff.WithMaxRetries(_backOff, uint64(max))
+	respErr := backoff.Retry(fn, backOff)
 	if respErr != nil {
 		return HttpRequestErr
 	}
