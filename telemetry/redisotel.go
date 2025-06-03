@@ -37,6 +37,10 @@ func spanFromContext(ctx context.Context, name string) (context.Context, trace.S
 
 func (TracingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
 	ctx, span := spanFromContext(ctx, cmd.FullName())
+	if !span.IsRecording() {
+		return ctx, nil
+	}
+
 	span.SetAttributes(
 		attribute.String("db.system", "redis"),
 		attribute.String("db.statement", rediscmd.CmdString(cmd)),
@@ -48,6 +52,10 @@ func (TracingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.
 func (TracingHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 	span := trace.SpanFromContext(ctx)
 	defer span.End()
+	if !span.IsRecording() {
+		return nil
+	}
+
 	if err := cmd.Err(); err != nil {
 		recordError(ctx, span, err)
 	}
@@ -60,6 +68,10 @@ func (TracingHook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder
 	summary, cmdsString := rediscmd.CmdsString(cmds)
 
 	ctx, span := spanFromContext(ctx, "pipeline "+summary)
+	if !span.IsRecording() {
+		return ctx, nil
+	}
+
 	span.SetAttributes(
 		attribute.String("db.system", "redis"),
 		attribute.Int("db.redis.num_cmd", len(cmds)),
@@ -72,6 +84,10 @@ func (TracingHook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder
 func (TracingHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
 	span := trace.SpanFromContext(ctx)
 	defer span.End()
+	if !span.IsRecording() {
+		return nil
+	}
+
 	if err := cmds[0].Err(); err != nil {
 		recordError(ctx, span, err)
 	}
