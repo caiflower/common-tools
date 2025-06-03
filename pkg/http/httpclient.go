@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"github.com/cenkalti/backoff/v4"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -53,6 +55,7 @@ type httpClient struct {
 	log          logger.ILog
 	verbose      bool
 	setRequestId func(requestId string, header map[string]string)
+	hooks        []Hook
 }
 
 func NewHttpClient(config Config) HttpClient {
@@ -138,7 +141,11 @@ func (h *httpClient) SetRequestIdCallBack(fn func(requestId string, header map[s
 	h.setRequestId = fn
 }
 
-func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) error {
+func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) (err error) {
+	if !strings.HasPrefix(url, "http") {
+		url = "http://" + url
+	}
+
 	var requestBytes []byte
 	if request != nil && contentType == ContentTypeJson {
 		_bytes, err := tools.Marshal(request)
@@ -183,20 +190,65 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 		return respErr
 	}
 
-	var backOff backoff.BackOff
-	_backOff := backoff.NewExponentialBackOff()
-	max := 2 // 重试2次，一共三次
-	if h.disableRetry {
-		max = 0
+	doTarget := func() error {
+		var backOff backoff.BackOff
+		_backOff := backoff.NewExponentialBackOff()
+		max := 2 // 重试2次，一共三次
+		if h.disableRetry {
+			max = 0
+		}
+		backOff = backoff.WithMaxRetries(_backOff, uint64(max))
+		respErr := backoff.Retry(fn, backOff)
+		if respErr != nil {
+			return HttpRequestErr
+		}
+		return nil
 	}
-	backOff = backoff.WithMaxRetries(_backOff, uint64(max))
-	respErr := backoff.Retry(fn, backOff)
-	if respErr != nil {
-		return HttpRequestErr
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("%s [ERROR] - Got a runtime error %s. %s\n%s", time.Now().Format("2006-01-02 15:04:05"), "httpclient hook", r, string(debug.Stack()))
+
+			if remoteResponse == nil {
+				err = doTarget()
+				if err != nil {
+					return
+				}
+			}
+
+			var data []byte
+			data, err = h.parseHttpResponse(remoteResponse)
+			if data != nil && response.Data != nil {
+				if err = tools.Unmarshal(data, response.Data); err != nil {
+					h.log.Error("unmarshal remoteResponse to response failed. Error: %s", err)
+					err = UnmarshalErr
+				}
+			}
+			response.StatusCode = remoteResponse.StatusCode
+		}
+	}()
+
+	todo := context.TODO()
+	var _err error
+	for _, hook := range h.hooks {
+		if todo, _err = hook.BeforeRequest(todo, httpRequest); _err != nil {
+			h.log.Error("exec hook beforeRequest failed. Error: %s", _err.Error())
+		}
+	}
+
+	err = doTarget()
+
+	for _, hook := range h.hooks {
+		if _err = hook.AfterRequest(todo, httpRequest, remoteResponse, err); _err != nil {
+			h.log.Error("exec hook afterRequest failed. Error: %s", _err.Error())
+		}
+	}
+	if err != nil {
+		return
 	}
 
 	data, err := h.parseHttpResponse(remoteResponse)
-	if data != nil {
+	if data != nil && response.Data != nil {
 		if err = tools.Unmarshal(data, response.Data); err != nil {
 			h.log.Error("unmarshal remoteResponse to response failed. Error: %s", err)
 			return UnmarshalErr
@@ -204,7 +256,7 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 	}
 	response.StatusCode = remoteResponse.StatusCode
 
-	return nil
+	return
 }
 
 func (h *httpClient) createHttpRequest(method, url string, contentType string, requestBytes []byte, values url.Values, header map[string]string) (*http.Request, error) {
@@ -243,7 +295,7 @@ func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, e
 		defer func(Body io.ReadCloser) {
 			err := Body.Close()
 			if err != nil {
-				logger.Error("close remote response body failed. Error: %s", err.Error())
+				h.log.Error("close remote response body failed. Error: %s", err.Error())
 			}
 		}(remoteResponse.Body)
 	}
@@ -269,6 +321,10 @@ func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, e
 	}
 
 	return body, err
+}
+
+func (h *httpClient) AddHook(hook Hook) {
+	h.hooks = append(h.hooks, hook)
 }
 
 func isGzip(header http.Header) bool {

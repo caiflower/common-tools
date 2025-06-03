@@ -14,4 +14,5 @@ type HttpClient interface {
 	Patch(requestId, url string, request interface{}, response *Response, header map[string]string) error
 	Delete(requestId, url string, request interface{}, response *Response, header map[string]string) error
 	SetRequestIdCallBack(func(requestId string, header map[string]string))
+	AddHook(hook Hook)
 }
