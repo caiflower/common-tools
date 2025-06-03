@@ -56,7 +56,7 @@ type httpClient struct {
 
 func NewHttpClient(config Config) HttpClient {
 	// 初始化默认配置
-	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -140,12 +140,12 @@ func (h *httpClient) SetRequestIdCallBack(fn func(requestId string, header map[s
 func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) error {
 	var requestBytes []byte
 	if request != nil && contentType == ContentTypeJson {
-		bytes, err := tools.Marshal(request)
+		_bytes, err := tools.Marshal(request)
 		if err != nil {
-			h.log.Error("marshal request failed. err: %s", err.Error())
+			h.log.Error("marshal request failed. Error: %s", err.Error())
 			return MarshalErr
 		}
-		requestBytes = bytes
+		requestBytes = _bytes
 	}
 
 	// 执行配置traceId函数
@@ -155,7 +155,7 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 
 	httpRequest, err := h.createHttpRequest(method, url, contentType, requestBytes, values, header)
 	if err != nil {
-		h.log.Error("new httpRequest failed. err: %s", err.Error())
+		h.log.Error("new httpRequest failed. Error: %s", err.Error())
 		return NewHttpRequestErr
 	}
 
@@ -193,7 +193,7 @@ func (h *httpClient) do(method, requestId, url, contentType string, request inte
 	data, err := h.parseHttpResponse(remoteResponse)
 	if data != nil {
 		if err = tools.Unmarshal(data, response.Data); err != nil {
-			h.log.Error("unmarshal remoteResponse to response failed. err: %s", err)
+			h.log.Error("unmarshal remoteResponse to response failed. Error: %s", err)
 			return UnmarshalErr
 		}
 	}
@@ -235,25 +235,30 @@ func (h *httpClient) createHttpRequest(method, url string, contentType string, r
 
 func (h *httpClient) parseHttpResponse(remoteResponse *http.Response) ([]byte, error) {
 	if remoteResponse.Body != nil {
-		defer remoteResponse.Body.Close()
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				logger.Error("close remote response body failed. Error: %s", err.Error())
+			}
+		}(remoteResponse.Body)
 	}
 
 	body, err := ioutil.ReadAll(remoteResponse.Body)
 	if err != nil {
-		h.log.Error("read remoteResponse body failed. err: %s", err.Error())
+		h.log.Error("read remoteResponse body failed. Error: %s", err.Error())
 		return nil, UnmarshalErr
 	}
 
 	if isGzip(remoteResponse.Header) {
 		body, err = tools.Gunzip(body)
 		if err != nil {
-			h.log.Error("unzip failed. err: %s", err.Error())
+			h.log.Error("unzip failed. Error: %s", err.Error())
 			return nil, UnGzipErr
 		}
 	} else if isBr(remoteResponse.Header) {
 		body, err = tools.UnBrotil(body)
 		if err != nil {
-			h.log.Error("unzip failed. err: %s", err.Error())
+			h.log.Error("unzip failed. Error: %s", err.Error())
 			return nil, UnGzipErr
 		}
 	}
