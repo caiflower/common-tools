@@ -107,6 +107,19 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	return nil
 }
 
+func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
+	taskBean, subtaskBeans := task.convert2Bean()
+	_, err := t.TaskDao.Insert(taskBean, tx)
+	if err != nil {
+		return err
+	}
+	_, err = t.SubTaskDao.Insert(&subtaskBeans, tx)
+	if err != nil {
+		return err
+	}
+	return err
+}
+
 func (t *taskDispatcher) handleTask() {
 	id := 0
 	if tmp, e := cache.LocalCache.Get(taskIdKey); e {
@@ -310,6 +323,10 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 			logger.Error("deliver subtaskRollbacks failed. err: %s", err.Error())
 		}
 	}
+}
+
+func (t *taskDispatcher) HandleTaskImmediately(taskId string) {
+	go t.handleTaskImmediately(taskId)
 }
 
 func (t *taskDispatcher) handleTaskImmediately(taskId string) {
