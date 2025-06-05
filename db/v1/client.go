@@ -18,6 +18,8 @@ import (
 	"github.com/uptrace/bun/dialect/mysqldialect"
 )
 
+const traceId = "traceId"
+
 type IDB interface {
 	GetDB() *bun.DB                                                          // 获取数据库连接，无事物
 	GetTx(tx *bun.Tx) bun.IDB                                                // 获取数据库连接，如果tx=nil，那么获取的是无事物的连接，否者返回tx。
@@ -31,7 +33,7 @@ type IDB interface {
 	Insert(data interface{}, tx *bun.Tx) (int64, error)                      // 通用处理：插入数据(单条及批量处理，批量太大时不要使用)
 	SoftDelete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) // 通用处理：逻辑删除(id可以是单个也可以是数组)
 	Delete(model interface{}, tx *bun.Tx, id interface{}) (int64, error)     // 通用处理：物理删除(id可以是单个也可以是数组)
-	QueryByCondition(result interface{}, filter Filter) (int, error)         // 通用处理：根据条件查询
+	QueryPage(result interface{}, filter Filter) (int, error)                // 通用处理：根据条件查询
 	QueryAll(result interface{}) (int, error)                                // 通用处理：查询全量
 	GetRowsAffected(result sql.Result, err error) (int64, error)             // 通用处理：获取执行结果影响的记录数量
 	ParseErr(err error) error                                                // 单个数据操作，消化ErrNoRows
@@ -192,7 +194,7 @@ func (c *Client) QueryAll(result interface{}) (int, error) {
 	return c.GetSelect(result).Order("id desc").ScanAndCount(GetContext(context.Background()), result)
 }
 
-func (c *Client) QueryByCondition(result interface{}, filter Filter) (int, error) {
+func (c *Client) QueryPage(result interface{}, filter Filter) (int, error) {
 	if filter != nil {
 		offset, limit, disable := filter.GetPage()
 		if !disable {
@@ -226,10 +228,13 @@ func (c *Client) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context
 
 func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 	if c.config.Debug {
+		if requestId, trace := golocalv1.GetTraceID(), ctx.Value(traceId); requestId == "" && trace != nil {
+			golocalv1.PutTraceID(trace.(string))
+		}
 		rows := ""
 		if event.Result != nil {
-			c, _ := event.Result.RowsAffected()
-			rows = fmt.Sprintf(". rows_affected=%d.", c)
+			row, _ := event.Result.RowsAffected()
+			rows = fmt.Sprintf(". rows_affected=%d.", row)
 		}
 		if event.Err == nil {
 			logger.Info("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
@@ -241,5 +246,5 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 
 // GetContext getContext with traceId
 func GetContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, "traceId", golocalv1.GetTraceID())
+	return context.WithValue(ctx, traceId, golocalv1.GetTraceID())
 }
