@@ -42,7 +42,7 @@ type HttpServer struct {
 	logger        logger.ILog
 	server        *http.Server
 	handler       *handler
-	limiterBucket *limiter.TokenBucket
+	limiterBucket limiter.Limiter
 }
 
 func InitDefaultHttpServer(config Config) *HttpServer {
@@ -142,13 +142,12 @@ func (s *HttpServer) StartUp() {
 	}
 
 	if s.config.WebLimiter.Enable {
-		getLimiterCallBack := func(qos int) *limiter.TokenBucket {
-			limiterBucket := limiter.NewTokenBucket(qos)
+		getLimiterCallBack := func(qos int) limiter.Limiter {
+			limiterBucket := limiter.NewXTokenBucket(qos, qos)
 			return limiterBucket
 		}
 
 		s.limiterBucket = getLimiterCallBack(s.config.WebLimiter.Qos)
-		s.limiterBucket.Startup()
 
 		var limiterCallBack = func(w http.ResponseWriter, r *http.Request) bool {
 			if s.limiterBucket.TakeTokenNonBlocking() {
@@ -197,9 +196,6 @@ func (s *HttpServer) Close() {
 				"**** error:%s ****", err.Error())
 		}
 		s.logger.Info(" **** http server gracefully shutdown ****")
-	}
-	if s.limiterBucket != nil {
-		s.limiterBucket.Close()
 	}
 	s.server = nil
 	s.limiterBucket = nil
