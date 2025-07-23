@@ -20,7 +20,7 @@ func DoFuncString(poolSize int, fn func(interface{}), slices ...string) error {
 		}
 	}()
 
-	if poolSize <= 0 {
+	if poolSize <= 0 || poolSize > len(slices) {
 		poolSize = len(slices)
 	}
 	for i := 0; i < poolSize; i++ {
@@ -51,7 +51,7 @@ func DoFuncInterface(poolSize int, fn func(interface{}), slices map[int]interfac
 		}
 	}()
 
-	if poolSize <= 0 {
+	if poolSize <= 0 || poolSize > len(slices) {
 		poolSize = len(slices)
 	}
 	for i := 0; i < poolSize; i++ {
