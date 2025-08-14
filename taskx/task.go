@@ -124,7 +124,7 @@ func NewTask(taskName string) *Task {
 	}
 }
 
-func NewSubTask(taskName string) *SubTask {
+func NewSubtask(taskName string) *SubTask {
 	return &SubTask{
 		taskName:      taskName,
 		taskState:     TaskPending,
@@ -132,6 +132,11 @@ func NewSubTask(taskName string) *SubTask {
 		retryInterval: DefaultRetryTimout,
 		rollback:      string(RollbackPending),
 	}
+}
+
+// Deprecated
+func NewSubTask(taskName string) *SubTask {
+	return NewSubtask(taskName)
 }
 
 func (t *SubTask) AllocateTaskId() {

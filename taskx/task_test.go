@@ -7,11 +7,11 @@ import (
 
 func TestTask(t *testing.T) {
 	myTask := NewTask("testTask").SetInput("test")
-	stp1 := NewSubTask("stp1").SetInput("stp1")
-	stp2 := NewSubTask("stp2").SetInput("stp2")
-	stp3 := NewSubTask("stp3").SetInput("stp3")
-	stp4 := NewSubTask("stp4").SetInput("stp4")
-	stp5 := NewSubTask("stp5").SetInput("stp5")
+	stp1 := NewSubtask("stp1").SetInput("stp1")
+	stp2 := NewSubtask("stp2").SetInput("stp2")
+	stp3 := NewSubtask("stp3").SetInput("stp3")
+	stp4 := NewSubtask("stp4").SetInput("stp4")
+	stp5 := NewSubtask("stp5").SetInput("stp5")
 	_ = myTask.AddSubTask(stp1)
 	_ = myTask.AddSubTask(stp2)
 	_ = myTask.AddSubTask(stp3)

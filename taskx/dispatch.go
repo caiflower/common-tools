@@ -1,6 +1,7 @@
 package taskx
 
 import (
+	"github.com/caiflower/common-tools/pkg/inflight"
 	"math/rand"
 	"reflect"
 	"time"
@@ -20,17 +21,20 @@ const (
 	taskIdKey = "common-tools/taskx/taskId"
 )
 
-var SingletonTaskDispatcher = &taskDispatcher{}
+var SingletonTaskDispatcher = &taskDispatcher{
+	allocateWorkerInflight: inflight.NewInFlight(),
+}
 
 type taskDispatcher struct {
 	cluster.DefaultCaller
-	Cluster      cluster.ICluster     `autowired:""`
-	TaskDao      *taskxdao.TaskDao    `autowired:""`
-	SubTaskDao   *taskxdao.SubtaskDao `autowired:""`
-	DBClient     dbv1.IDB             `autowired:""`
-	TaskReceiver *taskReceiver        `autowired:""`
-	cfg          *Config
-	running      bool
+	Cluster                cluster.ICluster     `autowired:""`
+	TaskDao                *taskxdao.TaskDao    `autowired:""`
+	SubtaskDao             *taskxdao.SubtaskDao `autowired:""`
+	DBClient               dbv1.IDB             `autowired:""`
+	TaskReceiver           *taskReceiver        `autowired:""`
+	cfg                    *Config
+	running                bool
+	allocateWorkerInflight *inflight.InFlight
 }
 
 type Config struct {
@@ -93,7 +97,7 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	}
 
 	tx.Add(func(tx *bun.Tx) error {
-		_, err := t.SubTaskDao.Insert(&subtaskBeans, tx)
+		_, err := t.SubtaskDao.Insert(&subtaskBeans, tx)
 		return err
 	})
 
@@ -113,7 +117,7 @@ func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 	if err != nil {
 		return err
 	}
-	_, err = t.SubTaskDao.Insert(&subtaskBeans, tx)
+	_, err = t.SubtaskDao.Insert(&subtaskBeans, tx)
 	if err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func (t *taskDispatcher) handleTask() {
 		rollbackSubtasks []*taskxdao.Subtask
 	)
 	for _, v := range tasks {
-		subtasks, subtaskMap, err := t.SubTaskDao.GetSubtasksByTaskId(v.TaskId)
+		subtasks, subtaskMap, err := t.SubtaskDao.GetSubtasksByTaskId(v.TaskId)
 		if err != nil {
 			logger.Error("get task %v subtasks failed. err: %s", v.TaskId, err.Error())
 			continue
@@ -233,69 +237,87 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 		return
 	}
 
+	defer func() {
+		for _, runningTask := range runningTasks {
+			t.allocateWorkerInflight.Delete(runningTask)
+		}
+		for _, runningSubtask := range runningSubtasks {
+			t.allocateWorkerInflight.Delete(runningSubtask)
+		}
+		for _, runningSubtaskRollback := range runningSubtaskRollbacks {
+			t.allocateWorkerInflight.Delete(runningSubtaskRollback)
+		}
+	}()
+
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
 
-	if len(runningSubtasks) > 0 {
-		for _, runningSubtask := range runningSubtasks {
-			var nodeName string
-			if runningSubtask.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtask.Worker) {
-				nodeName = runningSubtask.Worker
-			} else {
-				nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-			}
-
-			if nodeName != runningSubtask.Worker {
-				subtaskId := runningSubtask.SubtaskId
-				tx.Add(func(tx *bun.Tx) error {
-					return t.SubTaskDao.SetWorkerAndTaskState(subtaskId, nodeName, string(TaskRunning), tx)
-				})
-			}
-
-			subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.SubtaskId)
+	for _, runningSubtask := range runningSubtasks {
+		if !t.allocateWorkerInflight.Insert(runningSubtask) {
+			continue
 		}
+
+		var nodeName string
+		if runningSubtask.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtask.Worker) {
+			nodeName = runningSubtask.Worker
+		} else {
+			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
+		}
+
+		if nodeName != runningSubtask.Worker {
+			subtaskId := runningSubtask.SubtaskId
+			tx.Add(func(tx *bun.Tx) error {
+				return t.SubtaskDao.SetWorkerAndTaskState(subtaskId, nodeName, string(TaskRunning), tx)
+			})
+		}
+
+		subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.SubtaskId)
 	}
 
-	if len(runningTasks) > 0 {
-		for _, runningTask := range runningTasks {
-			var nodeName string
-			if runningTask.TaskState == string(TaskRunning) && runningTask.Worker != "" && !tools.StringSliceContains(lostNodes, runningTask.Worker) {
-				nodeName = runningTask.Worker
-			} else {
-				nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-			}
-
-			if nodeName != runningTask.Worker {
-				taskId := runningTask.TaskId
-				tx.Add(func(tx *bun.Tx) error {
-					return t.TaskDao.SetWorkerAndTaskState(taskId, nodeName, string(TaskRunning), tx)
-				})
-			}
-
-			taskWorkerMap[nodeName] = append(taskWorkerMap[nodeName], runningTask.TaskId)
+	for _, runningTask := range runningTasks {
+		if !t.allocateWorkerInflight.Insert(runningTask) {
+			continue
 		}
+
+		var nodeName string
+		if runningTask.TaskState == string(TaskRunning) && runningTask.Worker != "" && !tools.StringSliceContains(lostNodes, runningTask.Worker) {
+			nodeName = runningTask.Worker
+		} else {
+			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
+		}
+
+		if nodeName != runningTask.Worker {
+			taskId := runningTask.TaskId
+			tx.Add(func(tx *bun.Tx) error {
+				return t.TaskDao.SetWorkerAndTaskState(taskId, nodeName, string(TaskRunning), tx)
+			})
+		}
+
+		taskWorkerMap[nodeName] = append(taskWorkerMap[nodeName], runningTask.TaskId)
 	}
 
-	if len(runningSubtaskRollbacks) > 0 {
-		for _, runningSubtaskRollback := range runningSubtaskRollbacks {
-			var nodeName string
-			if runningSubtaskRollback.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtaskRollback.Worker) {
-				nodeName = runningSubtaskRollback.Worker
-			} else {
-				nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-			}
-
-			if nodeName != runningSubtaskRollback.Worker {
-				subtaskId := runningSubtaskRollback.SubtaskId
-				tx.Add(func(tx *bun.Tx) error {
-					return t.SubTaskDao.SetWorkerAndRollback(subtaskId, nodeName, string(RollingBack), tx)
-				})
-			}
-
-			subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.SubtaskId)
+	for _, runningSubtaskRollback := range runningSubtaskRollbacks {
+		if !t.allocateWorkerInflight.Insert(runningSubtaskRollback) {
+			continue
 		}
+
+		var nodeName string
+		if runningSubtaskRollback.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtaskRollback.Worker) {
+			nodeName = runningSubtaskRollback.Worker
+		} else {
+			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
+		}
+
+		if nodeName != runningSubtaskRollback.Worker {
+			subtaskId := runningSubtaskRollback.SubtaskId
+			tx.Add(func(tx *bun.Tx) error {
+				return t.SubtaskDao.SetWorkerAndRollback(subtaskId, nodeName, string(RollingBack), tx)
+			})
+		}
+
+		subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.SubtaskId)
 	}
 
 	if err := tx.Submit(); err != nil {
@@ -338,7 +360,7 @@ func (t *taskDispatcher) handleTaskImmediately(taskId string) {
 	if len(tasks) == 0 {
 		return
 	}
-	subtasks, subtaskMap, err := t.SubTaskDao.GetSubtasksByTaskId(taskId)
+	subtasks, subtaskMap, err := t.SubtaskDao.GetSubtasksByTaskId(taskId)
 	if err != nil {
 		return
 	}

@@ -296,28 +296,31 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		cfg:                      cfg,
 	}
 	dispatcher1 = &taskDispatcher{
-		Cluster:      cluster1,
-		TaskDao:      taskDao,
-		SubTaskDao:   subtaskDao,
-		DBClient:     client,
-		cfg:          cfg,
-		TaskReceiver: receiver1,
+		Cluster:                cluster1,
+		TaskDao:                taskDao,
+		SubtaskDao:             subtaskDao,
+		DBClient:               client,
+		cfg:                    cfg,
+		TaskReceiver:           receiver1,
+		allocateWorkerInflight: inflight.NewInFlight(),
 	}
 	dispatcher2 = &taskDispatcher{
-		Cluster:      cluster2,
-		TaskDao:      taskDao,
-		SubTaskDao:   subtaskDao,
-		DBClient:     client,
-		cfg:          cfg,
-		TaskReceiver: receiver2,
+		Cluster:                cluster2,
+		TaskDao:                taskDao,
+		SubtaskDao:             subtaskDao,
+		DBClient:               client,
+		cfg:                    cfg,
+		TaskReceiver:           receiver2,
+		allocateWorkerInflight: inflight.NewInFlight(),
 	}
 	dispatcher3 = &taskDispatcher{
-		Cluster:      cluster3,
-		TaskDao:      taskDao,
-		SubTaskDao:   subtaskDao,
-		DBClient:     client,
-		cfg:          cfg,
-		TaskReceiver: receiver3,
+		Cluster:                cluster3,
+		TaskDao:                taskDao,
+		SubtaskDao:             subtaskDao,
+		DBClient:               client,
+		cfg:                    cfg,
+		TaskReceiver:           receiver3,
+		allocateWorkerInflight: inflight.NewInFlight(),
 	}
 	receiver1.TaskDispatcher = dispatcher1
 	receiver2.TaskDispatcher = dispatcher2
@@ -356,11 +359,11 @@ func TestDisPatch(t *testing.T) {
 
 func submitTask(dispatcher1 *taskDispatcher) {
 	task := NewTask(taskName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
-	one := NewSubTask(stepOne).SetInput("one")
-	two := NewSubTask(stepTwo).SetInput("two")
-	three := NewSubTask(stepThree).SetInput("three")
-	four := NewSubTask(stepFour).SetInput("four")
-	five := NewSubTask(stepFive).SetInput("five")
+	one := NewSubtask(stepOne).SetInput("one")
+	two := NewSubtask(stepTwo).SetInput("two")
+	three := NewSubtask(stepThree).SetInput("three")
+	four := NewSubtask(stepFour).SetInput("four")
+	five := NewSubtask(stepFive).SetInput("five")
 	err := task.AddSubTask(one)
 	if err != nil {
 		panic(err)
@@ -511,11 +514,11 @@ func TestDisPatchRollback(t *testing.T) {
 
 func submitRollbackTask(dispatcher1 *taskDispatcher) {
 	task := NewTask(taskRollbackName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
-	one := NewSubTask(stepOne).SetInput("one")
-	two := NewSubTask(stepTwo).SetInput("two")
-	three := NewSubTask(stepThree).SetInput("three")
-	four := NewSubTask(stepFour).SetInput("four")
-	five := NewSubTask(stepFive).SetInput("five")
+	one := NewSubtask(stepOne).SetInput("one")
+	two := NewSubtask(stepTwo).SetInput("two")
+	three := NewSubtask(stepThree).SetInput("three")
+	four := NewSubtask(stepFour).SetInput("four")
+	five := NewSubtask(stepFive).SetInput("five")
 	err := task.AddSubTask(one)
 	if err != nil {
 		panic(err)
