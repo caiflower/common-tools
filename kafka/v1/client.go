@@ -26,6 +26,7 @@ type Config struct {
 	ConsumerHeartBeatInterval time.Duration `yaml:"consumer_heart_beat_interval" default:"3s"`
 	ConsumerSessionTimeout    time.Duration `yaml:"consumer_session_timeout" default:"45s"`
 	ConsumerWorkerNum         int           `yaml:"consumer_worker_num" default:"2"`
+	ConsumerAutoOffsetReset   string        `yaml:"consumer_auto_offset_reset" default:"latest"` // https://www.cnblogs.com/convict/p/16701154.html
 	SecurityProtocol          string        `yaml:"security_protocol"`
 	SaslMechanism             string        `yaml:"sasl_mechanism"`
 	SaslUsername              string        `yaml:"sasl_username"`

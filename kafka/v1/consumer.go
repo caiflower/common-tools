@@ -64,7 +64,7 @@ func NewConsumerClient(config Config) Consumer {
 	}
 	configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
 	configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
-	configMap.SetKey("auto.offset.reset", "earliest")
+	configMap.SetKey("auto.offset.reset", config.ConsumerAutoOffsetReset)
 
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
