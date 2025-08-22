@@ -19,15 +19,15 @@ type Producer interface {
 
 func NewProducerClient(config Config) Producer {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("Kafka consumer %s set default config failed. err: %s", config.Name, err.Error())
+		logger.Warn("[kafka-product] producer %s set default config failed. err: %s", config.Name, err.Error())
 	}
 
 	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock()}
 	if !config.Enable {
-		logger.Warn("kafka producer %s is disable", config.Name)
+		logger.Warn("[kafka-product] producer %s is disable", config.Name)
 		return kafkaClient
 	} else {
-		logger.Info("kafka producer %s config: %s", config.Name, tools.ToJson(config))
+		logger.Info("[kafka-product] producer %s config: %s", config.Name, tools.ToJson(config))
 	}
 
 	configMap := &kafka.ConfigMap{}
@@ -51,7 +51,7 @@ func NewProducerClient(config Config) Producer {
 
 	producer, err := kafka.NewProducer(configMap)
 	if err != nil {
-		logger.Error("[kafka] create kafka producer failed. Error: %s", err.Error())
+		logger.Error("[kafka-product] create kafka producer failed. Error: %s", err.Error())
 		return kafkaClient
 	}
 
@@ -61,9 +61,9 @@ func NewProducerClient(config Config) Producer {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					logger.Error("[kafka] producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
+					logger.Error("[kafka-product] producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
 				} else {
-					logger.Debug("[kafka] producer delivery message %v to %v", ev.Value, ev.TopicPartition)
+					logger.Debug("[kafka-product] producer delivery message %v to %v", ev.Value, ev.TopicPartition)
 				}
 			}
 		}
@@ -90,15 +90,15 @@ func (c *KafkaClient) Send(msg interface{}) error {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					logger.Error("[kafka]  producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, tools.ToJson(msg), ev.TopicPartition.Topic)
+					logger.Error("[kafka-product]  producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, tools.ToJson(msg), ev.TopicPartition.Topic)
 					err = ev.TopicPartition.Error
 				} else {
-					logger.Debug("[kafka] producer delivery message %v to %v success.", tools.ToJson(msg), ev.TopicPartition)
+					logger.Debug("[kafka-product] producer delivery message %v to %v success.", tools.ToJson(msg), ev.TopicPartition)
 				}
 			}
 		}
 	} else {
-		logger.Warn("[kafka] producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
+		logger.Warn("[kafka-product] producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
 	}
 
 	return err
@@ -114,7 +114,7 @@ func (c *KafkaClient) AsyncSend(msg interface{}) error {
 			}
 		}
 	} else {
-		logger.Warn("[kafka] Producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
+		logger.Warn("[kafka-product] Producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
 	}
 
 	return nil
