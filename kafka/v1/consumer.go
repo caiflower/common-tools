@@ -33,47 +33,34 @@ func NewConsumerClient(config Config) Consumer {
 	}
 
 	configMap := &kafka.ConfigMap{}
-	if err := configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ",")); err != nil {
-		logger.Warn("set bootstrap.servers error: %s", err.Error())
-	}
-	if err := configMap.SetKey("group.id", config.GroupID); err != nil {
-		logger.Warn("set group.id error: %s", err.Error())
-	}
-	if err := configMap.SetKey("enable.auto.commit", false); err != nil {
-		logger.Warn("set enable.auto.commit error: %s", err.Error())
-	}
+	_ = configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ","))
+	_ = configMap.SetKey("group.id", config.GroupID)
+	_ = configMap.SetKey("enable.auto.commit", false)
+	_ = configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
+	_ = configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
+	_ = configMap.SetKey("auto.offset.reset", config.ConsumerAutoOffsetReset)
+
 	if config.SecurityProtocol != "" {
-		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
-			logger.Warn("set security.protocol error: %s", err.Error())
-		}
+		_ = configMap.SetKey("security.protocol", config.SecurityProtocol)
 	}
 	if config.SaslMechanism != "" {
-		if err := configMap.SetKey("sasl.mechanism", config.SaslMechanism); err != nil {
-			logger.Warn("set sasl.mechanism error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.mechanism", config.SaslMechanism)
 	}
 	if config.SaslUsername != "" {
-		if err := configMap.SetKey("sasl.username", config.SaslUsername); err != nil {
-			logger.Warn("set sasl.username error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.username", config.SaslUsername)
 	}
 	if config.SaslPassword != "" {
-		if err := configMap.SetKey("sasl.password", config.SaslPassword); err != nil {
-			logger.Warn("set sasl.password error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.password", config.SaslPassword)
 	}
-	configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
-	configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
-	configMap.SetKey("auto.offset.reset", config.ConsumerAutoOffsetReset)
 
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
-		logger.Error("create kafka consumer error: %s", err.Error())
+		logger.Error("[kafka]  create kafka consumer Error: %s", err.Error())
 		return kafkaClient
 	}
 	err = consumer.SubscribeTopics(config.Topics, nil)
 	if err != nil {
-		logger.Error("subscribe topics error, %s", err.Error())
+		logger.Error("[kafka] subscribe topics error, %s", err.Error())
 		return kafkaClient
 	}
 	kafkaClient.Consumer = consumer
@@ -111,11 +98,11 @@ func (c *KafkaClient) doListen() {
 							}
 
 							if _, err = c.Consumer.CommitMessage(msg); err != nil {
-								logger.Error("Kafka consumer commit message error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
+								logger.Error("[kafka] consumer commit message failed. Error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
 							}
 						}()
 					} else if !err.(kafka.Error).IsTimeout() {
-						logger.Error("Kafka consumer error: %v (%v)\n", err, msg)
+						logger.Error("[kafka] consumer failed. Error: %v (%v)\n", err, msg)
 					}
 				}
 			}

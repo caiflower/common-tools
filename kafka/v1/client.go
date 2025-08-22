@@ -22,7 +22,8 @@ type Config struct {
 	GroupID                   string        `yaml:"group_id"`
 	Topics                    []string      `yaml:"topics"`
 	ProducerAcks              int           `yaml:"producer_acks" default:"-1"`
-	ProducerCompressType      string        `yaml:"producer_compress_type" default:"none"` // none, gzip, snappy, lz4, zstd
+	ProducerCompressType      string        `yaml:"producer_compress_type" default:"none"`    // none, gzip, snappy, lz4, zstd
+	ProducerMessageTimeout    int           `yaml:"producer_message_timeout" default:"15000"` // 默认15秒
 	ConsumerHeartBeatInterval time.Duration `yaml:"consumer_heart_beat_interval" default:"3s"`
 	ConsumerSessionTimeout    time.Duration `yaml:"consumer_session_timeout" default:"45s"`
 	ConsumerWorkerNum         int           `yaml:"consumer_worker_num" default:"2"`
