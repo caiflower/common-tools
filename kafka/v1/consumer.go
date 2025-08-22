@@ -20,16 +20,16 @@ type Consumer interface {
 
 func NewConsumerClient(config Config) Consumer {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("Kafka consumer %s set default config failed. err: %s", config.Name, err.Error())
+		logger.Warn("[kafka-consumer] consumer %s set default config failed. err: %s", config.Name, err.Error())
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock(), ctx: ctx, cancel: cancelFunc}
 	if !config.Enable {
-		logger.Warn("kafka consumer %s is disable", config.Name)
+		logger.Warn("[kafka-consumer] consumer %s is disable", config.Name)
 		return kafkaClient
 	} else {
-		logger.Info("Kafka consumer %s config: %s", config.Name, tools.ToJson(config))
+		logger.Info("[kafka-consumer] consumer %s config: %s", config.Name, tools.ToJson(config))
 	}
 
 	configMap := &kafka.ConfigMap{}
@@ -55,12 +55,12 @@ func NewConsumerClient(config Config) Consumer {
 
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
-		logger.Error("[kafka]  create kafka consumer Error: %s", err.Error())
+		logger.Error("[kafka-consumer]  create kafka consumer Error: %s", err.Error())
 		return kafkaClient
 	}
 	err = consumer.SubscribeTopics(config.Topics, nil)
 	if err != nil {
-		logger.Error("[kafka] subscribe topics error, %s", err.Error())
+		logger.Error("[kafka-consumer] subscribe topics error, %s", err.Error())
 		return kafkaClient
 	}
 	kafkaClient.Consumer = consumer
@@ -98,11 +98,11 @@ func (c *KafkaClient) doListen() {
 							}
 
 							if _, err = c.Consumer.CommitMessage(msg); err != nil {
-								logger.Error("[kafka] consumer commit message failed. Error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
+								logger.Error("[kafka-consumer] consumer commit message failed. Error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
 							}
 						}()
 					} else if !err.(kafka.Error).IsTimeout() {
-						logger.Error("[kafka] consumer failed. Error: %v (%v)\n", err, msg)
+						logger.Error("[kafka-consumer] consumer failed. Error: %v (%v)\n", err, msg)
 					}
 				}
 			}
