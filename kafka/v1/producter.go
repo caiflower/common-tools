@@ -27,39 +27,31 @@ func NewProducerClient(config Config) Producer {
 		logger.Warn("kafka producer %s is disable", config.Name)
 		return kafkaClient
 	} else {
-		logger.Info("Kafka producer %s config: %s", config.Name, tools.ToJson(config))
+		logger.Info("kafka producer %s config: %s", config.Name, tools.ToJson(config))
 	}
 
 	configMap := &kafka.ConfigMap{}
-	if err := configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ",")); err != nil {
-		logger.Warn("set bootstrap.servers error: %s", err.Error())
-	}
+	_ = configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ","))
+	_ = configMap.SetKey("request.required.acks", config.ProducerAcks)
+	_ = configMap.SetKey("compression.type", config.ProducerCompressType)
+	_ = configMap.SetKey("message.timeout.ms", config.ProducerMessageTimeout)
+
 	if config.SecurityProtocol != "" {
-		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
-			logger.Warn("set security.protocol error: %s", err.Error())
-		}
+		_ = configMap.SetKey("security.protocol", config.SecurityProtocol)
 	}
 	if config.SaslMechanism != "" {
-		if err := configMap.SetKey("sasl.mechanism", config.SaslMechanism); err != nil {
-			logger.Warn("set sasl.mechanism error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.mechanism", config.SaslMechanism)
 	}
 	if config.SaslUsername != "" {
-		if err := configMap.SetKey("sasl.username", config.SaslUsername); err != nil {
-			logger.Warn("set sasl.username error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.username", config.SaslUsername)
 	}
 	if config.SaslPassword != "" {
-		if err := configMap.SetKey("sasl.password", config.SaslPassword); err != nil {
-			logger.Warn("set sasl.password error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.password", config.SaslPassword)
 	}
-	configMap.SetKey("request.required.acks", config.ProducerAcks)
-	configMap.SetKey("compression.type", config.ProducerCompressType)
 
 	producer, err := kafka.NewProducer(configMap)
 	if err != nil {
-		logger.Error("create kafka producer error: %s", err.Error())
+		logger.Error("[kafka] create kafka producer failed. Error: %s", err.Error())
 		return kafkaClient
 	}
 
@@ -69,9 +61,9 @@ func NewProducerClient(config Config) Producer {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					logger.Error("Kafka producer delivery failed. error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
+					logger.Error("[kafka] producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
 				} else {
-					logger.Debug("Kafka producer delivery message %v to %v", ev.Value, ev.TopicPartition)
+					logger.Debug("[kafka] producer delivery message %v to %v", ev.Value, ev.TopicPartition)
 				}
 			}
 		}
@@ -98,15 +90,15 @@ func (c *KafkaClient) Send(msg interface{}) error {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					logger.Error("Kafka producer delivery failed. error: %v. Message %v, topic %v", ev.TopicPartition.Error, tools.ToJson(msg), ev.TopicPartition.Topic)
+					logger.Error("[kafka]  producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, tools.ToJson(msg), ev.TopicPartition.Topic)
 					err = ev.TopicPartition.Error
 				} else {
-					logger.Debug("Kafka producer delivery message %v to %v", tools.ToJson(msg), ev.TopicPartition)
+					logger.Debug("[kafka] producer delivery message %v to %v success.", tools.ToJson(msg), ev.TopicPartition)
 				}
 			}
 		}
 	} else {
-		logger.Warn("Kafka producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
+		logger.Warn("[kafka] producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
 	}
 
 	return err
@@ -122,7 +114,7 @@ func (c *KafkaClient) AsyncSend(msg interface{}) error {
 			}
 		}
 	} else {
-		logger.Warn("Kafka Producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
+		logger.Warn("[kafka] Producer %s is not init, message: %v", c.config.Name, tools.ToJson(msg))
 	}
 
 	return nil
