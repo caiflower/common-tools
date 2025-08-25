@@ -19,15 +19,15 @@ type Producer interface {
 
 func NewProducerClient(config Config) Producer {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("[kafka-product] producer %s set default config failed. err: %s", config.Name, err.Error())
+		logger.Warn("[kafka-product] producer '%s' set default config failed. err: %s", config.Name, err.Error())
 	}
 
 	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock()}
 	if !config.Enable {
-		logger.Warn("[kafka-product] producer %s is disable", config.Name)
+		logger.Warn("[kafka-product] producer '%s' is disable", config.Name)
 		return kafkaClient
 	} else {
-		logger.Info("[kafka-product] producer %s config: %s", config.Name, tools.ToJson(config))
+		logger.Info("[kafka-product] producer '%s' config: %s", config.Name, tools.ToJson(config))
 	}
 
 	configMap := &kafka.ConfigMap{}

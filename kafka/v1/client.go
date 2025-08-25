@@ -52,11 +52,14 @@ func (c *KafkaClient) Close() {
 	if c.Consumer != nil {
 		err := c.Consumer.Close()
 		if err != nil {
-			logger.Warn("close kafka consumer error: %s", err.Error())
+			logger.Warn("[kafka-consumer] close kafka failed. Error: %s", err.Error())
 		}
 		c.Consumer = nil
 	}
 	if c.Producer != nil {
+		for c.Producer.Flush(10000) > 0 {
+			logger.Info("[kafka-product] waiting flush message")
+		}
 		c.Producer.Close()
 		c.Producer = nil
 	}
