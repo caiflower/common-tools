@@ -3,8 +3,8 @@ package v1
 import (
 	"context"
 	"sync"
-	"time"
 
+	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
@@ -15,35 +15,18 @@ import (
  * 2、消费者支持设置consumer_worker_num, 消费者数量
  */
 
-type Config struct {
-	Name                      string        `yaml:"name"`
-	Enable                    bool          `yaml:"enable"`
-	BootstrapServers          []string      `yaml:"bootstrap_servers"`
-	GroupID                   string        `yaml:"group_id"`
-	Topics                    []string      `yaml:"topics"`
-	ProducerAcks              int           `yaml:"producer_acks" default:"-1"`
-	ProducerCompressType      string        `yaml:"producer_compress_type" default:"none"`    // none, gzip, snappy, lz4, zstd
-	ProducerMessageTimeout    int           `yaml:"producer_message_timeout" default:"15000"` // 默认15秒
-	ConsumerHeartBeatInterval time.Duration `yaml:"consumer_heart_beat_interval" default:"3s"`
-	ConsumerSessionTimeout    time.Duration `yaml:"consumer_session_timeout" default:"45s"`
-	ConsumerWorkerNum         int           `yaml:"consumer_worker_num" default:"2"`
-	ConsumerAutoOffsetReset   string        `yaml:"consumer_auto_offset_reset" default:"latest"` // https://www.cnblogs.com/convict/p/16701154.html
-	SecurityProtocol          string        `yaml:"security_protocol"`
-	SaslMechanism             string        `yaml:"sasl_mechanism"`
-	SaslUsername              string        `yaml:"sasl_username"`
-	SaslPassword              string        `yaml:"sasl_password"`
-}
-
 type KafkaClient struct {
 	lock   sync.Locker
-	config Config
+	config *xkafka.Config
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	Consumer         *kafka.Consumer
-	consumerFuncList []func(message interface{})
+	Consumer *kafka.Consumer
+	fn       func(message interface{})
 
 	Producer *kafka.Producer
+
+	running bool
 }
 
 func (c *KafkaClient) Close() {
@@ -67,4 +50,5 @@ func (c *KafkaClient) Close() {
 		c.cancel()
 		c.cancel = nil
 	}
+	c.running = false
 }

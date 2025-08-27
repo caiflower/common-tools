@@ -5,6 +5,7 @@ go 1.16
 replace github.com/json-iterator/go v1.1.12 => github.com/caiflower/json-iterator v1.1.12
 
 require (
+	github.com/Shopify/sarama v1.36.0
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.1.3
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -23,6 +24,7 @@ require (
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	github.com/uptrace/uptrace-go v1.3.1
+	github.com/xdg-go/scram v1.1.1
 	github.com/xuri/excelize/v2 v2.6.1
 	go.opentelemetry.io/otel v1.7.0
 	go.opentelemetry.io/otel/metric v0.26.0
