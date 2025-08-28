@@ -66,9 +66,6 @@ func NewConsumerClient(cfg xkafka.Config) *KafkaClient {
 
 	logger.Info("[kafka-consumer] consumer '%s' config: %s", cfg.Name, tools.ToJson(cfg))
 
-	kafkaClient.msgChan = make(chan *msgItem, cfg.ConsumerQueueSize)
-	kafkaClient.msgQueue = sync.Map{}
-
 	global.DefaultResourceManger.Add(kafkaClient)
 	return kafkaClient
 }
@@ -105,10 +102,15 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			logger.Trace("Message receive event : [name=%s] [group=%s] [topic=%s] [partition=%d] [offset=%d] [msg=%s]", h.cfg.Name, h.cfg.GroupID, msg.Topic, msg.Partition, msg.Offset, string(msg.Value))
 
 			item := &msgItem{msg: msg, done: false}
-			// 阻塞入队
-			h.msgChan <- item
 
 			key := fmt.Sprintf("%s-%d", msg.Topic, msg.Partition)
+			select {
+			case <-h.ctx.Done():
+				logger.Info("[ConsumeClaim] consumer is closed. [key:%s]", key)
+				return nil
+			case h.msgChan <- item:
+			}
+
 			queue, ok := h.msgQueue.Load(key)
 			if !ok {
 				queue = basic.NewSafeRingQueue(h.cfg.ConsumerQueueSize)
@@ -159,6 +161,7 @@ label:
 	ctx := context.Background()
 	for {
 		if c.running == false {
+			logger.Info("[ConsumerGroup] consumer is closed, name=%s", c.cfg.Name)
 			break
 		}
 		handler := &consumerGroupHandler{KafkaClient: c, lastCommitTime: time.Now()}
@@ -176,6 +179,11 @@ func (c *KafkaClient) consume(fn func(message interface{})) {
 	runThread := func(tid int) {
 		logger.Debug("[kafka-consumer] [%s-%d] started.", c.cfg.Name, tid)
 		for item := range c.msgChan {
+			if c.running == false {
+				// 不再消费直接退出
+				return
+			}
+
 			func() {
 				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
 				fn(item.msg)
@@ -183,6 +191,7 @@ func (c *KafkaClient) consume(fn func(message interface{})) {
 			item.done = true
 		}
 		logger.Debug("[kafka-consumer] [%s-%d] Exited.", c.cfg.Name, tid)
+		c.closeChan <- struct{}{}
 	}
 	for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
 		go runThread(i)
@@ -218,6 +227,7 @@ func (c *KafkaClient) monitorOffset() {
 			return true
 		})
 	}
+	c.commitOffsetFunc = fn
 	c.monitorOffsetJob = crontab.NewRegularJob("MonitorOffset", fn, crontab.WithInterval(c.cfg.ConsumerCommitInterval), crontab.WithIgnorePanic(), crontab.WithImmediately())
 	c.monitorOffsetJob.Run()
 }
@@ -243,6 +253,13 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 		return
 	}
 	c.running = true
+
+	c.msgChan = make(chan *msgItem, c.cfg.ConsumerQueueSize)
+	c.closeChan = make(chan struct{}, c.cfg.ConsumerWorkerNum)
+	c.msgQueue = sync.Map{}
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	c.cancelFunc = cancelFunc
+	c.ctx = ctx
 
 	go c.openConsume()
 	go c.consume(fn)

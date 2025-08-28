@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/sha512"
 	"hash"
@@ -26,6 +27,10 @@ type KafkaClient struct {
 	consumerSession     sarama.ConsumerGroupSession
 	monitorOffsetJob    crontab.RegularJob
 	monitorQueueSizeJob crontab.RegularJob
+	commitOffsetFunc    func()
+	closeChan           chan struct{}
+	ctx                 context.Context
+	cancelFunc          context.CancelFunc
 
 	// 同步发送
 	syncProducer sarama.SyncProducer
@@ -44,13 +49,31 @@ func (c *KafkaClient) Close() {
 		return
 	}
 	c.running = false
+
+	if c.msgChan != nil {
+		c.cancelFunc()
+
+		close(c.msgChan)
+
+		for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
+			<-c.closeChan
+		}
+
+		if c.commitOffsetFunc != nil {
+			// 手动再提交一次offset
+			logger.Info("[Kafka client close] commit offset before close, name='%s'", c.cfg.Name)
+			c.commitOffsetFunc()
+		}
+
+		c.msgChan = nil
+		c.msgChan = nil
+	}
+
 	if c.consumerGroup != nil {
 		_ = c.consumerGroup.Close()
 		c.consumerGroup = nil
 	}
-	if c.msgChan != nil {
-		close(c.msgChan)
-	}
+
 	if c.monitorOffsetJob != nil {
 		c.monitorOffsetJob.Stop()
 		c.monitorOffsetJob = nil
@@ -59,6 +82,7 @@ func (c *KafkaClient) Close() {
 		c.monitorQueueSizeJob.Stop()
 		c.monitorQueueSizeJob = nil
 	}
+
 	if c.syncProducer != nil {
 		_ = c.syncProducer.Close()
 		c.syncProducer = nil
