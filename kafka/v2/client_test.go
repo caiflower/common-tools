@@ -1,4 +1,4 @@
-package v1
+package v2
 
 import (
 	"fmt"
@@ -90,5 +90,5 @@ func TestMock(t *testing.T) {
 		}(i)
 	}
 
-	time.Sleep(60 * time.Second)
+	time.Sleep(10 * time.Second)
 }

@@ -2,9 +2,12 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/caiflower/common-tools/global"
+	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
@@ -13,73 +16,65 @@ import (
 )
 
 type Consumer interface {
-	Listen(fn func(message interface{}))
+	xkafka.Consumer
 	GetConsumer() *kafka.Consumer
-	Close()
 }
 
-func NewConsumerClient(config Config) Consumer {
+type KafkaMessage = kafka.Message
+
+func NewConsumerClient(config xkafka.Config) *KafkaClient {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("Kafka consumer %s set default config failed. err: %s", config.Name, err.Error())
+		logger.Warn("[kafka-consumer] consumer '%s' set default config failed. err: %s", config.Name, err.Error())
+	}
+
+	if config.GroupID == "" {
+		panic("[kafka-consumer] consumer group id should not be empty")
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock(), ctx: ctx, cancel: cancelFunc}
-	if !config.Enable {
-		logger.Warn("kafka consumer %s is disable", config.Name)
+	kafkaClient := &KafkaClient{config: &config, lock: syncx.NewSpinLock(), ctx: ctx, cancel: cancelFunc}
+	if strings.ToUpper(config.Enable) != "TRUE" {
+		logger.Warn("[kafka-consumer] consumer '%s' is disable", config.Name)
 		return kafkaClient
 	} else {
-		logger.Info("Kafka consumer %s config: %s", config.Name, tools.ToJson(config))
+		logger.Info("[kafka-consumer] consumer '%s' config: %s", config.Name, tools.ToJson(config))
 	}
 
 	configMap := &kafka.ConfigMap{}
-	if err := configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ",")); err != nil {
-		logger.Warn("set bootstrap.servers error: %s", err.Error())
-	}
-	if err := configMap.SetKey("group.id", config.GroupID); err != nil {
-		logger.Warn("set group.id error: %s", err.Error())
-	}
-	if err := configMap.SetKey("enable.auto.commit", false); err != nil {
-		logger.Warn("set enable.auto.commit error: %s", err.Error())
-	}
+	_ = configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ","))
+	_ = configMap.SetKey("group.id", config.GroupID)
+	_ = configMap.SetKey("enable.auto.commit", false)
+	_ = configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
+	_ = configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
+	_ = configMap.SetKey("auto.offset.reset", config.ConsumerAutoOffsetReset)
+	_ = configMap.SetKey("fetch.max.bytes", config.ConsumerFetchMaxBytes)
+
 	if config.SecurityProtocol != "" {
-		if err := configMap.SetKey("security.protocol", config.SecurityProtocol); err != nil {
-			logger.Warn("set security.protocol error: %s", err.Error())
-		}
+		_ = configMap.SetKey("security.protocol", config.SecurityProtocol)
 	}
 	if config.SaslMechanism != "" {
-		if err := configMap.SetKey("sasl.mechanism", config.SaslMechanism); err != nil {
-			logger.Warn("set sasl.mechanism error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.mechanism", config.SaslMechanism)
 	}
 	if config.SaslUsername != "" {
-		if err := configMap.SetKey("sasl.username", config.SaslUsername); err != nil {
-			logger.Warn("set sasl.username error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.username", config.SaslUsername)
 	}
 	if config.SaslPassword != "" {
-		if err := configMap.SetKey("sasl.password", config.SaslPassword); err != nil {
-			logger.Warn("set sasl.password error: %s", err.Error())
-		}
+		_ = configMap.SetKey("sasl.password", config.SaslPassword)
 	}
-	configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
-	configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
-	configMap.SetKey("auto.offset.reset", "earliest")
 
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
-		logger.Error("create kafka consumer error: %s", err.Error())
+		logger.Error("[kafka-consumer]  create kafka consumer Error: %s", err.Error())
 		return kafkaClient
 	}
-	err = consumer.SubscribeTopics(config.Topics, nil)
+	err = consumer.SubscribeTopics(config.Topics, rebalanceCallback)
 	if err != nil {
-		logger.Error("subscribe topics error, %s", err.Error())
+		logger.Error("[kafka-consumer] subscribe topics error, %s", err.Error())
 		return kafkaClient
 	}
 	kafkaClient.Consumer = consumer
 
-	// 开始消费
-	kafkaClient.doListen()
+	global.DefaultResourceManger.Add(kafkaClient)
 
 	return kafkaClient
 }
@@ -91,12 +86,21 @@ func (c *KafkaClient) GetConsumer() *kafka.Consumer {
 func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.consumerFuncList = append(c.consumerFuncList, fn)
+	if c.running {
+		return
+	}
+	c.running = true
+
+	c.fn = fn
+	// 开始消费
+	c.doListen()
 }
 
 func (c *KafkaClient) doListen() {
-	for i := 0; i < c.config.ConsumerWorkerNum; i++ {
-		go func() {
+	for i := 1; i <= c.config.ConsumerWorkerNum; i++ {
+		go func(tid int) {
+			defer e.OnError("")
+			logger.Debug("[kafka-consumer] consumer [%s-%d] started.", c.config.Name, tid)
 			for {
 				select {
 				case <-c.ctx.Done():
@@ -105,20 +109,90 @@ func (c *KafkaClient) doListen() {
 					msg, err := c.Consumer.ReadMessage(-1)
 					if err == nil {
 						func() {
-							defer e.OnError("kafka consumer listen")
-							for _, fn := range c.consumerFuncList {
-								fn(msg.Value)
-							}
+							defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.config.Name, tid))
+							c.fn(msg)
 
 							if _, err = c.Consumer.CommitMessage(msg); err != nil {
-								logger.Error("Kafka consumer commit message error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
+								logger.Error("[kafka-consumer] [%s-%d] commit message failed. Error: %s. TopicPartition: %s", c.config.Name, tid, err.Error(), tools.ToJson(msg))
 							}
 						}()
 					} else if !err.(kafka.Error).IsTimeout() {
-						logger.Error("Kafka consumer error: %v (%v)\n", err, msg)
+						logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
+						addConsumerError(c.config, "consume")
+					} else {
+						logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
+						addConsumerError(c.config, "consume")
 					}
 				}
 			}
-		}()
+		}(i)
 	}
+}
+
+// rebalanceCallback is called on each group rebalance to assign additional
+// partitions, or remove existing partitions, from the consumer's current
+// assignment.
+//
+// A rebalance occurs when a consumer joins or leaves a consumer group, if it
+// changes the topic(s) it's subscribed to, or if there's a change in one of
+// the topics it's subscribed to, for example, the total number of partitions
+// increases.
+//
+// The application may use this optional callback to inspect the assignment,
+// alter the initial start offset (the .Offset field of each assigned partition),
+// and read/write offsets to commit to an alternative store outside of Kafka.
+func rebalanceCallback(c *kafka.Consumer, event kafka.Event) error {
+	switch ev := event.(type) {
+	case kafka.AssignedPartitions:
+		logger.Info("%s rebalance: %d new partition(s) assigned: %v",
+			c.GetRebalanceProtocol(), len(ev.Partitions), ev.Partitions)
+
+		// The application may update the start .Offset of each assigned
+		// partition and then call Assign(). It is optional to call Assign
+		// in case the application is not modifying any start .Offsets. In
+		// that case we don't, the library takes care of it.
+		// It is called here despite not modifying any .Offsets for illustrative
+		// purposes.
+		err := c.Assign(ev.Partitions)
+		if err != nil {
+			return err
+		}
+
+	case kafka.RevokedPartitions:
+		logger.Info("%s rebalance: %d partition(s) revoked: %v",
+			c.GetRebalanceProtocol(), len(ev.Partitions), ev.Partitions)
+
+		// Usually, the rebalance callback for `RevokedPartitions` is called
+		// just before the partitions are revoked. We can be certain that a
+		// partition being revoked is not yet owned by any other consumer.
+		// This way, logic like storing any pending offsets or committing
+		// offsets can be handled.
+		// However, there can be cases where the assignment is lost
+		// involuntarily. In this case, the partition might already be owned
+		// by another consumer, and operations including committing
+		// offsets may not work.
+		if c.AssignmentLost() {
+			// Our consumer has been kicked out of the group and the
+			// entire assignment is thus lost.
+			logger.Warn("Assignment lost involuntarily, commit may fail")
+		}
+
+		// Since enable.auto.commit is unset, we need to commit offsets manually
+		// before the partition is revoked.
+		//commitedOffsets, err := c.Commit()
+
+		//if err != nil && err.(kafka.Error).Code() != kafka.ErrNoOffset {
+		//	logger.Error("Failed to commit offsets: %s", err)
+		//	return err
+		//}
+		//logger.Info("Commited offsets to kafka: %v", commitedOffsets)
+
+		// Similar to Assign, client automatically calls Unassign() unless the
+		// callback has already called that method. Here, we don't call it.
+
+	default:
+		logger.Warn("Unexpected event type: %v", event)
+	}
+
+	return nil
 }
