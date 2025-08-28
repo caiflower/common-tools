@@ -151,7 +151,7 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 
 			}
 		default:
-			fmt.Println(vValue.Kind())
+			fmt.Printf("SetDefaultValueIfNil failed. %v", vValue.Kind())
 		}
 	}
 

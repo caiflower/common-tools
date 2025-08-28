@@ -2,9 +2,12 @@ package v1
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/caiflower/common-tools/global"
+	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/syncx"
@@ -13,19 +16,24 @@ import (
 )
 
 type Consumer interface {
-	Listen(fn func(message interface{}))
+	xkafka.Consumer
 	GetConsumer() *kafka.Consumer
-	Close()
 }
 
-func NewConsumerClient(config Config) Consumer {
+type KafkaMessage = kafka.Message
+
+func NewConsumerClient(config xkafka.Config) *KafkaClient {
 	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
 		logger.Warn("[kafka-consumer] consumer '%s' set default config failed. err: %s", config.Name, err.Error())
 	}
 
+	if config.GroupID == "" {
+		panic("[kafka-consumer] consumer group id should not be empty")
+	}
+
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	kafkaClient := &KafkaClient{config: config, lock: syncx.NewSpinLock(), ctx: ctx, cancel: cancelFunc}
-	if !config.Enable {
+	kafkaClient := &KafkaClient{config: &config, lock: syncx.NewSpinLock(), ctx: ctx, cancel: cancelFunc}
+	if strings.ToUpper(config.Enable) != "TRUE" {
 		logger.Warn("[kafka-consumer] consumer '%s' is disable", config.Name)
 		return kafkaClient
 	} else {
@@ -39,6 +47,7 @@ func NewConsumerClient(config Config) Consumer {
 	_ = configMap.SetKey("heartbeat.interval.ms", int(config.ConsumerHeartBeatInterval.Milliseconds()))
 	_ = configMap.SetKey("session.timeout.ms", int(config.ConsumerSessionTimeout.Milliseconds()))
 	_ = configMap.SetKey("auto.offset.reset", config.ConsumerAutoOffsetReset)
+	_ = configMap.SetKey("fetch.max.bytes", config.ConsumerFetchMaxBytes)
 
 	if config.SecurityProtocol != "" {
 		_ = configMap.SetKey("security.protocol", config.SecurityProtocol)
@@ -65,8 +74,7 @@ func NewConsumerClient(config Config) Consumer {
 	}
 	kafkaClient.Consumer = consumer
 
-	// 开始消费
-	kafkaClient.doListen()
+	global.DefaultResourceManger.Add(kafkaClient)
 
 	return kafkaClient
 }
@@ -78,12 +86,21 @@ func (c *KafkaClient) GetConsumer() *kafka.Consumer {
 func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.consumerFuncList = append(c.consumerFuncList, fn)
+	if c.running {
+		return
+	}
+	c.running = true
+
+	c.fn = fn
+	// 开始消费
+	c.doListen()
 }
 
 func (c *KafkaClient) doListen() {
-	for i := 0; i < c.config.ConsumerWorkerNum; i++ {
-		go func() {
+	for i := 1; i <= c.config.ConsumerWorkerNum; i++ {
+		go func(tid int) {
+			defer e.OnError("")
+			logger.Debug("[kafka-consumer] consumer [%s-%d] started.", c.config.Name, tid)
 			for {
 				select {
 				case <-c.ctx.Done():
@@ -92,21 +109,23 @@ func (c *KafkaClient) doListen() {
 					msg, err := c.Consumer.ReadMessage(-1)
 					if err == nil {
 						func() {
-							defer e.OnError("kafka consumer listen")
-							for _, fn := range c.consumerFuncList {
-								fn(msg.Value)
-							}
+							defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.config.Name, tid))
+							c.fn(msg)
 
 							if _, err = c.Consumer.CommitMessage(msg); err != nil {
-								logger.Error("[kafka-consumer] consumer commit message failed. Error: %s. TopicPartition: %s", err.Error(), tools.ToJson(msg))
+								logger.Error("[kafka-consumer] [%s-%d] commit message failed. Error: %s. TopicPartition: %s", c.config.Name, tid, err.Error(), tools.ToJson(msg))
 							}
 						}()
 					} else if !err.(kafka.Error).IsTimeout() {
-						logger.Error("[kafka-consumer] consumer failed. Error: %v (%v)\n", err, msg)
+						logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
+						addConsumerError(c.config, "consume")
+					} else {
+						logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
+						addConsumerError(c.config, "consume")
 					}
 				}
 			}
-		}()
+		}(i)
 	}
 }
 
