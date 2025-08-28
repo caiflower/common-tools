@@ -255,6 +255,7 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.running = true
 
 	c.msgChan = make(chan *msgItem, c.cfg.ConsumerQueueSize)
+	c.closeChan = make(chan struct{}, c.cfg.ConsumerWorkerNum)
 	c.msgQueue = sync.Map{}
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	c.cancelFunc = cancelFunc
