@@ -52,7 +52,6 @@ func (c *KafkaClient) Close() {
 
 	if c.msgChan != nil {
 		c.cancelFunc()
-		c.closeChan = make(chan struct{}, c.cfg.ConsumerWorkerNum)
 
 		close(c.msgChan)
 
