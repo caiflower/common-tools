@@ -90,7 +90,7 @@ func (c *KafkaClient) GetConsumer() *kafka.Consumer {
 func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.running {
+	if c.running || strings.ToUpper(c.config.Enable) != "TRUE" {
 		return
 	}
 	c.running = true
