@@ -39,7 +39,7 @@ func (q *SafeRingQueue) Enqueue(val interface{}) error {
 	q.data[q.tail] = val
 	q.tail = (q.tail + 1) % q.capacity
 	q.size++
-	q.notFull.Signal() // 唤醒可能等待的 Enqueue
+	q.notEmpty.Signal() // 唤醒可能等待的 Dequeue
 	return nil
 }
 
@@ -53,6 +53,7 @@ func (q *SafeRingQueue) Dequeue() (interface{}, error) {
 	q.data[q.head] = nil
 	q.head = (q.head + 1) % q.capacity
 	q.size--
+	q.notFull.Signal()
 	return val, nil
 }
 

@@ -66,7 +66,7 @@ func (c *KafkaClient) Close() {
 		}
 
 		c.msgChan = nil
-		c.msgChan = nil
+		c.closeChan = nil
 	}
 
 	if c.consumerGroup != nil {
