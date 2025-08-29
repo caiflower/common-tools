@@ -18,7 +18,7 @@ type Config struct {
 	ConsumerSessionTimeout    time.Duration `yaml:"consumer_session_timeout" default:"20s"`
 	ConsumerAutoOffsetReset   string        `yaml:"consumer_auto_offset_reset" default:"latest"` // https://www.cnblogs.com/convict/p/16701154.html
 	ConsumerQueueSize         int           `yaml:"consumer_queue_size" default:"500"`           // 消费者每个缓存队列大小，默认1000，仅v2生效
-	ConsumerCommitInterval    time.Duration `yaml:"consumer_commit_interval" default:"1s"`       // 提交offset间隔，仅v2生效
+	ConsumerCommitInterval    time.Duration `yaml:"consumer_commit_interval" default:"1s"`       // 提交offset间隔
 	ConsumerFetchMaxBytes     int           `yaml:"consumer_fetch_max_bytes" default:"52428800"` // 一次抓取消息的最大大小，要确保这个大小要大于一条消息的最大大小，默认50MB，如果内存占用过高，可以适当调小
 	SecurityProtocol          string        `yaml:"security_protocol"`
 	SaslMechanism             string        `yaml:"sasl_mechanism"`
