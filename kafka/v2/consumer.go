@@ -25,7 +25,9 @@ func NewConsumerClient(cfg xkafka.Config) *KafkaClient {
 
 	if strings.ToUpper(cfg.Enable) != "TRUE" {
 		logger.Warn("[kafka-consumer] consumer '%s' is disable", cfg.Name)
-		return &KafkaClient{}
+		return &KafkaClient{
+			cfg: &cfg,
+		}
 	}
 
 	if cfg.GroupID == "" {
@@ -249,7 +251,7 @@ func (c *KafkaClient) monitorMsgQueueSize() {
 func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.running {
+	if c.running || strings.ToUpper(c.cfg.Enable) != "TRUE" {
 		return
 	}
 	c.running = true
