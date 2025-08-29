@@ -71,9 +71,9 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
 					addProducerErrCount(kafkaClient.config, *ev.TopicPartition.Topic, "async")
-					logger.Error("[kafka-product] producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, ev.Value, ev.TopicPartition.Topic)
+					logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
 				} else {
-					logger.Debug("[kafka-product] producer delivery message %v to %v", ev.Value, ev.TopicPartition)
+					logger.Debug("[kafka-product] producer message [key=%s] to %v success", getTopicPartitionKey(&ev.TopicPartition), ev.TopicPartition.Offset)
 				}
 			}
 		}
@@ -107,15 +107,15 @@ func (c *KafkaClient) Send(topic string, key string, values ...interface{}) erro
 	}
 
 	for i := 0; i < len(values); i++ {
-		e := <-event
-		switch ev := e.(type) {
+		evt := <-event
+		switch ev := evt.(type) {
 		case *kafka.Message:
 			if ev.TopicPartition.Error != nil {
-				logger.Error("[kafka-product]  producer delivery failed. Error: %v. Message %v, topic %v", ev.TopicPartition.Error, string(ev.Value), ev.TopicPartition.Topic)
+				logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
 				err = ev.TopicPartition.Error
 				addProducerErrCount(c.config, topic, "sync")
 			} else {
-				logger.Debug("[kafka-product] producer delivery message %v to %v success.", string(ev.Value), ev.TopicPartition)
+				logger.Debug("[kafka-product] producer message [key=%s] to %v success", getTopicPartitionKey(&ev.TopicPartition), ev.TopicPartition.Offset)
 			}
 		}
 	}
