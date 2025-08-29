@@ -34,9 +34,8 @@ func NewConsumerClient(config xkafka.Config) *KafkaClient {
 	}
 
 	kafkaClient := &KafkaClient{
-		config:  &config,
-		lock:    syncx.NewSpinLock(),
-		offsets: make(map[string]kafka.TopicPartition),
+		config: &config,
+		lock:   syncx.NewSpinLock(),
 	}
 	if strings.ToUpper(config.Enable) != "TRUE" {
 		logger.Warn("[kafka-consumer] consumer '%s' is disable", config.Name)
@@ -107,19 +106,24 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
-		if len(c.offsets) > 0 {
-			var commitOffsets []kafka.TopicPartition
-			for key, tp := range c.offsets {
-				logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, key, tp.Offset)
-				tp.Offset += 1
-				commitOffsets = append(commitOffsets, tp)
-			}
+		e.OnError("kafka consumer monitorOffset")
+		var commitOffsets []kafka.TopicPartition
+		c.offsets.Range(func(k, v any) bool {
+			tp := v.(kafka.TopicPartition)
+			logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, k.(string), tp.Offset)
+			tp.Offset += 1
+			commitOffsets = append(commitOffsets, tp)
+			return true
+		})
+		if len(commitOffsets) > 0 {
 			_, err := c.Consumer.CommitOffsets(commitOffsets)
 			if err != nil {
 				logger.Error("[kafka-consumer] commit offsets failed. Error: %s", err.Error())
 			} else {
-				// 清空已提交的offset记录
-				c.offsets = make(map[string]kafka.TopicPartition)
+				c.offsets.Range(func(k, v any) bool {
+					c.offsets.Delete(k)
+					return true
+				})
 			}
 		}
 	}
@@ -147,7 +151,7 @@ func (c *KafkaClient) doListen() {
 						c.fn(msg)
 					}()
 
-					c.offsets[getTopicPartitionKey(&msg.TopicPartition)] = msg.TopicPartition
+					c.offsets.Store(getTopicPartitionKey(&msg.TopicPartition), msg.TopicPartition)
 				} else if !err.(kafka.Error).IsTimeout() {
 					logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
 					addConsumerError(c.config, "consume")

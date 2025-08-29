@@ -26,7 +26,7 @@ type KafkaClient struct {
 
 	Consumer         *kafka.Consumer
 	fn               func(message interface{})
-	offsets          map[string]kafka.TopicPartition
+	offsets          sync.Map
 	closeChan        chan struct{}
 	commitOffsetFunc func()
 	monitorOffsetJob crontab.RegularJob
