@@ -108,7 +108,7 @@ func (c *KafkaClient) monitorOffset() {
 	fn := func() {
 		e.OnError("kafka consumer monitorOffset")
 		var commitOffsets []kafka.TopicPartition
-		c.offsets.Range(func(k, v any) bool {
+		c.offsets.Range(func(k, v interface{}) bool {
 			tp := v.(kafka.TopicPartition)
 			logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, k.(string), tp.Offset)
 			tp.Offset += 1
@@ -120,7 +120,7 @@ func (c *KafkaClient) monitorOffset() {
 			if err != nil {
 				logger.Error("[kafka-consumer] commit offsets failed. Error: %s", err.Error())
 			} else {
-				c.offsets.Range(func(k, v any) bool {
+				c.offsets.Range(func(k, v interface{}) bool {
 					c.offsets.Delete(k)
 					return true
 				})

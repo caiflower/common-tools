@@ -92,3 +92,39 @@ func TestMock(t *testing.T) {
 
 	time.Sleep(10 * time.Second)
 }
+
+func TestMock1(t *testing.T) {
+	logger.InitLogger(&logger.Config{
+		Level: logger.DebugLevel,
+	})
+
+	consumerConfig := xkafka.Config{
+		Name:                    "consumer",
+		Enable:                  "true",
+		BootstrapServers:        []string{"kafaka-kafka.app.svc.cluster.local:9092"},
+		GroupID:                 "test99",
+		Topics:                  []string{"testTopic"},
+		SecurityProtocol:        "SASL_PLAINTEXT",
+		SaslMechanism:           "SCRAM-SHA-256",
+		SaslUsername:            "user1",
+		SaslPassword:            "3JVZWh98fe",
+		ConsumerAutoOffsetReset: "earliest",
+	}
+	cClient := NewConsumerClient(consumerConfig)
+	cClient.Listen(func(message interface{}) {
+		if v, ok := message.(*KafkaMessage); ok {
+			m := Message{}
+			if err := tools.Unmarshal(v.Value, &m); err != nil {
+				fmt.Println(err)
+			}
+			fmt.Println(tools.ToJson(m))
+		} else {
+			fmt.Println("unknown message")
+		}
+
+	})
+
+	defer cClient.Close()
+
+	time.Sleep(10 * time.Second)
+}
