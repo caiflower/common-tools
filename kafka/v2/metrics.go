@@ -20,7 +20,7 @@ func init() {
 	producerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_count", Help: "kafka producer count", ConstLabels: constLabels}, []string{"name", "url", "topic"})
 	consumerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_consumer_err_count", Help: "kafka consumer err count", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
 	producerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_err_count", Help: "kafka producer err count", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
-	consumerQueueSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "kafka_producer_err_count", Help: "kafka producer err count", ConstLabels: constLabels}, []string{"name", "url", "key"})
+	consumerQueueSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "kafka_consumer_queue_size", Help: "kafka producer err count", ConstLabels: constLabels}, []string{"name", "url", "key"})
 	_ = prometheus.Register(consumerErrCount)
 	_ = prometheus.Register(producerErrCount)
 	_ = prometheus.Register(consumerQueueSize)
