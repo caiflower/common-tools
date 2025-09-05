@@ -1,10 +1,12 @@
 package taskx
 
 import (
-	"github.com/caiflower/common-tools/pkg/inflight"
+	"context"
 	"math/rand"
 	"reflect"
 	"time"
+
+	"github.com/caiflower/common-tools/pkg/inflight"
 
 	"github.com/caiflower/common-tools/cluster"
 	dbv1 "github.com/caiflower/common-tools/db/v1"
@@ -122,6 +124,61 @@ func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 		return err
 	}
 	return err
+}
+
+func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxdao.Output, err error) {
+	outputs = make(map[string]taskxdao.Output)
+
+	var (
+		taskBaks    []taskxdao.TaskBak
+		subtaskBaks []taskxdao.SubtaskBak
+		tasks       []*taskxdao.Task
+		subtasks    []*taskxdao.Subtask
+	)
+
+	err = t.TaskDao.GetSelect(&taskBaks).Where("task_id = ?", taskID).Scan(context.TODO(), &taskBaks)
+	if err != nil {
+		return
+	}
+
+	if len(taskBaks) > 0 {
+		output := taskxdao.Output{}
+		_ = tools.Unmarshal([]byte(taskBaks[0].Output), &output)
+		outputs[taskBaks[0].TaskName] = output
+	} else {
+		tasks, err = t.TaskDao.GetTasksByTaskIds([]string{taskID})
+		if err != nil {
+			return
+		}
+		output := taskxdao.Output{}
+		_ = tools.Unmarshal([]byte(tasks[0].Output), &output)
+		outputs[tasks[0].TaskName] = output
+	}
+
+	err = t.TaskDao.GetSelect(&subtaskBaks).Where("task_id = ?", taskID).Scan(context.TODO(), &subtaskBaks)
+	if err != nil {
+		return
+	}
+
+	if len(subtaskBaks) > 0 {
+		for _, subtask := range subtaskBaks {
+			output := taskxdao.Output{}
+			_ = tools.Unmarshal([]byte(subtask.Output), &output)
+			outputs[subtask.TaskName] = output
+		}
+	} else {
+		subtasks, _, err = t.SubtaskDao.GetSubtasksByTaskId(taskID)
+		if err != nil {
+			return
+		}
+		for _, subtask := range subtasks {
+			output := taskxdao.Output{}
+			_ = tools.Unmarshal([]byte(subtask.Output), &output)
+			outputs[subtask.TaskName] = output
+		}
+	}
+
+	return
 }
 
 func (t *taskDispatcher) handleTask() {

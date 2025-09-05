@@ -225,8 +225,8 @@ func (t *TaskDemo) StepFive(data *TaskData) (retry bool, output interface{}, err
 func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver) {
 	config := dbv1.Config{
 		Url:          "proxysql.app.svc.cluster.local:6033",
-		User:         "root",
-		Password:     "xxx",
+		User:         "test-user",
+		Password:     "test-user",
 		DbName:       "task_test",
 		Debug:        true,
 		EnableMetric: true,
@@ -512,7 +512,7 @@ func TestDisPatchRollback(t *testing.T) {
 	global.DefaultResourceManger.Signal()
 }
 
-func submitRollbackTask(dispatcher1 *taskDispatcher) {
+func submitRollbackTask(dispatcher1 *taskDispatcher) string {
 	task := NewTask(taskRollbackName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
 	one := NewSubtask(stepOne).SetInput("one")
 	two := NewSubtask(stepTwo).SetInput("two")
@@ -563,5 +563,44 @@ func submitRollbackTask(dispatcher1 *taskDispatcher) {
 	err = dispatcher1.SubmitTask(task)
 	if err != nil {
 		panic(err)
+	}
+
+	return task.taskId
+}
+
+func TestGetTaskOutput(t *testing.T) {
+	cluster1, cluster2, cluster3 := commonCluster()
+	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3 := commonTaskx(cluster1, cluster2, cluster3)
+	demo := &TaskRollbackDemo{}
+	RegisterTaskExecutorWithRollback(demo.GetExecutorWithRollback())
+
+	receiver1.Start()
+	receiver2.Start()
+	receiver3.Start()
+
+	tracker1 := cluster.NewDefaultJobTracker(5, cluster1, dispatcher1)
+	tracker2 := cluster.NewDefaultJobTracker(5, cluster2, dispatcher2)
+	tracker3 := cluster.NewDefaultJobTracker(5, cluster3, dispatcher3)
+	tracker1.Start()
+	tracker2.Start()
+	tracker3.Start()
+
+	go cluster1.StartUp()
+	go cluster2.StartUp()
+	go cluster3.StartUp()
+
+	// 提交一个任务
+	taskId := submitRollbackTask(dispatcher1)
+
+	// 等待任务完成
+	time.Sleep(120 * time.Second)
+
+	outputMap, err := dispatcher1.GetTaskOutput(taskId)
+	if err != nil {
+		return
+	}
+
+	for k, output := range outputMap {
+		fmt.Printf("k = %s, output = %v \n", k, output)
 	}
 }

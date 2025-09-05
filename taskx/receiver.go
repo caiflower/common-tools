@@ -437,15 +437,17 @@ func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtas
 			return
 		}
 
+		bytes, _ := tools.ToByte(output)
 		subtask.Output = tools.ToJson(taskxdao.Output{
-			Output: tools.ToJson(output),
+			Output: string(bytes),
 			Err:    err.Error(),
 			Msg:    "retry exceed the count",
 		})
 		subtask.TaskState = string(TaskFailed)
 	} else if output != nil {
+		bytes, _ := tools.ToByte(output)
 		subtask.Output = tools.ToJson(taskxdao.Output{
-			Output: tools.ToJson(output),
+			Output: string(bytes),
 		})
 		subtask.TaskState = string(TaskSucceeded)
 	}
@@ -524,7 +526,8 @@ func (t *taskReceiver) execSubtaskRollback(task *taskxdao.Task, subtask *taskxda
 			subtask.Output = tools.ToJson(_output)
 			subtask.Rollback = string(RollbackFailed)
 		} else {
-			_output.RollbackOutput = tools.ToJson(output)
+			bytes, _ := tools.ToByte(output)
+			_output.RollbackOutput = string(bytes)
 			subtask.Output = tools.ToJson(_output)
 			subtask.Rollback = string(RollbackSucceeded)
 		}
