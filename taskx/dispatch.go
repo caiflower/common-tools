@@ -382,6 +382,11 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 		return
 	}
 
+	if !t.Cluster.IsReady() {
+		logger.Warn("deliver tasks failed, cluster not ready")
+		return
+	}
+
 	for nodeName, taskIds := range subtaskWorkerMap {
 		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, deliverSubtask, taskIds, t.cfg.RemoteCallTimout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {

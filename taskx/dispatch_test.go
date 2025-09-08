@@ -507,13 +507,13 @@ func TestDisPatchRollback(t *testing.T) {
 	go cluster3.StartUp()
 
 	// 提交一个任务
-	submitRollbackTask(dispatcher1)
+	submitRollbackTask(taskRollbackName, dispatcher1)
 
 	global.DefaultResourceManger.Signal()
 }
 
-func submitRollbackTask(dispatcher1 *taskDispatcher) string {
-	task := NewTask(taskRollbackName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
+func submitRollbackTask(taskName string, dispatcher1 *taskDispatcher) string {
+	task := NewTask(taskName).SetRequestId("testTraceId").SetDescription("test").SetUrgent()
 	one := NewSubtask(stepOne).SetInput("one")
 	two := NewSubtask(stepTwo).SetInput("two")
 	three := NewSubtask(stepThree).SetInput("three")
@@ -571,12 +571,15 @@ func submitRollbackTask(dispatcher1 *taskDispatcher) string {
 func TestGetTaskOutput(t *testing.T) {
 	cluster1, cluster2, cluster3 := commonCluster()
 	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3 := commonTaskx(cluster1, cluster2, cluster3)
-	demo := &TaskRollbackDemo{}
+	demo := &TaskDemo{}
 	RegisterTaskExecutorWithRollback(demo.GetExecutorWithRollback())
 
 	receiver1.Start()
 	receiver2.Start()
 	receiver3.Start()
+	defer receiver1.Close()
+	defer receiver2.Close()
+	defer receiver3.Close()
 
 	tracker1 := cluster.NewDefaultJobTracker(5, cluster1, dispatcher1)
 	tracker2 := cluster.NewDefaultJobTracker(5, cluster2, dispatcher2)
@@ -584,16 +587,22 @@ func TestGetTaskOutput(t *testing.T) {
 	tracker1.Start()
 	tracker2.Start()
 	tracker3.Start()
+	defer tracker1.Close()
+	defer tracker2.Close()
+	defer tracker3.Close()
 
 	go cluster1.StartUp()
 	go cluster2.StartUp()
 	go cluster3.StartUp()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
 
 	// 提交一个任务
-	taskId := submitRollbackTask(dispatcher1)
+	taskId := submitRollbackTask(taskName, dispatcher1)
 
 	// 等待任务完成
-	time.Sleep(120 * time.Second)
+	time.Sleep(60 * time.Second)
 
 	outputMap, err := dispatcher1.GetTaskOutput(taskId)
 	if err != nil {

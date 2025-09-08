@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/cluster"
+	"github.com/caiflower/common-tools/global"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -48,6 +49,7 @@ type taskReceiver struct {
 	subtaskRollbackWorker    int
 	subtaskRollbackQueueSize int
 	subtaskRollbackQueue     chan *SubtaskBag
+	stopChan                 chan struct{}
 }
 
 func (t *taskReceiver) Start() {
@@ -61,15 +63,17 @@ func (t *taskReceiver) Start() {
 	t.subtaskRollbackQueue = make(chan *SubtaskBag, t.subtaskRollbackQueueSize)
 
 	t.startTaskThreads()
-	t.startSubTaskThreads()
+	t.startSubtaskThreads()
 	t.startRollbackTaskThreads()
 	t.running = true
+	t.stopChan = make(chan struct{})
 
 	// register func in cluster
 	t.Cluster.RegisterFunc(deliverSubtask, t.deliverSubtask)
 	t.Cluster.RegisterFunc(deliverTask, t.deliverTask)
 	t.Cluster.RegisterFunc(taskDoneCallBack, t.taskDoneCallBack)
 	t.Cluster.RegisterFunc(deliverSubtaskRollback, t.deliverSubtaskRollback)
+	global.DefaultResourceManger.Add(t)
 }
 
 func (t *taskReceiver) Close() {
@@ -81,6 +85,12 @@ func (t *taskReceiver) Close() {
 	close(t.taskQueue)
 	close(t.subtaskQueue)
 	close(t.subtaskRollbackQueue)
+
+	for i := 1; i <= t.taskWorker+t.subtaskWorker+t.subtaskRollbackWorker; i++ {
+		<-t.stopChan
+	}
+
+	logger.Info("TaskReceiver close finish.")
 }
 
 func (t *taskReceiver) deliverSubtask(data interface{}) (interface{}, error) {
@@ -238,50 +248,80 @@ func (t *taskReceiver) deliverSubtaskRollback(data interface{}) (interface{}, er
 }
 
 func (t *taskReceiver) startTaskThreads() {
-	for i := 0; i < t.taskWorker; i++ {
-		go func() {
-			for v := range t.taskQueue {
-				if !t.taskInflight.Insert(v) {
-					logger.Warn("task %v already inflight", v.TaskId)
-					continue
-				}
-
-				t.execTask(v)
-				t.taskInflight.Delete(v)
+	runThread := func(i int) {
+		logger.Info("TaskReceiver taskWorker %d start", i)
+		for v := range t.taskQueue {
+			if !t.running {
+				break
 			}
-		}()
+
+			if !t.taskInflight.Insert(v) {
+				logger.Warn("task %v already inflight", v.TaskId)
+				continue
+			}
+
+			t.execTask(v)
+			t.taskInflight.Delete(v)
+		}
+
+		t.stopChan <- struct{}{}
+		logger.Info("TaskReceiver taskWorker %d Exited", i)
+	}
+
+	for i := 1; i <= t.taskWorker; i++ {
+		go runThread(i)
 	}
 }
 
-func (t *taskReceiver) startSubTaskThreads() {
-	for i := 0; i < t.subtaskWorker; i++ {
-		go func() {
-			for v := range t.subtaskQueue {
-				if !t.subtaskInflight.Insert(v.subtask) {
-					logger.Warn("subtask %v already inflight", v.subtask.SubtaskId)
-					continue
-				}
-
-				t.execSubtask(v.task, v.subtask)
-				t.subtaskInflight.Delete(v.subtask)
+func (t *taskReceiver) startSubtaskThreads() {
+	runThread := func(i int) {
+		logger.Info("TaskReceiver subtaskWorker %d start", i)
+		for v := range t.subtaskQueue {
+			if !t.running {
+				break
 			}
-		}()
+
+			if !t.subtaskInflight.Insert(v.subtask) {
+				logger.Warn("subtask %v already inflight", v.subtask.SubtaskId)
+				continue
+			}
+
+			t.execSubtask(v.task, v.subtask)
+			t.subtaskInflight.Delete(v.subtask)
+		}
+
+		t.stopChan <- struct{}{}
+		logger.Info("TaskReceiver subtaskWorker %d Exited", i)
+	}
+
+	for i := 1; i <= t.subtaskWorker; i++ {
+		go runThread(i)
 	}
 }
 
 func (t *taskReceiver) startRollbackTaskThreads() {
-	for i := 0; i < t.subtaskRollbackWorker; i++ {
-		go func() {
-			for v := range t.subtaskRollbackQueue {
-				if !t.subtaskInflight.Insert(v.subtask) {
-					logger.Warn("subtask rollback task %v already inflight", v.subtask.SubtaskId)
-					continue
-				}
-
-				t.execSubtaskRollback(v.task, v.subtask)
-				t.subtaskInflight.Delete(v.subtask)
+	runThread := func(i int) {
+		logger.Info("TaskReceiver subtaskRollbackWorker %d start", i)
+		for v := range t.subtaskRollbackQueue {
+			if !t.running {
+				break
 			}
-		}()
+
+			if !t.subtaskInflight.Insert(v.subtask) {
+				logger.Warn("subtask rollback task %v already inflight", v.subtask.SubtaskId)
+				continue
+			}
+
+			t.execSubtaskRollback(v.task, v.subtask)
+			t.subtaskInflight.Delete(v.subtask)
+		}
+
+		t.stopChan <- struct{}{}
+		logger.Info("TaskReceiver subtaskRollbackWorker %d Exited", i)
+	}
+
+	for i := 1; i <= t.subtaskRollbackWorker; i++ {
+		go runThread(i)
 	}
 }
 
