@@ -446,7 +446,16 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 
 			c.logger.Debug("[cluster] remote [%s] func return", session.GetRemoteAddr())
 			if f, ok := cache.LocalCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
-				f.(*FuncSpec).setResult(rcMsg.Result, rcMsg.Err)
+				var _err error
+				if rcMsg.Err != nil {
+					bytes, bytesErr := tools.ToByte(rcMsg.Err)
+					if bytesErr != nil {
+						logger.Warn("[cluster] convert remoteCallMessage param 'err' to bytes failed. Error: %s", bytesErr.Error())
+					}
+					_err = errors.New(string(bytes))
+				}
+
+				f.(*FuncSpec).setResult(rcMsg.Result, _err)
 				// remote return, then delete cache
 				cache.LocalCache.Delete(remoteCall + rcMsg.UUID)
 			}
