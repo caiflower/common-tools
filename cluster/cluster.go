@@ -1070,6 +1070,9 @@ func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (inter
 }
 
 func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
+	if !c.IsReady() {
+		return nil, errors.New("cluster is not ready")
+	}
 
 	// 本地调用
 	if c.GetMyNode().name == f.nodeName {
