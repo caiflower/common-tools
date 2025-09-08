@@ -28,5 +28,5 @@ type remoteCallMessage struct {
 	Param    interface{} `json:"param"`
 	Sync     bool        `json:"sync"`
 	Result   interface{} `json:"result"`
-	Err      error       `json:"err"`
+	Err      interface{} `json:"err"`
 }
