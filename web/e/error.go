@@ -14,7 +14,7 @@ type ApiError interface {
 }
 
 type apiError struct {
-	Code    int `json:"-"`
+	Code    int
 	Type    string
 	Message string
 	Cause   error `json:"-"`

@@ -157,7 +157,6 @@ func (c *RequestCtx) UpgradeWebsocket() {
 
 type CommonResponse struct {
 	RequestId string
-	Code      *int        `json:",omitempty"`
 	Data      interface{} `json:",omitempty"`
 	Error     e.ApiError  `json:",omitempty"`
 }
@@ -469,22 +468,16 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 	go h.metric.saveMetric(h.config.Name, strconv.Itoa(e.GetCode()), ctx.method, ctx.path, sub.Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	code := e.GetCode()
 	res := CommonResponse{
 		RequestId: golocalv1.GetTraceID(),
-		Code:      &code,
 		Error:     e,
 	}
 
-	if ctx.restful && res.Code != nil {
+	if ctx.restful && res.Error != nil {
 		// 如果是restful风格设置http响应码等于code
-		w.WriteHeader(*res.Code)
-		res.Code = nil
-	} else {
-		if *res.Code != 0 {
-			//w.WriteHeader(http.StatusInternalServerError)
-		}
+		w.WriteHeader(res.Error.GetCode())
 	}
+
 	bytes, _ := tools.Marshal(res)
 	if !ctx.restful && acceptGzip(r.Header) {
 		tmpBytes, err := tools.Gzip(bytes)
@@ -519,16 +512,7 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 
 	res := CommonResponse{
 		RequestId: golocalv1.GetTraceID(),
-		Code:      &ctx.success,
 		Data:      ctx.response,
-	}
-
-	if ctx.restful {
-		res.Code = nil
-	} else {
-		if *res.Code == 200 {
-			*res.Code = 0
-		}
 	}
 
 	bytes, _ := tools.Marshal(res)

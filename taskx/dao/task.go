@@ -5,6 +5,7 @@ import (
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/uptrace/bun"
 )
 
@@ -35,6 +36,10 @@ type Output struct {
 	RollbackErr    string `json:"rollbackErr,omitempty"`
 	RollbackMsg    string `json:"rollbackMsg,omitempty"`
 	RollbackOutput string `json:"rollbackOutput,omitempty"`
+}
+
+func (o Output) String() string {
+	return tools.ToJson(o)
 }
 
 func (t *Task) String() string {
