@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/e"
@@ -80,8 +79,7 @@ type LoggerHandler struct {
 	level       int
 	dataQueue   chan data
 	logAppender Appender
-	running     int64
-	enableColor bool
+	closeChan   chan struct{}
 }
 
 type Config struct {
@@ -109,10 +107,8 @@ func (lh *LoggerHandler) Close() {
 		close(lh.dataQueue)
 		lh.dataQueue = nil
 	}
-	for {
-		if lh.running == 0 {
-			break
-		}
+	for i := 1; i <= cap(lh.closeChan); i++ {
+		<-lh.closeChan
 	}
 	if lh.logAppender != nil {
 		lh.logAppender.close()
@@ -184,15 +180,15 @@ func newLoggerHandler(config *Config) *LoggerHandler {
 		lock:        syncx.NewSpinLock(),
 		dataQueue:   make(chan data, config.QueueLength),
 		logAppender: newLogAppender(config.TimeFormat, config.Path, config.FileName, config.RollingPolicy, config.MaxTime, config.MaxSize, config.BackupMaxDisk, config.BackupMaxCount, enableTrace, compress, enableCleanBackup, enableColor),
+		closeChan:   make(chan struct{}, config.AppenderNum),
 	}
 
 	for i := 0; i < config.AppenderNum; i++ {
 		go func() {
 			for d := range logger.dataQueue {
-				atomic.AddInt64(&logger.running, 1)
 				logger.logAppender.write(d)
-				atomic.AddInt64(&logger.running, -1)
 			}
+			logger.closeChan <- struct{}{}
 		}()
 	}
 
