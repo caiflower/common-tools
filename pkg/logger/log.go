@@ -79,6 +79,7 @@ type LoggerHandler struct {
 	level       int
 	dataQueue   chan data
 	logAppender Appender
+	running     bool
 	closeChan   chan struct{}
 }
 
@@ -105,7 +106,7 @@ func (lh *LoggerHandler) Close() {
 	defer lh.lock.Unlock()
 	if lh.dataQueue != nil {
 		close(lh.dataQueue)
-		lh.dataQueue = nil
+		lh.running = false
 	}
 	for i := 1; i <= cap(lh.closeChan); i++ {
 		<-lh.closeChan
@@ -181,6 +182,7 @@ func newLoggerHandler(config *Config) *LoggerHandler {
 		dataQueue:   make(chan data, config.QueueLength),
 		logAppender: newLogAppender(config.TimeFormat, config.Path, config.FileName, config.RollingPolicy, config.MaxTime, config.MaxSize, config.BackupMaxDisk, config.BackupMaxCount, enableTrace, compress, enableCleanBackup, enableColor),
 		closeChan:   make(chan struct{}, config.AppenderNum),
+		running:     true,
 	}
 
 	for i := 0; i < config.AppenderNum; i++ {
@@ -278,7 +280,7 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 
 	defer e.OnError("logger crash")
 
-	if lh.dataQueue != nil {
+	if lh.running {
 		lh.dataQueue <- data{
 			timestamp: time.Now(),
 			level:     level,
