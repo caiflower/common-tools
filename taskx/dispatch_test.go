@@ -250,7 +250,8 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		IDB: client,
 	}
 	cfg := &Config{
-		RemoteCallTimout: time.Second * 3,
+		RemoteCallTimout:     time.Second * 3,
+		BackupTaskAgeSeconds: 120,
 	}
 
 	receiver1 = &taskReceiver{

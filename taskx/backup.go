@@ -15,7 +15,7 @@ func (t *taskDispatcher) backupTask() {
 	tx := dbv1.NewBatchTx(t.DBClient.GetDB())
 
 	if err := t.DBClient.GetDB().NewSelect().Table("task").
-		Where("task_state IN (?)", bun.In([]TaskState{TaskFailed, TaskSucceeded})).
+		Where("task_state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]TaskState{TaskFailed, TaskSucceeded}), t.cfg.BackupTaskAgeSeconds).
 		Order("id").Limit(100).
 		Scan(context.TODO(), &tasks); err != nil {
 		logger.Error("query task failed. err: %v", err)

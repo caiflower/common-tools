@@ -47,6 +47,7 @@ type Config struct {
 	SubtaskRollbackWorker    int           `yaml:"subtaskRollbackWorker" default:"50"`
 	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"500"`
 	RemoteCallTimout         time.Duration `yaml:"remoteCallTimout" default:"3s"`
+	BackupTaskAgeSeconds     int           `yaml:"backupTaskAgeSeconds" default:"7200"`
 }
 
 func InitTaskDispatcher(cfg *Config) {
@@ -294,6 +295,11 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 		return
 	}
 
+	if !t.Cluster.IsReady() {
+		logger.Warn("deliver tasks failed, cluster not ready")
+		return
+	}
+
 	defer func() {
 		for _, runningTask := range runningTasks {
 			t.allocateWorkerInflight.Delete(runningTask)
@@ -379,11 +385,6 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 
 	if err := tx.Submit(); err != nil {
 		logger.Error("allocateWorker for task failed. err: %s", err.Error())
-		return
-	}
-
-	if !t.Cluster.IsReady() {
-		logger.Warn("deliver tasks failed, cluster not ready")
 		return
 	}
 
