@@ -202,17 +202,17 @@ func (appender *logAppender) write(data data) {
 	buf := appender.bufPool.Get().(*strings.Builder)
 	buf.Reset()
 	buf.WriteString(timeFormat)
+	buf.WriteString(" [")
+	buf.WriteString(data.level)
+	buf.WriteString("] ")
 	if appender.enableTrace && data.traceID != "" {
 		if appender.enableColor {
 			data.traceID = fmt.Sprintf("\033[1;35m%s\033[0m", data.traceID)
 		}
-		buf.WriteString(" [")
+		buf.WriteString("[")
 		buf.WriteString(data.traceID)
-		buf.WriteString("]")
+		buf.WriteString("] ")
 	}
-	buf.WriteString(" [")
-	buf.WriteString(data.level)
-	buf.WriteString("] ")
 	buf.WriteString(data.position)
 	buf.WriteString(" - ")
 	buf.WriteString(data.content)
@@ -418,6 +418,10 @@ func (appender *logAppender) close() {
 	defer appender.writeLock.Unlock()
 
 	if appender.logFile != nil {
+		if err := appender.logFile.Sync(); err != nil {
+			fmt.Printf("[logger close] sync log file err: %s\n", err)
+		}
+
 		if err := appender.logFile.Close(); err != nil {
 			fmt.Printf("[logger appender] close logfile err: %s\n", err)
 		}

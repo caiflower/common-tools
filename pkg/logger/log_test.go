@@ -1,12 +1,13 @@
 package logger
 
 import (
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 )
 
 func TestLoggerStdOut(t *testing.T) {
@@ -41,13 +42,13 @@ func TestLoggerFileOut(t *testing.T) {
 		EnableTrace:   "True",
 		Path:          os.Getenv("HOME") + "/logger",
 		RollingPolicy: RollingPolicySize,
-		MaxSize:       "10KB",
+		MaxSize:       "1MB",
 		Compress:      "False",
 		AppenderNum:   100,
 	})
 	group := sync.WaitGroup{}
 
-	for i := 1; i <= 1000; i++ {
+	for i := 1; i <= 1000000; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
@@ -72,9 +73,9 @@ func TestLoggerCut(t *testing.T) {
 		Level:          TraceLevel,
 		EnableTrace:    "True",
 		Path:           os.Getenv("HOME") + "/logger",
-		MaxSize:        "10KB",
+		MaxSize:        "1MB",
 		RollingPolicy:  RollingPolicyTimeAndSize,
-		Compress:       "True",
+		Compress:       "False",
 		CleanBackup:    "True",
 		BackupMaxCount: 5,
 		BackupMaxDisk:  "10MB",
@@ -82,7 +83,7 @@ func TestLoggerCut(t *testing.T) {
 	})
 	group := sync.WaitGroup{}
 
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 1000000; i++ {
 		group.Add(1)
 		go func(i int) {
 			defer group.Done()
