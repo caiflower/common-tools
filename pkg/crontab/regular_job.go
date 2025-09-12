@@ -6,7 +6,6 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 )
 
@@ -50,7 +49,6 @@ func NewRegularJob(name string, fn func(), opts ...Opt) RegularJob {
 		job.interval = DefaultInterval
 	}
 
-	global.DefaultResourceManger.Add(job)
 	return job
 }
 
