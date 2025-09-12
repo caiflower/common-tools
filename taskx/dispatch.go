@@ -84,6 +84,10 @@ func (t *taskDispatcher) MasterCall() {
 	t.backupTask()
 }
 
+func SubmitTask(task *Task) error {
+	return SingletonTaskDispatcher.SubmitTask(task)
+}
+
 func (t *taskDispatcher) SubmitTask(task *Task) error {
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
 	taskBean, subtaskBeans := task.convert2Bean()
@@ -112,6 +116,10 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	}
 
 	return nil
+}
+
+func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
+	return SingletonTaskDispatcher.SubmitTaskWithTx(task, tx)
 }
 
 func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
@@ -408,6 +416,10 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 			logger.Error("deliver subtaskRollbacks failed. err: %s", err.Error())
 		}
 	}
+}
+
+func HandleTaskImmediately(taskId string) {
+	SingletonTaskDispatcher.HandleTaskImmediately(taskId)
 }
 
 func (t *taskDispatcher) HandleTaskImmediately(taskId string) {
