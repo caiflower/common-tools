@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"reflect"
 	"runtime/debug"
+	runtimepprof "runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -75,7 +77,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	golocalv1.Put(beginTime, time.Now())
 	defer golocalv1.Clean()
 
-	if specialRequest(w, r) {
+	if h.specialRequest(w, r) {
 		return
 	}
 
@@ -590,10 +592,38 @@ func isBr(header http.Header) bool {
 
 var promHttpHandler = promhttp.Handler()
 
-func specialRequest(w http.ResponseWriter, r *http.Request) bool {
-	if r.URL.Path == "/metrics" {
+func (h *handler) specialRequest(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/metrics":
 		promHttpHandler.ServeHTTP(w, r)
 		return true
+	}
+	if h.config.EnablePprof {
+		if strings.HasPrefix(r.URL.Path, "/debug/pprof/") {
+			handleName := strings.Replace(r.URL.Path, "/debug/pprof/", "", 1)
+			switch handleName {
+			case "":
+				pprof.Index(w, r)
+				return true
+			case "profile":
+				pprof.Profile(w, r)
+				return true
+			case "cmdline":
+				pprof.Cmdline(w, r)
+				return true
+			case "trace":
+				pprof.Trace(w, r)
+				return true
+			case "symbol":
+				pprof.Symbol(w, r)
+				return true
+			}
+
+			if runtimepprof.Lookup(handleName) != nil {
+				pprof.Handler(handleName).ServeHTTP(w, r)
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -22,12 +22,13 @@ import (
 type Config struct {
 	Name                  string     `yaml:"name" default:"default"`
 	Port                  int        `yaml:"port" default:"8080"`
-	ReadTimeout           int        `yaml:"read_timeout" default:"10"`
-	WriteTimeout          int        `yaml:"write_timeout" default:"10"`
-	RootPath              string     `yaml:"root_path"` // 可以为空
-	HeaderTraceID         string     `yaml:"header_trace_id" default:"X-Request-Id"`
-	ControllerRootPkgName string     `yaml:"controller_root_pkg_name" default:"controller"`
-	WebLimiter            WebLimiter `yaml:"web_limiter"`
+	ReadTimeout           int        `yaml:"readTimeout" default:"20"`
+	WriteTimeout          int        `yaml:"writeTimeout" default:"35"`
+	RootPath              string     `yaml:"rootPath"` // 可以为空
+	HeaderTraceID         string     `yaml:"headerTraceID" default:"X-Request-Id"`
+	ControllerRootPkgName string     `yaml:"controllerRootPkgName" default:"controller"`
+	WebLimiter            WebLimiter `yaml:"webLimiter"`
+	EnablePprof           bool       `yaml:"enablePprof"`
 }
 
 type WebLimiter struct {
@@ -54,7 +55,7 @@ func InitDefaultHttpServer(config Config) *HttpServer {
 }
 
 func NewHttpServer(config Config) *HttpServer {
-	tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
 	httpServer := &HttpServer{
 		config: &config,
