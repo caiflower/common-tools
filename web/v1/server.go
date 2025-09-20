@@ -82,7 +82,7 @@ func (s *HttpServer) AddController(v interface{}) {
 	}
 
 	for _, path := range c.paths {
-		logger.Info("Register path %v", path)
+		logger.Info("Register action path %v, use by %s?Action=xxx", path)
 		s.handler.controllers[path] = c
 	}
 
