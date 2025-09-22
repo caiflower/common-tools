@@ -96,59 +96,123 @@ func SetDefaultValueIfNil(structField reflect.StructField, vValue reflect.Value,
 			}
 		case reflect.Ptr:
 			pValue := reflect.New(structField.Type.Elem()).Elem()
-			switch pValue.Kind() {
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				if vValue.IsNil() {
+			if vValue.IsNil() {
+				switch pValue.Kind() {
+				case reflect.Int:
 					if v := structTag.Get("default"); v != "" {
 						i, _ := strconv.Atoi(v)
 						vValue.Set(reflect.ValueOf(&i))
 						flag = true
 					}
-				}
-			case reflect.String:
-				if vValue.IsNil() {
+				case reflect.Int8:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := int8(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Int16:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := int16(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Int32:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := int32(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Int64:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := int64(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Uint:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := uint(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Uint8:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := uint8(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Uint16:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := uint16(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Uint32:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := uint32(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.Uint64:
+					if v := structTag.Get("default"); v != "" {
+						i, _ := strconv.Atoi(v)
+						_i := uint64(i)
+						vValue.Set(reflect.ValueOf(&_i))
+						flag = true
+					}
+				case reflect.String:
 					if v := structTag.Get("default"); v != "" {
 						vValue.Set(reflect.ValueOf(&v))
 						flag = true
 					}
-				}
-			case reflect.Float32, reflect.Float64:
-				if vValue.IsNil() {
+				case reflect.Float32:
+					if v := structTag.Get("default"); v != "" {
+						f, _ := strconv.ParseFloat(v, 32)
+						_f := float32(f)
+						vValue.Set(reflect.ValueOf(&_f))
+						flag = true
+					}
+				case reflect.Float64:
 					if v := structTag.Get("default"); v != "" {
 						f, _ := strconv.ParseFloat(v, 64)
 						vValue.Set(reflect.ValueOf(&f))
 						flag = true
 					}
-				}
-			case reflect.Bool:
-				if vValue.IsNil() {
+				case reflect.Bool:
 					if v := structTag.Get("default"); v != "" {
 						b, _ := strconv.ParseBool(v)
 						vValue.Set(reflect.ValueOf(&b))
 						flag = true
 					}
-				}
-			case reflect.Ptr:
-				fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
-			case reflect.Struct:
-				newValue := vValue
-				if vValue.IsZero() {
-					newValue = reflect.New(structField.Type.Elem())
-				}
-
-				m := make(map[string]string)
-				for i := 0; i < pValue.NumField(); i++ {
-					field := newValue.Elem().Field(i)
-					fieldStruct := pValue.Type().Field(i)
-					if err = SetDefaultValueIfNil(fieldStruct, field, m); err != nil {
-						return
+				case reflect.Ptr:
+					fmt.Println("ptr ptr no support Func[SetDefaultValueIfNil]")
+				case reflect.Struct:
+					newValue := vValue
+					if vValue.IsZero() {
+						newValue = reflect.New(structField.Type.Elem())
 					}
-				}
-				if len(m) != 0 {
-					vValue.Set(newValue)
-				}
-			default:
 
+					m := make(map[string]string)
+					for i := 0; i < pValue.NumField(); i++ {
+						field := newValue.Elem().Field(i)
+						fieldStruct := pValue.Type().Field(i)
+						if err = SetDefaultValueIfNil(fieldStruct, field, m); err != nil {
+							return
+						}
+					}
+					if len(m) != 0 {
+						vValue.Set(newValue)
+					}
+				default:
+
+				}
 			}
 		default:
 			fmt.Printf("SetDefaultValueIfNil failed. %v", vValue.Kind())

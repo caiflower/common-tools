@@ -4,6 +4,7 @@
 package v1
 
 import (
+	"context"
 	"sync"
 
 	"github.com/modern-go/gls"
@@ -11,6 +12,7 @@ import (
 
 const (
 	RequestID = "X-Request-ID"
+	GoContext = "Go-Context"
 )
 
 var localMap sync.Map
@@ -59,5 +61,21 @@ func Clean() {
 	id := getGoID()
 	if v := getMapByGoID(id); v != nil {
 		localMap.Delete(id)
+	}
+}
+
+func PutContext(ctx context.Context) {
+	m := getMapByGoID(getGoID())
+	m.Store(GoContext, ctx)
+}
+
+func GetContext() context.Context {
+	m := getMapByGoID(getGoID())
+	if v, ok := m.Load(GoContext); ok {
+		return v.(context.Context)
+	} else {
+		background := context.Background()
+		PutContext(background)
+		return background
 	}
 }
