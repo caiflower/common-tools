@@ -75,6 +75,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	golocalv1.PutTraceID(traceID)
 	golocalv1.Put(beginTime, time.Now())
+	golocalv1.PutContext(r.Context())
 	defer golocalv1.Clean()
 
 	if h.specialRequest(w, r) {

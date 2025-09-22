@@ -3,6 +3,7 @@ package webv1
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
 	"sort"
@@ -21,10 +22,11 @@ import (
 
 type Config struct {
 	Name                  string     `yaml:"name" default:"default"`
-	Port                  int        `yaml:"port" default:"8080"`
-	ReadTimeout           int        `yaml:"readTimeout" default:"20"`
-	WriteTimeout          int        `yaml:"writeTimeout" default:"35"`
-	RootPath              string     `yaml:"rootPath"` // 可以为空
+	Port                  uint       `yaml:"port" default:"8080"`
+	ReadTimeout           uint       `yaml:"readTimeout" default:"20"`
+	WriteTimeout          uint       `yaml:"writeTimeout" default:"35"`
+	HandleTimeout         *uint      `yaml:"handleTimeout" default:"60"` // 请求总处理超时时间
+	RootPath              string     `yaml:"rootPath"`                   // 可以为空
 	HeaderTraceID         string     `yaml:"headerTraceID" default:"X-Request-Id"`
 	ControllerRootPkgName string     `yaml:"controllerRootPkgName" default:"controller"`
 	WebLimiter            WebLimiter `yaml:"webLimiter"`
@@ -140,6 +142,12 @@ func (s *HttpServer) StartUp() {
 		ReadTimeout:  time.Duration(s.config.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(s.config.WriteTimeout) * time.Second,
 		Handler:      commonHandler,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if s.config.HandleTimeout != nil {
+				ctx, _ = context.WithTimeout(ctx, time.Duration(*s.config.HandleTimeout)*time.Second)
+			}
+			return ctx
+		},
 	}
 
 	if s.config.WebLimiter.Enable {

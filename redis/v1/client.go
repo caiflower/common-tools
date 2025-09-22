@@ -3,9 +3,10 @@ package redisv1
 import (
 	"context"
 	"fmt"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"reflect"
 	"time"
+
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -198,7 +199,7 @@ func (c *redisClient) Set(k string, v interface{}) error {
 }
 
 func (c *redisClient) SetPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().Set(GetContext(context.Background()), c.GetKey(k), encodingObject(v), period).Err()
+	return c.GetRedis().Set(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
 }
 
 func (c *redisClient) SetNX(k string, v interface{}) error {
@@ -206,7 +207,7 @@ func (c *redisClient) SetNX(k string, v interface{}) error {
 }
 
 func (c *redisClient) SetNXPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetNX(GetContext(context.Background()), c.GetKey(k), encodingObject(v), period).Err()
+	return c.GetRedis().SetNX(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
 }
 
 func (c *redisClient) SetEx(k string, v interface{}) error {
@@ -214,11 +215,11 @@ func (c *redisClient) SetEx(k string, v interface{}) error {
 }
 
 func (c *redisClient) SetEXPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetEX(GetContext(context.Background()), c.GetKey(k), encodingObject(v), period).Err()
+	return c.GetRedis().SetEX(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
 }
 
 func (c *redisClient) Get(k string, v interface{}) error {
-	if bytes, err := c.GetRedis().Get(GetContext(context.Background()), c.GetKey(k)).Bytes(); err != nil {
+	if bytes, err := c.GetRedis().Get(GetContext(), c.GetKey(k)).Bytes(); err != nil {
 		return err
 	} else {
 		return tools.Unmarshal(bytes, v)
@@ -226,7 +227,7 @@ func (c *redisClient) Get(k string, v interface{}) error {
 }
 
 func (c *redisClient) GetString(k string) (string, error) {
-	return c.GetRedis().Get(GetContext(context.Background()), c.GetKey(k)).Result()
+	return c.GetRedis().Get(GetContext(), c.GetKey(k)).Result()
 }
 
 func (c *redisClient) Del(k ...string) error {
@@ -234,7 +235,7 @@ func (c *redisClient) Del(k ...string) error {
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	return c.GetRedis().Del(GetContext(context.Background()), keys...).Err()
+	return c.GetRedis().Del(GetContext(), keys...).Err()
 }
 
 func (c *redisClient) Exist(k ...string) (bool, error) {
@@ -242,7 +243,7 @@ func (c *redisClient) Exist(k ...string) (bool, error) {
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	if v, err := c.GetRedis().Exists(GetContext(context.Background()), keys...).Result(); err != nil {
+	if v, err := c.GetRedis().Exists(GetContext(), keys...).Result(); err != nil {
 		return false, err
 	} else {
 		return v == 1, nil
@@ -250,23 +251,23 @@ func (c *redisClient) Exist(k ...string) (bool, error) {
 }
 
 func (c *redisClient) Expire(k string, period time.Duration) (bool, error) {
-	return c.GetRedis().Expire(GetContext(context.Background()), c.GetKey(k), period).Result()
+	return c.GetRedis().Expire(GetContext(), c.GetKey(k), period).Result()
 }
 
 func (c *redisClient) MSet(values ...interface{}) error {
-	return c.GetRedis().MSet(GetContext(context.Background()), c.encodingValues(true, values...)).Err()
+	return c.GetRedis().MSet(GetContext(), c.encodingValues(true, values...)).Err()
 }
 
 func (c *redisClient) MSetNX(values ...interface{}) error {
-	return c.GetRedis().MSetNX(GetContext(context.Background()), c.encodingValues(true, values...)).Err()
+	return c.GetRedis().MSetNX(GetContext(), c.encodingValues(true, values...)).Err()
 }
 
 func (c *redisClient) HSet(key string, values ...interface{}) error {
-	return c.GetRedis().HSet(GetContext(context.Background()), c.GetKey(key), c.encodingValues(false, values...)).Err()
+	return c.GetRedis().HSet(GetContext(), c.GetKey(key), c.encodingValues(false, values...)).Err()
 }
 
 func (c *redisClient) HGet(key string, field string, v interface{}) error {
-	if bytes, err := c.GetRedis().HGet(GetContext(context.Background()), c.GetKey(key), field).Bytes(); err != nil {
+	if bytes, err := c.GetRedis().HGet(GetContext(), c.GetKey(key), field).Bytes(); err != nil {
 		return err
 	} else {
 		return tools.Unmarshal(bytes, v)
@@ -274,15 +275,15 @@ func (c *redisClient) HGet(key string, field string, v interface{}) error {
 }
 
 func (c *redisClient) HGetString(key string, field string) (string, error) {
-	return c.GetRedis().HGet(GetContext(context.Background()), c.GetKey(key), field).Result()
+	return c.GetRedis().HGet(GetContext(), c.GetKey(key), field).Result()
 }
 
 func (c *redisClient) HGetAll(key string) (map[string]string, error) {
-	return c.GetRedis().HGetAll(GetContext(context.Background()), c.GetKey(key)).Result()
+	return c.GetRedis().HGetAll(GetContext(), c.GetKey(key)).Result()
 }
 
 func (c *redisClient) HDel(key string, field string) error {
-	return c.GetRedis().HDel(GetContext(context.Background()), c.GetKey(key), field).Err()
+	return c.GetRedis().HDel(GetContext(), c.GetKey(key), field).Err()
 }
 
 func (c *redisClient) GetKey(origin string) string {
@@ -293,6 +294,6 @@ func (c *redisClient) GetKey(origin string) string {
 }
 
 // GetContext getContext with traceId
-func GetContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, "traceId", golocalv1.GetTraceID())
+func GetContext() context.Context {
+	return context.WithValue(golocalv1.GetContext(), "traceId", golocalv1.GetTraceID())
 }
