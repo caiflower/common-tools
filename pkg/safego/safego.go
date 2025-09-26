@@ -6,12 +6,12 @@ import (
 )
 
 func Go(fn func()) {
-	context := golocalv1.GetContext()
+	localMap := golocalv1.GetLocalMap()
 	go func() {
 		defer e.OnError("safeGo")
-		golocalv1.PutContext(context)
+		golocalv1.PutLocalMap(localMap)
 		defer golocalv1.Clean()
-		
+
 		fn()
 	}()
 }
