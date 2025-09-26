@@ -158,7 +158,7 @@ func (c *RequestCtx) UpgradeWebsocket() {
 	c.special = "websocket"
 }
 
-type CommonResponse struct {
+type commonResponse struct {
 	RequestId string
 	Data      interface{} `json:",omitempty"`
 	Error     e.ApiError  `json:",omitempty"`
@@ -292,30 +292,32 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *web.Cont
 		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
 	}
 
+	var bytes []byte
+	if r.ContentLength != 0 {
+		bytes, _ = io.ReadAll(r.Body)
+		if isGzip(r.Header) {
+			tmpBytes, err := tools.Gunzip(bytes)
+			if err != nil {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
+			} else {
+				bytes = tmpBytes
+			}
+		} else if isBr(r.Header) {
+			tmpBytes, err := tools.UnBrotil(bytes)
+			if err != nil {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
+			} else {
+				bytes = tmpBytes
+			}
+		}
+	} else {
+		bytes = []byte("{}")
+	}
+
 	// 非restful风格
 	if !ctx.restful {
 		// 先解析body，解析param
-		var bytes []byte
-		if r.ContentLength != 0 {
-			bytes, _ = io.ReadAll(r.Body)
-			if isGzip(r.Header) {
-				tmpBytes, err := tools.Gunzip(bytes)
-				if err != nil {
-					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
-				} else {
-					bytes = tmpBytes
-				}
-			} else if isBr(r.Header) {
-				tmpBytes, err := tools.UnBrotil(bytes)
-				if err != nil {
-					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
-				} else {
-					bytes = tmpBytes
-				}
-			}
-		} else {
-			bytes = []byte("{}")
-		}
+
 		if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
 			err = json.Unmarshal(bytes, ctx.args[0].Interface())
 			var typeError *json.UnmarshalTypeError
@@ -336,27 +338,6 @@ func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *web.Cont
 		switch ctx.method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			// 先解析body，解析param
-			var bytes []byte
-			if r.ContentLength != 0 {
-				bytes, _ = io.ReadAll(r.Body)
-				if isGzip(r.Header) {
-					tmpBytes, err := tools.Gunzip(bytes)
-					if err != nil {
-						return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
-					} else {
-						bytes = tmpBytes
-					}
-				} else if isBr(r.Header) {
-					tmpBytes, err := tools.UnBrotil(bytes)
-					if err != nil {
-						return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
-					} else {
-						bytes = tmpBytes
-					}
-				}
-			} else {
-				bytes = []byte("{}")
-			}
 			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
 				var typeError *json.UnmarshalTypeError
 				if errors.As(err, &typeError) {
@@ -471,7 +452,7 @@ func (h *handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 	go h.metric.saveMetric(h.config.Name, strconv.Itoa(e.GetCode()), ctx.method, ctx.path, sub.Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	res := CommonResponse{
+	res := commonResponse{
 		RequestId: golocalv1.GetTraceID(),
 		Error:     e,
 	}
@@ -513,7 +494,7 @@ func (h *handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
-	res := CommonResponse{
+	res := commonResponse{
 		RequestId: golocalv1.GetTraceID(),
 		Data:      ctx.response,
 	}

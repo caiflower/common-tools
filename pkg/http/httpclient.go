@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/cenkalti/backoff/v4"
 	"io"
 	"io/ioutil"
 	"net"
@@ -14,6 +13,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/cenkalti/backoff/v4"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -139,6 +140,10 @@ func (h *httpClient) Delete(requestId, url string, request interface{}, response
 
 func (h *httpClient) SetRequestIdCallBack(fn func(requestId string, header map[string]string)) {
 	h.setRequestId = fn
+}
+
+func (h *httpClient) Do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) (err error) {
+	return h.do(method, requestId, url, contentType, request, values, response, header)
 }
 
 func (h *httpClient) do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) (err error) {

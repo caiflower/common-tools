@@ -1,5 +1,7 @@
 package http
 
+import "net/url"
+
 type Response struct {
 	StatusCode int
 	Data       interface{}
@@ -15,4 +17,5 @@ type HttpClient interface {
 	Delete(requestId, url string, request interface{}, response *Response, header map[string]string) error
 	SetRequestIdCallBack(func(requestId string, header map[string]string))
 	AddHook(hook Hook)
+	Do(method, requestId, url, contentType string, request interface{}, values url.Values, response *Response, header map[string]string) (err error)
 }
