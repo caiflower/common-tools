@@ -13,6 +13,8 @@ type ApiError interface {
 	GetCause() error
 }
 
+type Error = apiError
+
 type apiError struct {
 	Code    int
 	Type    string

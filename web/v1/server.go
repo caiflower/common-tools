@@ -162,7 +162,7 @@ func (s *HttpServer) StartUp() {
 			if s.limiterBucket.TakeTokenNonBlocking() {
 				return false
 			} else {
-				res := CommonResponse{
+				res := commonResponse{
 					RequestId: tools.UUID(),
 					Error:     e.NewApiError(e.TooManyRequests, "TooManyRequests", nil),
 				}
