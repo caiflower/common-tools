@@ -31,6 +31,14 @@ func getMapByGoID(goID int64) *sync.Map {
 	return value.(*sync.Map)
 }
 
+func GetLocalMap() *sync.Map {
+	return getMapByGoID(getGoID())
+}
+
+func PutLocalMap(_map *sync.Map) {
+	localMap.Store(getGoID(), _map)
+}
+
 func PutTraceID(value string) {
 	m := getMapByGoID(getGoID())
 	m.Store(RequestID, value)
