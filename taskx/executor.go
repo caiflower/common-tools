@@ -14,12 +14,17 @@
  * limitations under the License.
  */
 
- package taskx
+package taskx
 
 import (
+	"errors"
 	"fmt"
 
 	taskxdao "github.com/caiflower/common-tools/taskx/dao"
+)
+
+var (
+	ErrNonRetryable = errors.New("non-retryable error")
 )
 
 type TaskData struct {
@@ -32,11 +37,19 @@ type TaskData struct {
 
 type TaskExecutor interface {
 	Name() string
-	FinishedTask(data *TaskData) (retry bool, err error)
-	FailedTask(data *TaskData) (retry bool, err error)
+	// FinishedTask When the `runAgain` parameter is set to `true`, the task will be rerun without consuming the `retryCount`.
+	// The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
+	// If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
+	// If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
+	FinishedTask(data *TaskData) (runAgain bool, err error)
+	FailedTask(data *TaskData) (runAgain bool, err error)
 }
 
-type SubTaskExecutor func(data *TaskData) (retry bool, output interface{}, err error)
+// SubTaskExecutor When the `runAgain` parameter is set to `true`, the task will be rerun without consuming the `retryCount`.
+// The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
+// If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
+// If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
+type SubTaskExecutor func(data *TaskData) (runAgain bool, output interface{}, err error)
 
 var _em = executorManager{taskExecutor: make(map[string]TaskExecutor), subtaskExecutor: make(map[string]map[string]SubTaskExecutor), rollbackTaskExecutor: make(map[string]SubTaskExecutor)}
 

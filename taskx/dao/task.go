@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package taskxdao
+package taskxdao
 
 import (
 	"context"
@@ -48,9 +48,7 @@ type Task struct {
 type Output struct {
 	Output         string `json:",omitempty"`
 	Err            string `json:"err,omitempty"`
-	Msg            string `json:"msg,omitempty"`
 	RollbackErr    string `json:"rollbackErr,omitempty"`
-	RollbackMsg    string `json:"rollbackMsg,omitempty"`
 	RollbackOutput string `json:"rollbackOutput,omitempty"`
 }
 
