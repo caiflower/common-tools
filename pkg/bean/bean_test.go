@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
- package bean
+package bean
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type TestAutoWrite struct {
 	*TestAutoWrite1 `autowired:""`
 	TestAutoWrite2  *TestAutoWrite2 `autowired:""`
-	//TestAutoWrite4 TestAutoWrite4 `autowired:""`
 }
 
 type TestAutoWrite1 struct {
-	Name int
 }
 
 type TestAutoWrite2 struct {
@@ -37,24 +36,37 @@ type TestAutoWrite2 struct {
 
 type TestAutoWrite3 struct {
 	TestAutoWrite2 *TestAutoWrite2 `autowired:""`
+	TestAutoWrite4 TestAutoWrite4  `autowired:""`
 }
 
-type TestAutoWrite4 struct {
+type TestAutoWrite4 interface {
+	TestNameXxx() string
 }
 
-var test = &TestAutoWrite{}
+type testAutoWrite4 struct {
+}
 
-func addBean() {
-	AddBean(test)
-	AddBean(&TestAutoWrite1{})
-	AddBean(&TestAutoWrite2{})
-	AddBean(&TestAutoWrite3{})
-	AddBean(&TestAutoWrite4{})
+func (t *testAutoWrite4) TestNameXxx() string {
+	return "testAutoWrite4"
 }
 
 func TestIoc(t *testing.T) {
-	addBean()
+	test := &TestAutoWrite{}
+	test1 := &TestAutoWrite1{}
+	test2 := &TestAutoWrite2{}
+	test3 := &TestAutoWrite3{}
+	test4 := &testAutoWrite4{}
+	AddBean(test)
+	AddBean(test1)
+	AddBean(test2)
+	AddBean(test3)
+	AddBean(test4)
+
 	Ioc()
 
-	fmt.Print(test)
+	assert.Same(t, test.TestAutoWrite1, test1)
+	assert.Same(t, test.TestAutoWrite2, test2)
+	assert.Same(t, test2.TestAutoWrite3, test3)
+	assert.Same(t, test3.TestAutoWrite2, test2)
+	assert.Same(t, test3.TestAutoWrite4, test4)
 }
