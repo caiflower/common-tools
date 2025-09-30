@@ -46,6 +46,17 @@ type SubtaskBag struct {
 	task    *taskxdao.Task
 }
 
+type Output struct {
+	Output         string `json:",omitempty"`
+	Err            string `json:"err,omitempty"`
+	RollbackErr    string `json:"rollbackErr,omitempty"`
+	RollbackOutput string `json:"rollbackOutput,omitempty"`
+}
+
+func (o Output) String() string {
+	return tools.ToJson(o)
+}
+
 type taskReceiver struct {
 	Cluster        cluster.ICluster     `autowired:""`
 	TaskDao        *taskxdao.TaskDao    `autowired:""`
@@ -175,7 +186,7 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 			return nil, errors.New("task receiver is closed")
 		}
 
-		if t.subtaskInflight.InFlight(subtask) {
+		if !t.subtaskInflight.Insert(subtask) {
 			logger.Info("subtask '%s' is inflight, rollback is %v", subtask.SubtaskId, rollback)
 			continue
 		}
@@ -229,7 +240,7 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 			logger.Warn("task '%s' is finished", task.TaskId)
 			continue
 		}
-		if t.taskInflight.InFlight(task) {
+		if !t.taskInflight.Insert(task) {
 			logger.Warn("task '%s' is inflight", task.TaskId)
 			continue
 		}
@@ -271,11 +282,6 @@ func (t *taskReceiver) startTaskThreads() {
 				break
 			}
 
-			if !t.taskInflight.Insert(v) {
-				logger.Warn("task %v already inflight", v.TaskId)
-				continue
-			}
-
 			t.execTask(v)
 			t.taskInflight.Delete(v)
 		}
@@ -297,11 +303,6 @@ func (t *taskReceiver) startSubtaskThreads() {
 				break
 			}
 
-			if !t.subtaskInflight.Insert(v.subtask) {
-				logger.Warn("subtask %v already inflight", v.subtask.SubtaskId)
-				continue
-			}
-
 			t.execSubtask(v.task, v.subtask)
 			t.subtaskInflight.Delete(v.subtask)
 		}
@@ -321,11 +322,6 @@ func (t *taskReceiver) startRollbackTaskThreads() {
 		for v := range t.subtaskRollbackQueue {
 			if !t.running {
 				break
-			}
-
-			if !t.subtaskInflight.Insert(v.subtask) {
-				logger.Warn("subtask rollback task %v already inflight", v.subtask.SubtaskId)
-				continue
 			}
 
 			t.execSubtaskRollback(v.task, v.subtask)
@@ -363,7 +359,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 	}
 	task = tasks[0]
 
-	subtaskMap := make(map[string]taskxdao.Output)
+	subtaskMap := make(map[string]Output)
 	subtasks, _, err := t.SubtaskDao.GetSubtasksByTaskId(task.TaskId)
 	if err != nil {
 		logger.Error("get task %v subtasks failed. err: %v", task.TaskId, err)
@@ -375,7 +371,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 		if subtask.TaskState == string(TaskFailed) {
 			failed = true
 		}
-		var output taskxdao.Output
+		var output Output
 		_ = tools.Unmarshal([]byte(subtask.Output), &output)
 		subtaskMap[subtask.TaskName] = output
 	}
@@ -398,7 +394,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 				return
 			}
 
-			task.Output = tools.ToJson(&taskxdao.Output{
+			task.Output = tools.ToJson(&Output{
 				Err: taskErr.Error(),
 			})
 			task.TaskState = string(TaskFailed)
@@ -422,7 +418,7 @@ func (t *taskReceiver) execTask(task *taskxdao.Task) {
 				return
 			}
 
-			task.Output = tools.ToJson(&taskxdao.Output{
+			task.Output = tools.ToJson(&Output{
 				Err: taskErr.Error(),
 			})
 		}
@@ -464,7 +460,7 @@ func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtas
 		return
 	}
 
-	preSubtasks := make(map[string]taskxdao.Output)
+	preSubtasks := make(map[string]Output)
 	if subtask.PreSubtaskId != "" {
 		preSubtaskIds := strings.Split(subtask.PreSubtaskId, ",")
 		preSubtaskList, err := t.SubtaskDao.GetSubtasksBySubtaskIds(preSubtaskIds)
@@ -473,7 +469,7 @@ func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtas
 			return
 		}
 		for _, v := range preSubtaskList {
-			var output taskxdao.Output
+			var output Output
 			_ = tools.Unmarshal([]byte(subtask.Output), &output)
 			preSubtasks[v.TaskName] = output
 		}
@@ -486,7 +482,7 @@ func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtas
 	} else {
 		bytes, _ := tools.ToByte(output)
 		taskState := ""
-		_output := &taskxdao.Output{
+		_output := &Output{
 			Output: string(bytes),
 		}
 
@@ -501,7 +497,7 @@ func (t *taskReceiver) execSubtask(task *taskxdao.Task, subtask *taskxdao.Subtas
 			_output.Err = err.Error()
 			taskState = string(TaskFailed)
 		} else {
-			subtask.Output = tools.ToJson(&taskxdao.Output{
+			subtask.Output = tools.ToJson(&Output{
 				Output: string(bytes),
 			})
 			taskState = string(TaskSucceeded)
@@ -546,7 +542,7 @@ func (t *taskReceiver) execSubtaskRollback(task *taskxdao.Task, subtask *taskxda
 		return
 	}
 
-	preSubtasks := make(map[string]taskxdao.Output)
+	preSubtasks := make(map[string]Output)
 	if subtask.PreSubtaskId != "" {
 		preSubtaskIds := strings.Split(subtask.PreSubtaskId, ",")
 		preSubtaskList, err := t.SubtaskDao.GetSubtasksBySubtaskIds(preSubtaskIds)
@@ -555,7 +551,7 @@ func (t *taskReceiver) execSubtaskRollback(task *taskxdao.Task, subtask *taskxda
 			return
 		}
 		for _, v := range preSubtaskList {
-			var output taskxdao.Output
+			var output Output
 			_ = tools.Unmarshal([]byte(subtask.Output), &output)
 			preSubtasks[v.TaskName] = output
 		}
@@ -566,7 +562,7 @@ func (t *taskReceiver) execSubtaskRollback(task *taskxdao.Task, subtask *taskxda
 		// retry
 		return
 	} else {
-		_output := &taskxdao.Output{}
+		_output := &Output{}
 		rollback := ""
 		_ = tools.Unmarshal([]byte(subtask.Output), _output)
 

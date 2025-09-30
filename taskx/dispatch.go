@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package taskx
+package taskx
 
 import (
 	"context"
@@ -151,8 +151,8 @@ func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 	return err
 }
 
-func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxdao.Output, err error) {
-	outputs = make(map[string]taskxdao.Output)
+func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]Output, err error) {
+	outputs = make(map[string]Output)
 
 	var (
 		taskBaks    []taskxdao.TaskBak
@@ -167,7 +167,7 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxd
 	}
 
 	if len(taskBaks) > 0 {
-		output := taskxdao.Output{}
+		output := Output{}
 		_ = tools.Unmarshal([]byte(taskBaks[0].Output), &output)
 		outputs[taskBaks[0].TaskName] = output
 	} else {
@@ -175,7 +175,7 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxd
 		if err != nil {
 			return
 		}
-		output := taskxdao.Output{}
+		output := Output{}
 		_ = tools.Unmarshal([]byte(tasks[0].Output), &output)
 		outputs[tasks[0].TaskName] = output
 	}
@@ -187,7 +187,7 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxd
 
 	if len(subtaskBaks) > 0 {
 		for _, subtask := range subtaskBaks {
-			output := taskxdao.Output{}
+			output := Output{}
 			_ = tools.Unmarshal([]byte(subtask.Output), &output)
 			outputs[subtask.TaskName] = output
 		}
@@ -197,7 +197,7 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]taskxd
 			return
 		}
 		for _, subtask := range subtasks {
-			output := taskxdao.Output{}
+			output := Output{}
 			_ = tools.Unmarshal([]byte(subtask.Output), &output)
 			outputs[subtask.TaskName] = output
 		}
@@ -265,7 +265,7 @@ func (t *taskDispatcher) analysisTask(task *Task, taskFromDB *taskxdao.Task, sub
 			if rollback {
 				for _, subtask := range nextPendingSubTasks {
 					subtaskFromDB := subtaskMap[subtask.GetTaskId()]
-					if subtaskFromDB.TaskState == string(RollbackPending) ||
+					if subtaskFromDB.Rollback == string(RollbackPending) ||
 						time.Now().Add(time.Duration(subtaskFromDB.RetryInterval)*time.Second).After(subtaskFromDB.UpdateTime.Time()) {
 						rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB)
 					}
@@ -314,14 +314,56 @@ func (t *taskDispatcher) analysisTask(task *Task, taskFromDB *taskxdao.Task, sub
 	return
 }
 
-func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSubtasks, runningSubtaskRollbacks []*taskxdao.Subtask, aliveNodes, lostNodes []string) {
-	if len(runningTasks) == 0 && len(runningSubtasks) == 0 && len(runningSubtaskRollbacks) == 0 {
+func (t *taskDispatcher) allocateWorker(_runningTasks []*taskxdao.Task, _runningSubtasks, _runningSubtaskRollbacks []*taskxdao.Subtask, aliveNodes, lostNodes []string) {
+	if len(_runningTasks) == 0 && len(_runningSubtasks) == 0 && len(_runningSubtaskRollbacks) == 0 {
 		return
 	}
 
 	if !t.Cluster.IsReady() {
 		logger.Warn("deliver tasks failed, cluster not ready")
 		return
+	}
+
+	runningTaskIds := make([]string, 0, len(_runningTasks))
+	runningSubtaskIds := make([]string, 0, len(_runningSubtasks))
+	runningRollBackSubtaskIds := make([]string, 0, len(_runningSubtaskRollbacks))
+	for _, runningTask := range _runningTasks {
+		if !t.allocateWorkerInflight.Insert(runningTask) {
+			continue
+		}
+		runningTaskIds = append(runningTaskIds, runningTask.TaskId)
+	}
+	for _, runningSubtask := range _runningSubtasks {
+		if !t.allocateWorkerInflight.Insert(runningSubtask) {
+			continue
+		}
+		runningSubtaskIds = append(runningSubtaskIds, runningSubtask.SubtaskId)
+	}
+	for _, runningSubtaskRollback := range _runningSubtaskRollbacks {
+		if !t.allocateWorkerInflight.Insert(runningSubtaskRollback) {
+			continue
+		}
+		runningRollBackSubtaskIds = append(runningRollBackSubtaskIds, runningSubtaskRollback.SubtaskId)
+	}
+
+	if len(runningTaskIds) == 0 && len(runningSubtaskIds) == 0 && len(runningRollBackSubtaskIds) == 0 {
+		return
+	}
+
+	var (
+		runningTasks            []*taskxdao.Task
+		runningSubtasks         []*taskxdao.Subtask
+		runningSubtaskRollbacks []*taskxdao.Subtask
+	)
+
+	if len(runningTaskIds) > 0 {
+		runningTasks, _ = t.TaskDao.GetTasksByTaskIds(runningTaskIds)
+	}
+	if len(runningSubtaskIds) > 0 {
+		runningSubtasks, _ = t.SubtaskDao.GetSubtasksBySubtaskIds(runningSubtaskIds)
+	}
+	if len(runningRollBackSubtaskIds) > 0 {
+		runningSubtaskRollbacks, _ = t.SubtaskDao.GetSubtasksBySubtaskIds(runningRollBackSubtaskIds)
 	}
 
 	defer func() {
@@ -342,10 +384,6 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
 
 	for _, runningSubtask := range runningSubtasks {
-		if !t.allocateWorkerInflight.Insert(runningSubtask) {
-			continue
-		}
-
 		var nodeName string
 		if runningSubtask.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtask.Worker) {
 			nodeName = runningSubtask.Worker
@@ -364,10 +402,6 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 	}
 
 	for _, runningTask := range runningTasks {
-		if !t.allocateWorkerInflight.Insert(runningTask) {
-			continue
-		}
-
 		var nodeName string
 		if runningTask.TaskState == string(TaskRunning) && runningTask.Worker != "" && !tools.StringSliceContains(lostNodes, runningTask.Worker) {
 			nodeName = runningTask.Worker
@@ -386,12 +420,8 @@ func (t *taskDispatcher) allocateWorker(runningTasks []*taskxdao.Task, runningSu
 	}
 
 	for _, runningSubtaskRollback := range runningSubtaskRollbacks {
-		if !t.allocateWorkerInflight.Insert(runningSubtaskRollback) {
-			continue
-		}
-
 		var nodeName string
-		if runningSubtaskRollback.TaskState == string(TaskRunning) && !tools.StringSliceContains(lostNodes, runningSubtaskRollback.Worker) {
+		if runningSubtaskRollback.Worker != "" && !tools.StringSliceContains(lostNodes, runningSubtaskRollback.Worker) {
 			nodeName = runningSubtaskRollback.Worker
 		} else {
 			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]

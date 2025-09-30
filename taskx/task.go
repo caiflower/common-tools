@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package taskx
+package taskx
 
 import (
 	"bytes"
@@ -53,7 +53,6 @@ type ITask interface {
 	GetTaskName() string
 	GetTaskState() TaskState
 	SetTaskState(state TaskState)
-	AllocateTaskId()
 	SetInput(content interface{}) *Task
 	GetInput() string
 	SetDescription(description string) *Task
@@ -80,7 +79,6 @@ type ISubTask interface {
 	GetTaskState() TaskState
 	SetTaskState(state TaskState)
 	GetTaskName() string
-	AllocateTaskId()
 	SetInput(input interface{}) *SubTask
 	GetInput() string
 	SetOutput(output interface{}) *SubTask
@@ -142,6 +140,7 @@ func NewTask(taskName string) *Task {
 
 func NewSubtask(taskName string) *SubTask {
 	return &SubTask{
+		taskId:        tools.GenerateId("subtask"),
 		taskName:      taskName,
 		taskState:     TaskPending,
 		retry:         DefaultRetryCount,
@@ -153,12 +152,6 @@ func NewSubtask(taskName string) *SubTask {
 // Deprecated
 func NewSubTask(taskName string) *SubTask {
 	return NewSubtask(taskName)
-}
-
-func (t *SubTask) AllocateTaskId() {
-	if t.taskId == "" {
-		t.taskId = tools.GenerateId("subtask")
-	}
 }
 
 func (t *SubTask) GetTaskId() string {
@@ -239,12 +232,6 @@ func (t *Task) GetTaskName() string {
 	return t.taskName
 }
 
-func (t *Task) AllocateTaskId() {
-	if t.taskId == "" {
-		t.taskId = tools.GenerateId("subtask")
-	}
-}
-
 func (t *Task) GetInput() string {
 	return t.input
 }
@@ -277,7 +264,6 @@ func (t *Task) UnmarshalInput(v interface{}) error {
 }
 
 func (t *Task) AddSubTask(task *SubTask) error {
-	task.AllocateTaskId()
 	t.subTasks = append(t.subTasks, task)
 	t.subtaskMap[task.GetTaskId()] = task
 	return t.g.AddVertex(task)

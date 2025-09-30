@@ -21,7 +21,6 @@ import (
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/basic"
-	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/uptrace/bun"
 )
 
@@ -43,17 +42,6 @@ type Task struct {
 	CreateTime    basic.Time
 	UpdateTime    basic.Time
 	Status        int
-}
-
-type Output struct {
-	Output         string `json:",omitempty"`
-	Err            string `json:"err,omitempty"`
-	RollbackErr    string `json:"rollbackErr,omitempty"`
-	RollbackOutput string `json:"rollbackOutput,omitempty"`
-}
-
-func (o Output) String() string {
-	return tools.ToJson(o)
 }
 
 func (t *Task) String() string {

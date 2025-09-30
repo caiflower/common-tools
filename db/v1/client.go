@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package dbv1
+package dbv1
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -67,6 +68,8 @@ type Client struct {
 	cancel context.CancelFunc
 }
 
+var once sync.Once
+
 func NewDBClient(config Config) (c *Client, err error) {
 	if err = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
 		return nil, err
@@ -96,7 +99,10 @@ func NewDBClient(config Config) (c *Client, err error) {
 	if config.EnableMetric {
 		ctx, cancelFunc := context.WithCancel(GetContext())
 		c.cancel = cancelFunc
-		startMetric(ctx, c.DB, &config)
+		once.Do(func() {
+			startMetric(ctx, c.DB, &config)
+		})
+
 	}
 
 	if err = c.DB.Ping(); err != nil {
@@ -126,6 +132,11 @@ func createMysqlClient(config *Config) (*Client, error) {
 	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
 	db.SetMaxOpenConns(config.MaxOpen)
 	db.SetMaxIdleConns(config.MaxIdle)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelFunc()
+	if err = db.PingContext(ctx); err != nil {
+		return nil, errors.New("connect to db timeout")
+	}
 
 	bunDB := bun.NewDB(db, mysqldialect.New())
 	return &Client{DB: bunDB, config: config}, nil

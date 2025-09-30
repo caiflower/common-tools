@@ -19,8 +19,6 @@ package taskx
 import (
 	"errors"
 	"fmt"
-
-	taskxdao "github.com/caiflower/common-tools/taskx/dao"
 )
 
 var (
@@ -32,7 +30,7 @@ type TaskData struct {
 	TaskId    string
 	SubTaskId string
 	Input     string
-	Subtasks  map[string]taskxdao.Output
+	Subtasks  map[string]Output
 }
 
 type TaskExecutor interface {
