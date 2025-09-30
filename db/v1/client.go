@@ -102,7 +102,6 @@ func NewDBClient(config Config) (c *Client, err error) {
 		once.Do(func() {
 			startMetric(ctx, c.DB, &config)
 		})
-
 	}
 
 	if err = c.DB.Ping(); err != nil {
