@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package v1
+package v1
 
 import (
 	"context"
@@ -164,13 +164,16 @@ func (c *KafkaClient) doListen() {
 				if err == nil {
 					func() {
 						defer e.OnError(fmt.Sprintf("[kafka-consumer] [%s-%d] consumer listen", c.config.Name, tid))
+						startTime := time.Now()
 						c.fn(msg)
+						xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
+						xkafka.CountConsumer(c.config)
 					}()
 
 					c.offsets.Store(getTopicPartitionKey(&msg.TopicPartition), msg.TopicPartition)
 				} else if !err.(kafka.Error).IsTimeout() {
 					logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
-					addConsumerError(c.config, "consume")
+					xkafka.AddConsumerError(c.config, xkafka.ConsumeErr)
 				}
 			}
 		}
@@ -207,6 +210,7 @@ func (c *KafkaClient) rebalanceCallback(consumer *kafka.Consumer, event kafka.Ev
 		// purposes.
 		err := consumer.Assign(ev.Partitions)
 		if err != nil {
+			xkafka.AddConsumerError(c.config, xkafka.RebalanceErr)
 			return err
 		}
 

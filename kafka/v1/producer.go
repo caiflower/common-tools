@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package v1
+package v1
 
 import (
 	"errors"
@@ -86,7 +86,7 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 			switch ev := event.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					addProducerErrCount(kafkaClient.config, *ev.TopicPartition.Topic, "async")
+					xkafka.AddProducerErrCount(kafkaClient.config, *ev.TopicPartition.Topic, xkafka.AsyncErr)
 					logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
 				} else {
 					logger.Debug("[kafka-product] producer message [key=%s] to %v success", getTopicPartitionKey(&ev.TopicPartition), ev.TopicPartition.Offset)
@@ -115,9 +115,11 @@ func (c *KafkaClient) Send(topic string, key string, values ...interface{}) erro
 	event := make(chan kafka.Event, len(values))
 
 	for _, value := range values {
+		xkafka.CountProducer(c.config, topic)
 		message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Key: []byte(key), Value: []byte(tools.ToJson(value))}
 		err = c.Producer.Produce(message, event)
 		if err != nil {
+			xkafka.AddProducerErrCount(c.config, topic, xkafka.SyncErr)
 			return err
 		}
 	}
@@ -129,7 +131,7 @@ func (c *KafkaClient) Send(topic string, key string, values ...interface{}) erro
 			if ev.TopicPartition.Error != nil {
 				logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
 				err = ev.TopicPartition.Error
-				addProducerErrCount(c.config, topic, "sync")
+				xkafka.AddProducerErrCount(c.config, topic, xkafka.SyncErr)
 			} else {
 				logger.Debug("[kafka-product] producer message [key=%s] to %v success", getTopicPartitionKey(&ev.TopicPartition), ev.TopicPartition.Offset)
 			}
@@ -149,9 +151,11 @@ func (c *KafkaClient) AsyncSend(topic string, key string, values ...interface{})
 	}
 
 	for _, value := range values {
+		xkafka.CountProducer(c.config, topic)
 		message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Key: []byte(key), Value: []byte(tools.ToJson(value))}
 		err := c.Producer.Produce(message, nil)
 		if err != nil {
+			xkafka.AddProducerErrCount(c.config, topic, xkafka.AsyncErr)
 			return err
 		}
 	}
