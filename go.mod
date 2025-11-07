@@ -26,7 +26,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/prometheus/client_golang v1.12.2
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/stretchr/testify v1.7.5 // indirect
+	github.com/stretchr/testify v1.7.5
 	github.com/uptrace/bun v1.0.19
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	github.com/uptrace/uptrace-go v1.3.1
@@ -35,7 +35,6 @@ require (
 	go.opentelemetry.io/otel v1.7.0
 	go.opentelemetry.io/otel/metric v0.26.0
 	go.opentelemetry.io/otel/trace v1.7.0
-	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4 // indirect
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0
 	gopkg.in/yaml.v2 v2.4.0
 )

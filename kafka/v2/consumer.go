@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package v2
+package v2
 
 import (
 	"context"
@@ -159,7 +159,7 @@ label:
 			}
 		}
 		if err != nil {
-			addConsumerError(c.cfg, "connect")
+			xkafka.AddConsumerError(c.cfg, xkafka.ConnectErr)
 			logger.Error("%s [ConsumerGroup] open failed. Error: %v", c.cfg.Name, err)
 			time.Sleep(time.Second)
 		}
@@ -168,7 +168,7 @@ label:
 	// 监控错误
 	go func() {
 		for err := range consumerGroup.Errors() {
-			addConsumerError(c.cfg, "consume")
+			xkafka.AddConsumerError(c.cfg, xkafka.ConsumeErr)
 			logger.Error("%s %v", c.cfg.Name, err)
 		}
 	}()
@@ -185,7 +185,7 @@ label:
 		handler := &consumerGroupHandler{KafkaClient: c, lastCommitTime: time.Now()}
 		err = consumerGroup.Consume(ctx, c.cfg.Topics, handler)
 		if err != nil {
-			addConsumerError(c.cfg, "balance")
+			xkafka.AddConsumerError(c.cfg, xkafka.RebalanceErr)
 			logger.Error("%s [ConsumerGroup] return error. Error: %v", c.cfg.Name, err)
 			time.Sleep(time.Second)
 		}
@@ -196,6 +196,11 @@ label:
 func (c *KafkaClient) consume(fn func(message interface{})) {
 	runThread := func(tid int) {
 		logger.Debug("[kafka-consumer] [%s-%d] started.", c.cfg.Name, tid)
+		defer func() {
+			c.closeChan <- struct{}{}
+			logger.Debug("[kafka-consumer] [%s-%d] Exited.", c.cfg.Name, tid)
+		}()
+
 		for item := range c.msgChan {
 			if c.running == false {
 				// 不再消费直接退出
@@ -204,12 +209,13 @@ func (c *KafkaClient) consume(fn func(message interface{})) {
 
 			func() {
 				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
+				startTime := time.Now()
 				fn(item.msg)
+				xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
+				xkafka.CountConsumer(c.cfg)
 			}()
 			item.done = true
 		}
-		logger.Debug("[kafka-consumer] [%s-%d] Exited.", c.cfg.Name, tid)
-		c.closeChan <- struct{}{}
 	}
 	for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
 		go runThread(i)
@@ -255,7 +261,7 @@ func (c *KafkaClient) monitorMsgQueueSize() {
 		c.msgQueue.Range(func(key, value interface{}) bool {
 			msgQueue := value.(*basic.SafeRingQueue)
 			logger.Info("[kafka-consumer] [key: %s] msgQueue size: %d", key, msgQueue.Size())
-			setQueueSize(c.cfg, key.(string), float64(msgQueue.Size()))
+			xkafka.SetQueueSize(c.cfg, key.(string), float64(msgQueue.Size()))
 			return true
 		})
 	}

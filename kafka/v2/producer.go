@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package v2
+package v2
 
 import (
 	"errors"
@@ -114,7 +114,7 @@ label:
 			}
 		}
 		if err != nil {
-			addProducerErrCount(c.cfg, "", "connect")
+			xkafka.AddProducerErrCount(c.cfg, "", xkafka.ConnectErr)
 			logger.Error("Open sync producer failed. name=%s. err=%v", c.cfg.Name, err)
 			time.Sleep(time.Second)
 		}
@@ -140,7 +140,7 @@ label:
 			}
 		}
 		if err != nil {
-			addProducerErrCount(c.cfg, "", "connect")
+			xkafka.AddProducerErrCount(c.cfg, "", xkafka.ConnectErr)
 			logger.Error("Open async producer failed. name=%s. err=%v", c.cfg.Name, err)
 			time.Sleep(time.Second)
 		}
@@ -160,7 +160,7 @@ label:
 					break fe
 				}
 				if err != nil {
-					addProducerErrCount(c.cfg, err.Msg.Topic, "async")
+					xkafka.AddProducerErrCount(c.cfg, err.Msg.Topic, xkafka.AsyncErr)
 					logger.Error("KafkaAsyncProducer %s got error. %s", c.cfg.Name, err)
 				}
 			case <-success:
@@ -192,7 +192,7 @@ func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
 		if key != "" {
 			msg.Key = sarama.ByteEncoder(key)
 		}
-		countProducer(c.cfg, topic)
+		xkafka.CountProducer(c.cfg, topic)
 
 		msgs = append(msgs, msg)
 	}
@@ -202,10 +202,10 @@ func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
 		if err == nil {
 			break
 		} else if i != 3 {
-			addProducerErrCount(c.cfg, topic, "sync")
+			xkafka.AddProducerErrCount(c.cfg, topic, xkafka.SyncErr)
 			continue
 		} else {
-			addProducerErrCount(c.cfg, topic, "sync")
+			xkafka.AddProducerErrCount(c.cfg, topic, xkafka.SyncErr)
 			return err
 		}
 	}
@@ -236,7 +236,7 @@ func (c *KafkaClient) AsyncSend(topic, key string, values ...interface{}) error 
 			msg.Key = sarama.ByteEncoder(key)
 		}
 
-		countProducer(c.cfg, topic)
+		xkafka.CountProducer(c.cfg, topic)
 		c.asyncProducer.Input() <- msg
 	}
 	return nil
