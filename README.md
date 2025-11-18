@@ -7,9 +7,6 @@
 ```bash
 go get github.com/caiflower/common-tools
 ```
-
-更多工具和示例请访问：https://github.com/caiflower/cf-tools
-
 ## 📚 核心组件
 
 ### 🏗️ 基础设施
@@ -46,24 +43,7 @@ go get github.com/caiflower/common-tools
 
 ## 🚀 快速开始
 
-### 依赖注入示例
-
-```go
-import "github.com/caiflower/common-tools/pkg/bean"
-
-// 注册Bean
-bean.RegisterBean(&MyService{})
-
-// 获取Bean
-service := bean.GetBean[*MyService]()
-```
-
-更多示例请参考各组件的详细文档。
-
-## 📖 文档索引
-
-- [依赖注入（Bean）使用指南](./docs/bean.md)
-- [集群管理（Cluster）使用指南](./docs/cluster.md)
+https://github.com/caiflower/cf-tools 快速创建项目
 
 ## 🤝 贡献
 
