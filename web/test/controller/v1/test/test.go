@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package test
+package test
 
 import (
 	"fmt"
@@ -70,12 +70,6 @@ type Param2 struct {
 }
 
 func (t *StructService) Test1(param Param) Param {
-	context := param.Context
-	fmt.Println(context.GetVersion())
-	fmt.Println(context.GetAction())
-	fmt.Println(context.GetMethod())
-	fmt.Println(context.GetPath())
-	fmt.Println(context.GetParams())
 	return param
 }
 
@@ -84,7 +78,6 @@ func (t *StructService) Test2(param *Param) *Param {
 }
 
 func (t *StructService) Test3(param Param2) Param2 {
-	fmt.Println(param.Time.UTCString())
 	return param
 }
 

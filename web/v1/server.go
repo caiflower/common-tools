@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package webv1
+package webv1
 
 import (
 	"context"
@@ -104,7 +104,9 @@ func (s *HttpServer) AddController(v interface{}) {
 		s.handler.controllers[path] = c
 	}
 
-	bean.AddBean(v)
+	if !bean.HasBean(bean.GetBeanNameFromValue(v)) {
+		bean.AddBean(v)
+	}
 }
 
 func Register(controller *RestfulController) {

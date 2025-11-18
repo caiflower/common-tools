@@ -232,6 +232,10 @@ func getBeanNameFromValue(bean interface{}) string {
 	return getBeanNameFromType(reflect.TypeOf(bean))
 }
 
+func GetBeanNameFromValue(bean interface{}) string {
+	return getBeanNameFromType(reflect.TypeOf(bean))
+}
+
 // GetBeanName 根据类型获取Bean名称（泛型版本）
 // 返回空字符串表示类型不是指针或接口类型
 func GetBeanName[T any]() string {

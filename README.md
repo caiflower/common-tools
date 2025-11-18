@@ -11,13 +11,13 @@ go get github.com/caiflower/common-tools
 
 ### 🏗️ 基础设施
 
-| 组件 | 路径 | 描述 | 文档 |
-| --- | --- | --- | --- |
-| **依赖注入（IOC）** | `github.com/caiflower/common-tools/pkg/bean` | 自动注入和管理单例，类似Java的IOC容器 | [📖 详细文档](./docs/bean.md) |
+| 组件 | 路径 | 描述 | 文档                           |
+| --- | --- | --- |------------------------------|
+| **依赖注入（IOC）** | `github.com/caiflower/common-tools/pkg/bean` | 自动注入和管理单例，类似Java的IOC容器 | [📖 详细文档](./docs/bean.md)    |
 | **cluster（集群管理）** | `github.com/caiflower/common-tools/cluster` | 基于Raft算法实现的集群管理，支持集群master选举和远程调用 | [📖 详细文档](./docs/cluster.md) |
-| **web框架** | `github.com/caiflower/common-tools/web/v1` | 轻量级web框架，支持tag参数校验、interceptor过滤和RESTful接口 | |
-| **global（全局管理）** | `github.com/caiflower/common-tools/global` | 全局资源管理器，管理Daemon进程，实现程序优雅退出 | |
-| **taskx（任务框架）** | `github.com/caiflower/common-tools/taskx` | 任务调度框架，支持集群调度、DAG流任务、子任务结果传递（依赖MySQL） | |
+| **web框架** | `github.com/caiflower/common-tools/web/v1` | 轻量级web框架，支持tag参数校验、interceptor过滤和RESTful接口 | [📖 详细文档](./docs/web.md)     |
+| **global（全局管理）** | `github.com/caiflower/common-tools/global` | 全局资源管理器，管理Daemon进程，实现程序优雅退出 |                              |
+| **taskx（任务框架）** | `github.com/caiflower/common-tools/taskx` | 任务调度框架，支持集群调度、DAG流任务、子任务结果传递（依赖MySQL） |                              |
 
 ### 🗄️ 数据库与缓存客户端
 
