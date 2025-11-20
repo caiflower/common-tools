@@ -6,202 +6,25 @@ Web包是一个轻量级的RESTful Web框架，提供HTTP服务器、请求路�
 - **Action风格**：基于查询参数 `?action=xxx` 的传统风格
 - **RESTful风格**：基于HTTP方法和路径的REST API风格
 
-本文档配合 `web/test/integration_test.go` 中的测试用例，展示如何使用 `pkg/http.HttpClient` 进行端到端测试。
 
 ---
-
-## 测试指南
-
-### 使用HTTP客户端进行测试
-
-Web框架支持使用 `pkg/http.HttpClient` 进行端到端测试。框架内置的测试套件展示了完整的测试模式。
-
-#### 创建HTTP客户端
-
-```go
-import httpclient "github.com/caiflower/common-tools/pkg/http"
-
-// 创建客户端
-client := httpclient.NewHttpClient(httpclient.Config{
-    Timeout:      20,
-    Verbose:      toBoolPtr(false),
-    DisableRetry: false,
-})
-```
-
-#### 发送测试请求
-
-```go
-// 定义响应结构体
-type CommonResponse struct {
-    RequestId string          `json:"requestId"`
-    Data      json.RawMessage `json:"data"`
-    Error     ErrorInfo       `json:"error"`
-}
-
-type ErrorInfo struct {
-    Code    int    `json:"code"`
-    Type    string `json:"type"`
-    Message string `json:"message"`
-}
-
-// 发送POST请求
-req := MyRequest{Name: "test", Email: "test@example.com"}
-var resp CommonResponse
-httpResp := &httpclient.Response{Data: &resp}
-
-err := client.PostJson(
-    "req-001",  // 请求ID
-    "localhost:8080/api/v1/users",  // URL
-    req,        // 请求体
-    httpResp,   // 响应对象
-    map[string]string{  // 自定义请求头
-        "X-User-Id": "user-123",
-        "Authorization": "Bearer token",
-    },
-)
-
-// 验证响应
-if err != nil {
-    t.Fatalf("请求失败: %v", err)
-}
-
-if httpResp.StatusCode != http.StatusOK {
-    t.Errorf("期望状态码200，实际%d", httpResp.StatusCode)
-}
-```
-
-#### 支持的HTTP方法
-
-```go
-// GET请求
-client.Get(reqId, url, params, resp, headers)
-
-// POST JSON
-client.PostJson(reqId, url, body, resp, headers)
-
-// POST Form
-client.PostForm(reqId, url, formData, resp, headers)
-
-// PUT请求
-client.Put(reqId, url, body, resp, headers)
-
-// PATCH请求
-client.Patch(reqId, url, body, resp, headers)
-
-// DELETE请求
-client.Delete(reqId, url, body, resp, headers)
-```
-
-### 添努Beam清理预警
-
-在运行多个测试时，由于bean是全局管理的。需要在测试setup阶段调用 `pkg/bean.ClearBeans()` 清理已有bean，因为每个控制器都会被注册为bean。
-
-```go
-func (ts *TestSuite) setup(t *testing.T) {
-    // 重要！清理之前的Bean，以便每个测试都有干准的Bean洲
-    bean.ClearBeans()
-    
-    // ... 余下setup代码
-}
-```
-
-如不清理，恢遇以下错误：
-```
-panic: Bean conflict. Bean github.com/caiflower/common-tools/web/test/controller/v1/test.StructService has already exist.
-```
-
-
-
+在CPU为Intel(R) Xeon(R) Platinum 8338C CPU，2c4g条件下，使用wrk工具压测，结果如下：
 ```bash
-# 运行所有Web框架测试
-go test ../web/test -v
-
-# 运行特定的测试
-go test ../web/test -v -run TestRESTfulPostRequest
-
-# 运行多个相关测试
-go test ../web/test -v -run "Restful|Path|Concurrent"
+[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:8080/v1/req
+Running 1m test @ http://127.0.0.1:8080/v1/req
+  12 threads and 500 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    32.02ms  29.00ms    363.80ms 82.94%
+    Req/Sec     1.46k   279.93     2.98k    75.98%
+  1044171 requests in 1.00m, 251.94MB read
+  Non-2xx or 3xx responses: 1045589
+Requests/sec: 17414.91
+Transfer/sec:      4.19MB
 ```
+500个连接，请求/v1/req接口，1分钟处理了1045589次请求，平均每秒17414.91次，延迟均值32ms，标准差29ms，最大延迟363ms。
 
-#### 测试框架示例
 
-参考 `web/test/integration_test.go` 中的完整实现：
-
-```go
-type TestSuite struct {
-    server *webv1.HttpServer
-    client httpclient.HttpClient
-}
-
-func (ts *TestSuite) setup(t *testing.T) {
-    // 清理Bean（避免冲突）
-    bean.ClearBeans()
-    
-    // 初始化服务器
-    config := webv1.Config{
-        Port:     9091,
-        RootPath: "api",
-    }
-    
-    ts.server = webv1.NewHttpServer(config)
-    ts.server.AddController(&MyController{})
-    ts.server.StartUp()
-    
-    // 初始化HTTP客户端
-    ts.client = httpclient.NewHttpClient(httpclient.Config{})
-    
-    // 等待服务器启动
-    time.Sleep(500 * time.Millisecond)
-}
-
-func (ts *TestSuite) teardown() {
-    if ts.server != nil {
-        ts.server.Close()
-    }
-}
-
-func TestMyFeature(t *testing.T) {
-    suite := &TestSuite{}
-    suite.setup(t)
-    defer suite.teardown()
-    
-    // 执行测试
-    req := MyRequest{Name: "test"}
-    var resp CommonResponse
-    httpResp := &httpclient.Response{Data: &resp}
-    
-    err := suite.client.PostJson(
-        "test-001",
-        "localhost:9091/api/v1/path",
-        req,
-        httpResp,
-        map[string]string{"X-User-Id": "user-123"},
-    )
-    
-    if err != nil || httpResp.StatusCode != 200 {
-        t.Fatal("测试失败")
-    }
-}
-```
-
-### 完整的测试用例
-
-项目内置了9个完整的集成测试，覆盖以下场景：
-
-1. **TestRESTfulPostRequest** - RESTful POST请求处理
-2. **TestRESTfulGetRequest** - RESTful GET请求处理
-3. **TestPathParameters** - 路径参数绑定
-4. **TestRequiredFieldValidation** - 必填字段验证
-5. **TestMultipleInterceptors** - 拦截器执行顺序
-6. **TestRequestTraceID** - 请求追踪ID
-7. **TestHeaderBinding** - 请求头绑定
-8. **TestErrorHandling** - 错误处理
-9. **TestConcurrentRequests** - 并发请求处理（10个并发）
-
-详见 `web/test/` 目录中的测试文件。
-
----
+## 使用介绍
 
 ### 1. 初始化HTTP服务器
 
@@ -317,9 +140,6 @@ func (c *ProductController) GetProductByID(req *GetProductReq) (*Product, error)
 // Action风格：自动注册
 controller := &UserController{}
 webv1.AddController(controller)
-
-// 或使用默认服务器
-server.AddController(controller)
 ```
 
 ### 4. 注册RESTful路由
@@ -403,8 +223,8 @@ func (c *UserController) Search(req *SearchReq) (interface{}, error) {
 
 ```go
 type GetProductReq struct {
-    ProductID string `json:"productId" path:"productId"`
-    SubProductID string `json:"subProductId" path:"subProductId"`
+    ProductID string `json:"productId"`
+    SubProductID string `json:"subProductId"`
 }
 
 func (c *ProductController) GetProduct(req *GetProductReq) (*Product, error) {
@@ -497,7 +317,7 @@ type TagsReq struct {
 
 ```go
 type FilterReq struct {
-    Category string `json:"category" verf:"nilable"` // 可选，可以为nil
+    Category *string `json:"category" verf:"nilable"` // 可选，可以为nil
 }
 ```
 
@@ -813,35 +633,7 @@ func main() {
 ### Q: 如何同时支持Action和RESTful风格？
 A: 可以同时注册两种风格的路由。框架根据是否提供`action`参数来区分。
 
-### Q: 测试时如何获取响应数据？
-A: 使用 `pkg/http.HttpClient` 发送请求，被HTTP客户端自动序列化/反序列化响应数据：
-
-```go
-var resp CommonResponse
-httpResp := &httpclient.Response{Data: &resp}
-err := client.PostJson("req-id", url, req, httpResp, headers)
-if httpResp.StatusCode == 200 {
-    // resp 中包含的RequestId、Data、Error等信息
-}
-```
-
-### Q: 测试中改变重复注册带来的Bean冲突错误如何解决？
-A: 在测试的setup阶段调用 `bean.ClearBeans()` 清理之前的bean，不要使用全局的DefaultHttpServer。
-
-### Q: 参数校验失败时如何自定义错误信息？
-A: 校验标签的错误信息由框架自动生成。可通过拦截器的`After`方法捕获后自定义处理。
-
-### Q: 测试中如何获取原始的HTTP响应对象？
-A: 在请求参数中嵌入`web.Context`，通过`GetResponseWriterAndRequest()`方法获取。
-
 ### Q: 是否支持WebSocket？
 A: 框架设计用于RESTful API，不原生支持WebSocket。可在拦截器中通过`UpgradeWebsocket()`升级连接后自定义处理。
-
-### Q: 如何违存不同架区的数据？
-A: 应用可使用 `time.LoadLocation()` 告诉摆美什么时区，控制器中判断时候转换。
-
-### Q: 如何处理CORS？
-A: 通过拦截器的`Before`方法，在`GetResponseWriterAndRequest()`返回的ResponseWriter中设置CORS请求头。
-
 
 
