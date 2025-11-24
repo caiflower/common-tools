@@ -31,7 +31,7 @@
       },
       "id": 2,
       "panels": [],
-      "title": "服务器监控",
+      "title": "Web监控",
       "type": "row"
     },
     {
@@ -91,7 +91,32 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "test-api-service"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 9,
@@ -120,12 +145,13 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "sum(rate(http_request_total{namespace=\"$namespace\", service=\"$service\", pod=\"$pod\", code=~\"2..|4..\"}[1m]))",
+          "exemplar": false,
+          "expr": "sum by (service) (rate(http_request_total{namespace=\"$namespace\", service=\"$service\", pod=~\"$pod\", code=~\"2..|4..\"}[1m]))",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,
           "interval": "",
-          "legendFormat": "正常请求",
+          "legendFormat": "__auto",
           "range": true,
           "refId": "Qps",
           "useBackend": false
@@ -136,10 +162,11 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_request_total{namespace=\"$namespace\", service=\"$service\", pod=\"$pod\", code!~\"2..|4..\"}[1m]))",
+          "expr": "sum by(service) (rate(http_request_total{namespace=\"$namespace\", service=\"$service\", pod=~\"$pod\", code!~\"2..|4..\"}[1m]))",
           "hide": false,
           "instant": false,
-          "legendFormat": "异常请求",
+          "interval": "",
+          "legendFormat": "__auto",
           "range": true,
           "refId": "A"
         }
@@ -234,7 +261,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "histogram_quantile(0.99, rate(http_request_histogram_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(http_request_histogram_bucket{namespace=\"$namespace\", service=\"$service\", pod=~\"$pod\"}[5m]))",
           "hide": false,
           "instant": false,
           "legendFormat": "tp99",
@@ -247,7 +274,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.90, rate(http_request_histogram_bucket[5m]))",
+          "expr": "histogram_quantile(0.90, rate(http_request_histogram_bucket{namespace=\"$namespace\", service=\"$service\", pod=~\"$pod\"}[5m]))",
           "hide": false,
           "instant": false,
           "legendFormat": "tp90",
@@ -255,7 +282,7 @@
           "refId": "TP90"
         }
       ],
-      "title": "请求耗时分布图",
+      "title": "请求耗时",
       "type": "timeseries"
     },
     {
@@ -319,7 +346,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum by(le) (http_request_histogram_bucket{le!=\"+Inf\"})",
+          "expr": "sum by(le) (http_request_histogram_bucket{le!=\"+Inf\", namespace=\"$namespace\", service=\"$service\", pod=~\"$pod\"})",
           "format": "heatmap",
           "instant": true,
           "legendFormat": "__auto",
@@ -346,7 +373,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(http_request_total,namespace)",
+        "definition": "label_values(http_request_histogram_bucket,namespace)",
         "hide": 0,
         "includeAll": false,
         "label": "命名空间",
@@ -355,7 +382,36 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(http_request_total,namespace)",
+          "query": "label_values(http_request_histogram_bucket,namespace)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "allValue": "null",
+        "current": {
+          "selected": false,
+          "text": "test-api-service",
+          "value": "test-api-service"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(http_request_histogram_bucket{namespace=\"$namespace\"},service)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "服务名称",
+        "multi": false,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(http_request_histogram_bucket{namespace=\"$namespace\"},service)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
@@ -375,36 +431,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "definition": "label_values(http_request_total{namespace=\"$namespace\"},service)",
-        "hide": 0,
-        "includeAll": true,
-        "label": "服务名称",
-        "multi": false,
-        "name": "service",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(http_request_total{namespace=\"$namespace\"},service)",
-          "refId": "PrometheusVariableQueryEditor-VariableQuery"
-        },
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
-        "type": "query"
-      },
-      {
-        "allValue": "",
-        "current": {
-          "selected": false,
-          "text": "test-api-b75fcb77b-4jsfp",
-          "value": "test-api-b75fcb77b-4jsfp"
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "definition": "label_values(http_request_total{namespace=\"$namespace\", service=\"$service\"},pod)",
+        "definition": "label_values(http_request_histogram_bucket{namespace=\"$namespace\", service=\"$service\"},pod)",
         "hide": 0,
         "includeAll": true,
         "label": "",
@@ -413,7 +440,7 @@
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(http_request_total{namespace=\"$namespace\", service=\"$service\"},pod)",
+          "query": "label_values(http_request_histogram_bucket{namespace=\"$namespace\", service=\"$service\"},pod)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
@@ -425,13 +452,13 @@
     ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-15m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "app-monitor",
   "uid": "df4zd1x2lp4hsc",
-  "version": 28,
+  "version": 41,
   "weekStart": ""
 }

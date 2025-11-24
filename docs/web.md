@@ -10,18 +10,29 @@ Web包是一个轻量级的RESTful Web框架，提供HTTP服务器、请求路�
 ---
 在CPU为Intel(R) Xeon(R) Platinum 8338C CPU，2c4g条件下，使用wrk工具压测，结果如下：
 ```bash
-[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:8080/v1/req
-Running 1m test @ http://127.0.0.1:8080/v1/req
+[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:30461/v1/req
+Running 1m test @ http://127.0.0.1:30461/v1/req
   12 threads and 500 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    32.02ms  29.00ms    363.80ms 82.94%
-    Req/Sec     1.46k   279.93     2.98k    75.98%
-  1044171 requests in 1.00m, 251.94MB read
-  Non-2xx or 3xx responses: 1045589
-Requests/sec: 17414.91
-Transfer/sec:      4.19MB
+    Latency    53.00ms   81.36ms   1.14s    85.02%
+    Req/Sec     2.63k     0.86k   10.88k    74.65%
+  1882444 requests in 1.00m, 454.20MB read
+  Non-2xx or 3xx responses: 1882444
+Requests/sec:  31359.32
+Transfer/sec:      7.57MB
+[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:30461/e
+Running 1m test @ http://127.0.0.1:30461/e
+  12 threads and 500 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    55.69ms   81.65ms 795.35ms   83.57%
+    Req/Sec     3.17k     1.13k   11.95k    74.39%
+  2273335 requests in 1.00m, 526.83MB read
+  Non-2xx or 3xx responses: 2273335
+Requests/sec:  37873.98
+Transfer/sec:      8.78MB
 ```
-500个连接，请求/v1/req接口，1分钟处理了1045589次请求，平均每秒17414.91次，延迟均值32ms，标准差29ms，最大延迟363ms。
+![img.png](images/app_monitor.png)
+![img.png](images/app_monitor_profile.png)
 
 
 ## 使用介绍
