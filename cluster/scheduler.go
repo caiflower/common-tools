@@ -101,7 +101,6 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 				for _, caller := range t.callers {
 					go caller.MasterCall()
 				}
-			default:
 			}
 		}
 	}(t.leaderCtx)
@@ -146,7 +145,6 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 				for _, caller := range t.callers {
 					go caller.SlaverCall(leaderName)
 				}
-			default:
 			}
 		}
 	}(t.workerCtx)

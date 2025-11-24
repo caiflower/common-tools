@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"context"
@@ -905,7 +905,6 @@ func (c *Cluster) heartbeat() {
 					go c.fighting()
 				}
 			}
-		default:
 		}
 	}
 }
@@ -929,13 +928,22 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 	// 每次都重新生成，防止上次请求超时消息到这次里面来了
 	c.msgChan = make(chan *Message, c.GetAliveNodeCount())
 	msgResponseList := make([]*Message, 0)
+
+	// 添加定时器避免忙等待
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-withTimeout.Done():
 			return msgResponseList
 		case m := <-c.msgChan:
 			msgResponseList = append(msgResponseList, m)
-		default:
+			if len(msgResponseList) == c.GetAliveNodeCount() {
+				return msgResponseList
+			}
+		case <-ticker.C:
+			// 定期检查是否收集完所有响应
 			if len(msgResponseList) == c.GetAliveNodeCount() {
 				return msgResponseList
 			}
@@ -1065,8 +1073,6 @@ func (c *Cluster) consumeEvent() {
 			default:
 				c.logger.Warn("[cluster] unknown type %s event", ev.name)
 			}
-		default:
-
 		}
 	}
 }
