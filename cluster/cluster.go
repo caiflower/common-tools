@@ -42,6 +42,7 @@ import (
 )
 
 type ICluster interface {
+	Name() string                                                                 // 名称
 	Start() error                                                                 // 启动
 	Close()                                                                       // 关闭
 	IsFighting() bool                                                             // 集群是否正在选举
@@ -199,6 +200,10 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 
 func NewCluster(config Config) (*Cluster, error) {
 	return NewClusterWithArgs(config, logger.DefaultLogger())
+}
+
+func (c *Cluster) Name() string {
+	return fmt.Sprintf("Cluster:%s", c.config.Mode)
 }
 
 func (c *Cluster) Start() error {
