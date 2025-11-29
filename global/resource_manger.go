@@ -50,6 +50,14 @@ func (p *packageResource) Name() string {
 	return "packageResource"
 }
 
+func (p *packageResource) Close() {
+	if p.DaemonResource != nil {
+		p.DaemonResource.Close()
+	} else {
+		p.Resource.Close()
+	}
+}
+
 func (p *packageResource) Start() error {
 	if p.DaemonResource != nil {
 		return p.DaemonResource.Start()
