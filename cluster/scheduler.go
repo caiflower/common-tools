@@ -55,7 +55,6 @@ func (dc *DefaultCaller) MasterCall()                   {}
 func (dc *DefaultCaller) SlaverCall(leaderName string)  {}
 
 type DefaultJobTracker struct {
-	Cluster      ICluster
 	Interval     int
 	leaderCtx    context.Context
 	leaderCancel context.CancelFunc
@@ -64,14 +63,13 @@ type DefaultJobTracker struct {
 	callers      []Caller
 }
 
-func NewDefaultJobTracker(interval int, cluster ICluster, caller ...Caller) *DefaultJobTracker {
+func NewDefaultJobTracker(interval int, caller ...Caller) *DefaultJobTracker {
 	if interval <= 0 {
 		interval = 10
 	}
 
 	return &DefaultJobTracker{
 		Interval: interval,
-		Cluster:  cluster,
 		callers:  caller,
 	}
 }
@@ -146,10 +144,6 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 			}
 		}
 	}(t.workerCtx)
-}
-
-func (t *DefaultJobTracker) Start() error {
-	return t.Cluster.AddJobTracker(t)
 }
 
 func (t *DefaultJobTracker) Close() {
