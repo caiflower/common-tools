@@ -357,9 +357,9 @@ func TestDefaultJobTracker(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	tracker1 := NewDefaultJobTracker(10, cluster1, testCaller1)
+	tracker1 := NewDefaultJobTracker(10, testCaller1)
+	_ = cluster1.AddJobTracker(tracker1)
 	go cluster1.Start()
-	go tracker1.Start()
 
 	testCaller2 := &TestCaller{
 		Name: "Localhost2",
@@ -370,9 +370,9 @@ func TestDefaultJobTracker(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	tracker2 := NewDefaultJobTracker(10, cluster2, testCaller2)
+	tracker2 := NewDefaultJobTracker(10, testCaller2)
+	_ = cluster2.AddJobTracker(tracker2)
 	go cluster2.Start()
-	go tracker2.Start()
 
 	testCaller3 := &TestCaller{
 		Name: "Localhost3",
@@ -382,10 +382,9 @@ func TestDefaultJobTracker(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	tracker3 := NewDefaultJobTracker(10, cluster3, testCaller3)
-
+	tracker3 := NewDefaultJobTracker(10, testCaller3)
+	_ = cluster3.AddJobTracker(tracker3)
 	go cluster3.Start()
-	go tracker3.Start()
 
 	time.Sleep(60 * time.Second)
 }
