@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"fmt"
@@ -46,13 +46,13 @@ func TestCluster(t *testing.T) {
 		time.Sleep(20 * time.Second)
 
 		fmt.Println("localhost1 start")
-		cluster1.StartUp()
+		cluster1.Start()
 		time.Sleep(20 * time.Second)
 		fmt.Println("localhost2 start")
-		cluster2.StartUp()
+		cluster2.Start()
 		time.Sleep(20 * time.Second)
 		fmt.Println("localhost3 start")
-		cluster3.StartUp()
+		cluster3.Start()
 		fmt.Printf("模拟重启完成\n")
 
 		time.Sleep(50 * time.Second)
@@ -77,19 +77,19 @@ func mockDown(cluster1, cluster2, cluster3 *Cluster) {
 		cluster1.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost1 is start\n")
-		cluster1.StartUp()
+		cluster1.Start()
 	case "localhost2":
 		fmt.Printf("localhost2 is closed\n")
 		cluster2.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost2 is start\n")
-		cluster2.StartUp()
+		cluster2.Start()
 	case "localhost3":
 		fmt.Printf("localhost3 is closed\n")
 		cluster3.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost3 is start\n")
-		cluster3.StartUp()
+		cluster3.Start()
 	default:
 	}
 	fmt.Printf("结束模拟主节点宕机，一段时间后被拉起\n")
@@ -206,7 +206,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		panic(err)
 	}
 
-	go cluster1.StartUp()
+	go cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -216,7 +216,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		panic(err)
 	}
 
-	go cluster2.StartUp()
+	go cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -226,7 +226,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		panic(err)
 	}
 
-	go cluster3.StartUp()
+	go cluster3.Start()
 
 	time.Sleep(10 * time.Second)
 
@@ -250,7 +250,7 @@ func TestSingleCluster(t *testing.T) {
 	})); err != nil {
 		panic(err)
 	} else {
-		cluster.StartUp()
+		cluster.Start()
 		time.Sleep(20 * time.Second)
 
 		cluster.Close()
@@ -380,7 +380,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster1.Redis = redisClient
-	go cluster1.StartUp()
+	go cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -391,7 +391,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster2.Redis = redisClient
-	go cluster2.StartUp()
+	go cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -402,7 +402,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster3.Redis = redisClient
-	go cluster3.StartUp()
+	go cluster3.Start()
 
 	time.Sleep(10 * time.Second)
 

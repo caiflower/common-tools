@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package logger
+package logger
 
 import (
 	"fmt"
@@ -88,6 +88,7 @@ func Error(text string, v ...interface{}) {
 }
 func Fatal(text string, v ...interface{}) {
 	defaultLogger.log(FatalLevel, text, v...)
+	panic(fmt.Sprintf("get Fatal log. Exit: Error: %s", fmt.Sprintf(text, v...)))
 }
 
 type LoggerHandler struct {

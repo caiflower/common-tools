@@ -31,7 +31,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/redis/v1"
 
-	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/cache"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/nio"
@@ -43,7 +42,7 @@ import (
 )
 
 type ICluster interface {
-	StartUp()                                                                     // 启动
+	Start() error                                                                 // 启动
 	Close()                                                                       // 关闭
 	IsFighting() bool                                                             // 集群是否正在选举
 	IsClose() bool                                                                // 集群是否关闭
@@ -63,7 +62,7 @@ type ICluster interface {
 	GetAliveNodeNames() []string                                                  // 获取所有活着的节点名称
 	GetAliveNodeCount() int                                                       // 获取在线节点数量
 	GetLostNodeNames() []string                                                   // 获取所有失联节点名称
-	AddJobTracker(v JobTracker)                                                   // add scheduler
+	AddJobTracker(v JobTracker) error                                             // add scheduler
 	RemoveJobTracker(v JobTracker)                                                // remove scheduler
 	RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) // registerFunc
 	CallFunc(fc *FuncSpec) (interface{}, error)                                   // callFunc
@@ -202,14 +201,14 @@ func NewCluster(config Config) (*Cluster, error) {
 	return NewClusterWithArgs(config, logger.DefaultLogger())
 }
 
-func (c *Cluster) StartUp() {
+func (c *Cluster) Start() error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
 	// 只允许启动一次
 	enable, _ := strconv.ParseBool(c.config.Enable)
 	if !enable || (c.sate > _init && c.sate != closed) {
-		return
+		return nil
 	}
 	c.term = 0
 	c.sate = _init
@@ -247,7 +246,7 @@ func (c *Cluster) StartUp() {
 
 	go c.createEvent(eventNameStartUp, "")
 
-	global.DefaultResourceManger.Add(c)
+	return nil
 }
 
 func (c *Cluster) Close() {
@@ -389,11 +388,12 @@ func (c *Cluster) GetNodeByName(name string) (node *Node) {
 	return
 }
 
-func (c *Cluster) AddJobTracker(v JobTracker) {
+func (c *Cluster) AddJobTracker(v JobTracker) error {
 	if v == nil {
-		return
+		return errors.New("invalid job tracker")
 	}
 	c.jobTrackers.Store(v.Name(), v)
+	return nil
 }
 
 func (c *Cluster) RemoveJobTracker(v JobTracker) {
@@ -910,7 +910,8 @@ func (c *Cluster) heartbeat() {
 }
 
 func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
-	withTimeout, _ := context.WithTimeout(context.Background(), timeout)
+	withTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)

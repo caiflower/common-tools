@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
- package crontab
+package crontab
 
 import (
-	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/robfig/cron/v3"
@@ -41,13 +40,9 @@ func GetCron() *cron.Cron {
 	return DefaultCronManger.GetCron()
 }
 
-func (c *CronManger) Start() {
+func (c *CronManger) Start() error {
 	c.cron.Start()
-	global.DefaultResourceManger.Add(c)
-}
-
-func Start() {
-	DefaultCronManger.Start()
+	return nil
 }
 
 func (c *CronManger) Close() {

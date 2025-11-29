@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
- package global
+package global
 
 import (
 	"os"
 	"os/signal"
+	"sort"
 	"sync"
 	"syscall"
 
@@ -33,10 +34,31 @@ type Resource interface {
 	Close()
 }
 
+type DaemonResource interface {
+	Resource
+	Name() string
+	Start() error
+}
+
+type packageResource struct {
+	Resource
+	order int
+}
+
+func (p *packageResource) Name() string {
+	return "packageResource"
+}
+
+func (p *packageResource) Start() error {
+	return nil
+}
+
 type resourceManger struct {
-	lock      sync.Locker
-	resources []Resource
-	running   bool
+	lock                sync.Locker
+	resources           []Resource
+	daemons             []DaemonResource
+	pagePackageResource []packageResource
+	running             bool
 }
 
 var DefaultResourceManger = &resourceManger{lock: syncx.NewSpinLock()}
@@ -52,6 +74,25 @@ func (rm *resourceManger) Add(resource Resource) {
 	}
 
 	rm.resources = append(rm.resources, resource)
+	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{resource, 1000000000})
+}
+
+func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {
+	rm.lock.Lock()
+	defer rm.lock.Unlock()
+
+	for _, v := range rm.daemons {
+		if v == daemon {
+			return
+		}
+	}
+
+	rm.daemons = append(rm.daemons, daemon)
+	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{daemon, order})
+}
+
+func (rm *resourceManger) AddDaemon(daemon DaemonResource) {
+	rm.AddDaemonWithOrder(daemon, 100000)
 }
 
 func (rm *resourceManger) Signal() {
@@ -59,6 +100,17 @@ func (rm *resourceManger) Signal() {
 		rm.lock.Lock()
 		if !rm.running {
 			rm.running = true
+
+			sort.Slice(rm.pagePackageResource, func(i, j int) bool {
+				return rm.pagePackageResource[i].order > rm.pagePackageResource[j].order
+			})
+
+			for _, resource := range rm.pagePackageResource {
+				if err := resource.Start(); err != nil {
+					logger.Fatal("Signal failed. Start '%s' resource failed. Error: %s", resource.Name(), err.Error())
+				}
+			}
+
 			sign := make(chan os.Signal)
 			signal.Notify(sign, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 			rm.lock.Unlock()
@@ -71,7 +123,7 @@ func (rm *resourceManger) Signal() {
 }
 
 func (rm *resourceManger) destroy() {
-	for _, resource := range rm.resources {
+	for _, resource := range rm.pagePackageResource {
 		resource.Close()
 	}
 }

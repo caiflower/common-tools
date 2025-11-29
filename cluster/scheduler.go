@@ -14,13 +14,11 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"context"
 	"time"
-
-	"github.com/caiflower/common-tools/global"
 )
 
 type JobTracker interface {
@@ -150,9 +148,8 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 	}(t.workerCtx)
 }
 
-func (t *DefaultJobTracker) Start() {
-	t.Cluster.AddJobTracker(t)
-	global.DefaultResourceManger.Add(t)
+func (t *DefaultJobTracker) Start() error {
+	return t.Cluster.AddJobTracker(t)
 }
 
 func (t *DefaultJobTracker) Close() {
