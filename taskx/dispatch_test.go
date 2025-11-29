@@ -617,9 +617,9 @@ func TestDisPatch(t *testing.T) {
 	RegisterTaskExecutorWithRollback(rollbackDemo.GetExecutorWithRollback())
 	RegisterTaskExecutor(retryable.GetExecutor())
 
-	receiver1.Start()
-	receiver2.Start()
-	receiver3.Start()
+	_ = receiver1.Start()
+	_ = receiver2.Start()
+	_ = receiver3.Start()
 	defer receiver1.Close()
 	defer receiver2.Close()
 	defer receiver3.Close()

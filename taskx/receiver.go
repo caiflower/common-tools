@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/cluster"
-	"github.com/caiflower/common-tools/global"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -79,9 +78,9 @@ type taskReceiver struct {
 	stopChan                 chan struct{}
 }
 
-func (t *taskReceiver) Start() {
+func (t *taskReceiver) Start() error {
 	if t.running {
-		return
+		return nil
 	}
 
 	logger.Info("taskReceiver start.")
@@ -100,7 +99,7 @@ func (t *taskReceiver) Start() {
 	t.Cluster.RegisterFunc(deliverTask, t.deliverTask)
 	t.Cluster.RegisterFunc(taskDoneCallBack, t.taskDoneCallBack)
 	t.Cluster.RegisterFunc(deliverSubtaskRollback, t.deliverSubtaskRollback)
-	global.DefaultResourceManger.Add(t)
+	return nil
 }
 
 func (t *taskReceiver) Close() {
