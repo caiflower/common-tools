@@ -42,6 +42,7 @@ type DaemonResource interface {
 
 type packageResource struct {
 	Resource
+	DaemonResource
 	order int
 }
 
@@ -50,6 +51,9 @@ func (p *packageResource) Name() string {
 }
 
 func (p *packageResource) Start() error {
+	if p.DaemonResource != nil {
+		return p.DaemonResource.Start()
+	}
 	return nil
 }
 
@@ -74,7 +78,7 @@ func (rm *resourceManger) Add(resource Resource) {
 	}
 
 	rm.resources = append(rm.resources, resource)
-	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{resource, 1000000000})
+	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: 1000000000})
 }
 
 func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {
@@ -88,7 +92,7 @@ func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {
 	}
 
 	rm.daemons = append(rm.daemons, daemon)
-	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{daemon, order})
+	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{DaemonResource: daemon, order: order})
 }
 
 func (rm *resourceManger) AddDaemon(daemon DaemonResource) {
