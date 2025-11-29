@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 type LinkedHashMap struct {
 	itemMap map[string]*linkedHashMapNode
-	head    *linkedHashMapNode
-	tail    *linkedHashMapNode
+	head    *linkedHashMapNode // 头结点，插入顺序第一个
+	tail    *linkedHashMapNode // 尾结点，插入顺序最后一个
 }
 
 func NewLinkHashMap() *LinkedHashMap {
@@ -36,68 +36,66 @@ type linkedHashMapNode struct {
 }
 
 func (m *LinkedHashMap) Put(k string, v interface{}) {
-	var n *linkedHashMapNode
-
-	if _n, ok := m.itemMap[k]; !ok {
-		n = &linkedHashMapNode{
-			key:   k,
-			value: v,
-		}
-		m.itemMap[k] = n
-	} else {
-		n = _n
+	if n, ok := m.itemMap[k]; ok {
 		n.value = v
+		return
 	}
-
-	m.movetoHead(n)
+	n := &linkedHashMapNode{
+		key:   k,
+		value: v,
+	}
+	m.itemMap[k] = n
+	if m.tail == nil {
+		m.head = n
+		m.tail = n
+	} else {
+		m.tail.next = n
+		n.prev = m.tail
+		m.tail = n
+	}
 }
 
 func (m *LinkedHashMap) Get(k string) (interface{}, bool) {
-	if _n, ok := m.itemMap[k]; ok {
-		m.movetoHead(_n)
-		return _n.value, true
-	} else {
-		return nil, false
+	if n, ok := m.itemMap[k]; ok {
+		return n.value, true
 	}
+	return nil, false
 }
 
 func (m *LinkedHashMap) Remove(k string) {
-	if n, ok := m.itemMap[k]; ok {
-		if n.prev != nil {
-			n.prev.next = n.next
-		}
-		if n.next != nil {
-			n.next.prev = n.prev
-		}
-
-		if m.head == n {
-			m.head = n.next
-		}
-		if m.tail == n {
-			m.tail = n.prev
-		}
-		delete(m.itemMap, k)
+	n, ok := m.itemMap[k]
+	if !ok {
+		return
 	}
+	if n.prev != nil {
+		n.prev.next = n.next
+	} else {
+		m.head = n.next
+	}
+	if n.next != nil {
+		n.next.prev = n.prev
+	} else {
+		m.tail = n.prev
+	}
+	delete(m.itemMap, k)
 }
 
 func (m *LinkedHashMap) RemoveFirst() string {
-	if m.tail != nil {
-		key := m.head.key
-		m.Remove(key)
-		return key
-	} else {
+	if m.head == nil {
 		return ""
 	}
+	key := m.head.key
+	m.Remove(key)
+	return key
 }
 
 func (m *LinkedHashMap) RemoveLast() string {
-	if m.tail != nil {
-		key := m.tail.key
-		m.Remove(key)
-		return key
-	} else {
+	if m.tail == nil {
 		return ""
 	}
+	key := m.tail.key
+	m.Remove(key)
+	return key
 }
 
 func (m *LinkedHashMap) Size() int {
@@ -110,53 +108,49 @@ func (m *LinkedHashMap) Contains(key string) bool {
 }
 
 func (m *LinkedHashMap) Keys() []string {
-	p := m.head
 	var res []string
-	for p != nil {
+	for p := m.head; p != nil; p = p.next {
 		res = append(res, p.key)
-		p = p.next
 	}
 	return res
 }
 
 func (m *LinkedHashMap) Values() []interface{} {
-	p := m.head
 	var res []interface{}
-	for p != nil {
+	for p := m.head; p != nil; p = p.next {
 		res = append(res, p.value)
-		p = p.next
 	}
 	return res
 }
 
-func (m *LinkedHashMap) movetoHead(n *linkedHashMapNode) {
-	if m.head == n {
+func (m *LinkedHashMap) MoveToHead(key string) {
+	node, ok := m.itemMap[key]
+	if !ok || node == m.head {
 		return
 	}
+	m.moveToHead(node)
+}
 
-	if m.head == nil { // first node
-		m.head = n
-		m.tail = n
-		return
+func (m *LinkedHashMap) moveToHead(node *linkedHashMapNode) {
+	// 断链
+	if node.prev != nil {
+		node.prev.next = node.next
+	} else {
+		m.head = node.next
 	}
-
-	// prev
-	if n.prev != nil {
-		n.prev.next = n.next
+	if node.next != nil {
+		node.next.prev = node.prev
+	} else {
+		m.tail = node.prev
 	}
-
-	// next
-	if n.next != nil {
-		n.next.prev = n.prev
+	// 插入到head
+	node.prev = nil
+	node.next = m.head
+	if m.head != nil {
+		m.head.prev = node
 	}
-
-	// last node
-	if m.tail == n {
-		m.tail = n.prev
+	m.head = node
+	if m.tail == nil {
+		m.tail = node
 	}
-
-	m.head.prev = n
-	n.next = m.head
-	n.prev = nil
-	m.head = n
 }

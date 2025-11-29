@@ -14,27 +14,94 @@
  * limitations under the License.
  */
 
- package cache
+package cache
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-func TestLFUCache(t *testing.T) {
-	cache := NewLFUCache(2)
+func TestLFUCache_BasicOps(t *testing.T) {
+	c := NewLFUCache(3)
+	c.Put("a", 1)
+	c.Put("b", 2)
+	c.Put("c", 3)
 
-	cache.Put("key1", "value1")
-	cache.Put("key2", "value2")
-	cache.Put("key1", "value1")
-	cache.Put("key3", "value3")
+	v, ok := c.Get("a")
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
 
-	fmt.Println(cache)
+	v, ok = c.Get("b")
+	assert.True(t, ok)
+	assert.Equal(t, 2, v)
 
-	cache.Put("key3", "value3")
-	fmt.Println(cache)
+	v, ok = c.Get("c")
+	assert.True(t, ok)
+	assert.Equal(t, 3, v)
 
-	cache.Put("key2", "key2")
+	// 覆盖写入
+	c.Put("a", 100)
+	v, ok = c.Get("a")
+	assert.True(t, ok)
+	assert.Equal(t, 100, v)
+}
 
-	fmt.Println(cache)
+func TestLFUCache_EvictLowFreq(t *testing.T) {
+	c := NewLFUCache(2)
+	c.Put("x", 1)
+	c.Put("y", 2)
+	// 访问x多次提升频率
+	c.Get("x")
+	c.Get("x")
+	// 插入新key，应该淘汰y（低频）
+	c.Put("z", 3)
+
+	v, ok := c.Get("x")
+	assert.True(t, ok)
+	assert.Equal(t, 1, v)
+
+	v, ok = c.Get("y")
+	assert.False(t, ok)
+	assert.Nil(t, v)
+
+	v, ok = c.Get("z")
+	assert.True(t, ok)
+	assert.Equal(t, 3, v)
+}
+
+func TestLFUCache_EvictTie(t *testing.T) {
+	c := NewLFUCache(2)
+	c.Put("a", 1)
+	c.Put("b", 2)
+	// 两者频率一样，淘汰顺序应按插入顺序（a先淘汰）
+	c.Put("c", 3)
+
+	v, ok := c.Get("a")
+	assert.False(t, ok)
+	assert.Nil(t, v)
+
+	v, ok = c.Get("b")
+	assert.True(t, ok)
+	assert.Equal(t, 2, v)
+
+	v, ok = c.Get("c")
+	assert.True(t, ok)
+	assert.Equal(t, 3, v)
+}
+
+func TestLFUCache_EdgeCase(t *testing.T) {
+	c := NewLFUCache(1)
+	c.Put("only", 42)
+	v, ok := c.Get("only")
+	assert.True(t, ok)
+	assert.Equal(t, 42, v)
+
+	c.Put("new", 99) // 应淘汰 "only"
+	v, ok = c.Get("only")
+	assert.False(t, ok)
+	assert.Nil(t, v)
+	v, ok = c.Get("new")
+	assert.True(t, ok)
+	assert.Equal(t, 99, v)
 }

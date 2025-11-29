@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cache
+package cache
 
 import (
 	"sync"
@@ -86,4 +86,5 @@ func (c *LFUCache) increase(key string) {
 	}
 	c.freq[key] = useCnt + 1
 	c.freqMap[useCnt+1].Put(key, struct{}{})
+	c.freqMap[useCnt+1].MoveToHead(key)
 }
