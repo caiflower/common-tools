@@ -25,7 +25,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -152,7 +151,11 @@ func (s *HttpServer) AddInterceptor(i interceptor.Interceptor, order int) {
 	})
 }
 
-func (s *HttpServer) StartUp() {
+func (s *HttpServer) Name() string {
+	return fmt.Sprintf("HTTP_SERVER:%s", s.config.Name)
+}
+
+func (s *HttpServer) Start() error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.config.Port),
 		ReadTimeout:  time.Duration(s.config.ReadTimeout) * time.Second,
@@ -196,8 +199,6 @@ func (s *HttpServer) StartUp() {
 	metric := NewHttpMetric()
 	s.handler.metric = metric
 
-	global.DefaultResourceManger.Add(s)
-
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %d *********\n"+
@@ -209,6 +210,8 @@ func (s *HttpServer) StartUp() {
 			}
 		}
 	}()
+
+	return nil
 }
 
 func (s *HttpServer) Close() {

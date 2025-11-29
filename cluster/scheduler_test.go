@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"fmt"
@@ -162,7 +162,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t1.Cluster = cluster1
 	cluster1.AddJobTracker(&t1)
 
-	go cluster1.StartUp()
+	go cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -175,7 +175,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t2.Cluster = cluster2
 	cluster2.AddJobTracker(&t2)
 
-	go cluster2.StartUp()
+	go cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -188,7 +188,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t3.Cluster = cluster3
 	cluster3.AddJobTracker(&t3)
 
-	go cluster3.StartUp()
+	go cluster3.Start()
 
 	time.Sleep(15 * time.Second)
 
@@ -202,19 +202,19 @@ func TestClusterJobTracker(t *testing.T) {
 		cluster1.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost1 is start\n")
-		cluster1.StartUp()
+		cluster1.Start()
 	case "localhost2":
 		fmt.Printf("localhost2 is closed\n")
 		cluster2.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost2 is start\n")
-		cluster2.StartUp()
+		cluster2.Start()
 	case "localhost3":
 		fmt.Printf("localhost3 is closed\n")
 		cluster3.Close()
 		time.Sleep(20 * time.Second)
 		fmt.Printf("localhost3 is start\n")
-		cluster3.StartUp()
+		cluster3.Start()
 	default:
 	}
 
@@ -358,7 +358,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		panic(err)
 	}
 	tracker1 := NewDefaultJobTracker(10, cluster1, testCaller1)
-	go cluster1.StartUp()
+	go cluster1.Start()
 	go tracker1.Start()
 
 	testCaller2 := &TestCaller{
@@ -371,7 +371,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		panic(err)
 	}
 	tracker2 := NewDefaultJobTracker(10, cluster2, testCaller2)
-	go cluster2.StartUp()
+	go cluster2.Start()
 	go tracker2.Start()
 
 	testCaller3 := &TestCaller{
@@ -384,7 +384,7 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker3 := NewDefaultJobTracker(10, cluster3, testCaller3)
 
-	go cluster3.StartUp()
+	go cluster3.Start()
 	go tracker3.Start()
 
 	time.Sleep(60 * time.Second)
