@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package env
+package env
 
 import (
 	"fmt"
@@ -74,7 +74,7 @@ func findLocalDNS() {
 			hostLines := strings.Split(result.Stdout.String(), "\n")
 			for _, hostLine := range hostLines {
 				if strings.Contains(hostLine, "cluster.local") {
-					strs := strings.Split(hostLine, "\t")
+					strs := strings.Fields(hostLine)
 					for _, str := range strs {
 						if strings.Contains(str, "cluster.local") {
 							LocalDNS = str
