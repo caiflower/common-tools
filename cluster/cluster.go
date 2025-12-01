@@ -29,7 +29,7 @@ import (
 
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
-	"github.com/caiflower/common-tools/redis/v1"
+	redisv1 "github.com/caiflower/common-tools/redis/v1"
 
 	"github.com/caiflower/common-tools/pkg/cache"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -82,6 +82,8 @@ const (
 	modeCluster = "cluster"
 	modeSingle  = "single"
 	modeRedis   = "redis"
+
+	remoteFuncNameOfReloadAllNodes = "cluster.ReloadAllNodes"
 )
 
 type Config struct {
@@ -94,7 +96,8 @@ type Config struct {
 		Port  int
 		Local bool //true表示当前进程与当前node匹配。适用本机测试等情况。线上为了配置文件一致性尽量不要使用。
 	} `yaml:"nodes" json:"nodes"`
-	RedisDiscovery RedisDiscovery `yaml:"redisDiscovery" json:"redisDiscovery"`
+	RedisDiscovery    RedisDiscovery    `yaml:"redisDiscovery" json:"redisDiscovery"`
+	ReplicasDiscovery ReplicasDiscovery `yaml:"replicasDiscovery" json:"replicasDiscovery"`
 }
 
 type RedisDiscovery struct {
@@ -103,6 +106,12 @@ type RedisDiscovery struct {
 	ElectionInterval   time.Duration `yaml:"electionInterval" default:"15s"`   //多久进行一次选主/续约
 	ElectionPeriod     time.Duration `yaml:"electionPeriod" default:"30s"`     //选主/续约后有效租期时间
 	SyncLeaderInterval time.Duration `yaml:"syncLeaderInterval" default:"10s"` //多久同步一次leader
+}
+
+type ReplicasDiscovery struct {
+	DomainPatten string `yaml:"domainPatten"`
+	Port         int    `yaml:"port" default:"8081"`
+	Replicas     int    `yaml:"replicas"`
 }
 
 type Cluster struct {
@@ -170,9 +179,6 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	// 初始化节点信息
 	cluster.loadNodes()
 	enable, _ := strconv.ParseBool(config.Enable)
-	if enable {
-		cluster.logger.Info("[cluster] loadNodes success, nodes = %+v", cluster.GetAllNodeNames())
-	}
 
 	// find curNode
 	cluster.findCurNode()
@@ -195,6 +201,9 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		}
 	}
 
+	// register remote func
+	cluster.RegisterFunc(remoteFuncNameOfReloadAllNodes, cluster.reloadAllNodes)
+
 	return cluster, nil
 }
 
@@ -215,6 +224,10 @@ func (c *Cluster) Start() error {
 	if !enable || (c.sate > _init && c.sate != closed) {
 		return nil
 	}
+	if c.GetMyNode() == nil {
+		return errors.New("start cluster failed. can not find current node")
+	}
+
 	c.term = 0
 	c.sate = _init
 
@@ -227,6 +240,17 @@ func (c *Cluster) Start() error {
 		c.listen()
 		// 集群建立连接
 		c.reconnect()
+	}
+
+	// 扩容情况
+	if c.enableReplicasDiscovery() && env.Kubernetes {
+		for _, v := range c.GetAliveNodeNames() {
+			if v != c.GetMyName() {
+				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second).IgnoreNotReady()); err != nil {
+					logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+				}
+			}
+		}
 	}
 
 	switch c.config.Mode {
@@ -264,6 +288,17 @@ func (c *Cluster) Close() {
 
 	if c.IsClosed() {
 		return
+	}
+
+	// 缩容或者重启
+	if c.enableReplicasDiscovery() && env.Kubernetes {
+		for _, v := range c.GetAliveNodeNames() {
+			if v != c.GetMyName() {
+				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas-1, 2*time.Second)); err != nil {
+					logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+				}
+			}
+		}
 	}
 
 	if c.cancelFunc != nil {
@@ -329,6 +364,9 @@ func (c *Cluster) GetMyNode() *Node {
 }
 
 func (c *Cluster) GetMyName() string {
+	if c.curNode == nil {
+		return ""
+	}
 	return c.curNode.name
 }
 
@@ -409,6 +447,15 @@ func (c *Cluster) RemoveJobTracker(v JobTracker) {
 }
 
 func (c *Cluster) loadNodes() {
+	var keys []interface{}
+	c.allNode.Range(func(key, value interface{}) bool {
+		keys = append(keys, key)
+		return true
+	})
+	for _, key := range keys {
+		c.allNode.Delete(key)
+	}
+
 	for _, n := range c.config.Nodes {
 		node := newNode(n.Ip+":"+strconv.Itoa(n.Port), n.Name)
 		c.allNode.Store(n.Name, node)
@@ -419,6 +466,29 @@ func (c *Cluster) loadNodes() {
 		}
 	}
 
+	var addresses []string
+	replicasDiscovery := &c.config.ReplicasDiscovery
+	if c.enableReplicasDiscovery() {
+		if replicasDiscovery.Replicas <= 0 {
+			replicasDiscovery.Replicas = env.GetReplicas()
+		}
+		for i := 0; i < replicasDiscovery.Replicas; i++ {
+			domain := strings.Replace(replicasDiscovery.DomainPatten, "{suf}", strconv.Itoa(i), 1)
+			address := fmt.Sprintf("%s:%d", domain, replicasDiscovery.Port)
+			node := newNode(address, domain)
+			c.allNode.Store(domain, node)
+			addresses = append(addresses, address)
+		}
+	}
+
+	enable, _ := strconv.ParseBool(c.config.Enable)
+	if enable {
+		c.logger.Info("[cluster] loadNodes success, nodes = %+v, addresses: %+v", c.GetAllNodeNames(), addresses)
+	}
+}
+
+func (c *Cluster) enableReplicasDiscovery() bool {
+	return c.config.ReplicasDiscovery.DomainPatten != "" && c.config.ReplicasDiscovery.Port > 0
 }
 
 func (c *Cluster) findCurNode() {
@@ -722,6 +792,7 @@ func (c *Cluster) fighting() {
 			if !c.IsClose() {
 				c.sate = follower
 			}
+			c.logger.Info("[cluster] do fighting again.")
 			// 没有找到主节点，自动开启新一轮竞选
 			go c.fighting()
 		}
@@ -1107,7 +1178,7 @@ func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (inter
 }
 
 func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
-	if !c.IsReady() {
+	if !c.IsReady() && !f.ignoreClusterNotReady {
 		return nil, errors.New("cluster is not ready")
 	}
 
@@ -1165,4 +1236,21 @@ func (c *Cluster) callRemoteFunc(f *FuncSpec) {
 	if !send {
 		f.setResult(nil, fmt.Errorf("the node %s does not exist or is dead", f.nodeName))
 	}
+}
+
+func (c *Cluster) reloadAllNodes(data interface{}) (interface{}, error) {
+	if replicas, ok := data.(int); ok {
+		c.config.ReplicasDiscovery.Replicas = replicas
+	} else {
+		err := tools.Unmarshal([]byte(tools.ToJson(data)), &c.config.ReplicasDiscovery.Replicas)
+		if err != nil {
+			c.logger.Error("[cluster] reloadAllNodes failed. Error: %v", err)
+			return nil, errors.New(fmt.Sprintf("%s reloadAllNodes failed", c.GetMyName()))
+		}
+	}
+
+	c.logger.Info("[cluster] do reloadAllNodes, replicas: %d", c.config.ReplicasDiscovery.Replicas)
+	c.loadNodes()
+	c.reconnect()
+	return nil, nil
 }
