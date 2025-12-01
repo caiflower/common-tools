@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	shell "github.com/caiflower/common-tools/pkg/shell"
@@ -31,6 +32,7 @@ var (
 	Kubernetes  bool
 	ConfigPath  string
 	AESKey      string
+	Replicas    int // 服务副本数，用于控制cluster
 )
 
 func init() {
@@ -90,6 +92,7 @@ func findLocalDNS() {
 func initEnv() {
 	LocalDNS = os.Getenv("LOCAL_DNS")
 	LocalhostIP = os.Getenv("LOCAL_HOST_IP")
+	Replicas, _ = strconv.Atoi(os.Getenv("REPLICAS"))
 
 	AESKey = os.Getenv("AES_KEY")
 	if AESKey != "" && len(AESKey) != 32 && len(AESKey) != 24 && len(AESKey) != 16 {
@@ -108,6 +111,10 @@ func GetLocalHostIP() string {
 
 func GetLocalDNS() string {
 	return LocalDNS
+}
+
+func GetReplicas() int {
+	return Replicas
 }
 
 func SetDefaultConfigPath(path string) {

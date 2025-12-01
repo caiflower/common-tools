@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"context"
@@ -31,19 +31,20 @@ const (
 )
 
 type FuncSpec struct {
-	traceId   string      //请求ID
-	uuid      string      //唯一ID
-	nodeName  string      //目标节点
-	funcName  string      //函数名称
-	param     interface{} //参数
-	sync      bool        //是否同步
-	result    interface{} //结果
-	err       error       //错误信息
-	timeout   time.Duration
-	ctx       context.Context    // 上下文
-	cancel    context.CancelFunc // 取消函数
-	finished  bool
-	attribute map[string]interface{}
+	traceId               string      //请求ID
+	uuid                  string      //唯一ID
+	nodeName              string      //目标节点
+	funcName              string      //函数名称
+	param                 interface{} //参数
+	sync                  bool        //是否同步
+	result                interface{} //结果
+	err                   error       //错误信息
+	timeout               time.Duration
+	ctx                   context.Context    // 上下文
+	cancel                context.CancelFunc // 取消函数
+	finished              bool
+	attribute             map[string]interface{}
+	ignoreClusterNotReady bool
 }
 
 // NewFuncSpec 同步调用，timeout是同步超时时间
@@ -77,6 +78,11 @@ func (fs *FuncSpec) SetTraceId(traceId string) *FuncSpec {
 
 func (fs *FuncSpec) GetTraceId() string {
 	return fs.traceId
+}
+
+func (fs *FuncSpec) IgnoreNotReady() *FuncSpec {
+	fs.ignoreClusterNotReady = true
+	return fs
 }
 
 func (fs *FuncSpec) setResult(result interface{}, err error) {
