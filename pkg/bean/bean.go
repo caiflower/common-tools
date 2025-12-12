@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
- package bean
+package bean
 
 import (
 	"bytes"
 	"fmt"
-	"github.com/caiflower/common-tools/pkg/tools/jsonpath"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/caiflower/common-tools/pkg/tools/jsonpath"
 )
 
 const (
@@ -95,8 +96,7 @@ func writeBean(beanName string, bean interface{}) {
 		if fieldBean == nil {
 			switch field.Kind() {
 			case reflect.Interface:
-				name := field.Type().PkgPath() + "/" + field.Type().String()
-				fieldBean = GetBean(name)
+				fieldBean = GetBean(getBeanNameFromType(field.Type()))
 				if fieldBean == nil {
 					beanContext.lock.RLock()
 					defer beanContext.lock.RUnlock()
@@ -107,11 +107,7 @@ func writeBean(beanName string, bean interface{}) {
 					}
 				}
 			case reflect.Ptr:
-				pkgPath := fieldType.Type.Elem().PkgPath()
-				splits := strings.Split(pkgPath, "/")
-				path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
-				name := path + strings.Replace(fieldType.Type.String(), "*", "", 1)
-				fieldBean = GetBean(name)
+				fieldBean = GetBean(getBeanNameFromType(fieldType.Type))
 			default:
 				panic("unhandled default case")
 			}
@@ -167,14 +163,8 @@ func AddBean(bean interface{}) {
 		panic(fmt.Sprintf("Add bean failed. Bean kind must be interface or ptr. "))
 	}
 
-	var name string
-	kind := reflect.TypeOf(bean).Kind()
-	if kind == reflect.Ptr || kind == reflect.Interface {
-		pkgPath := reflect.TypeOf(bean).Elem().PkgPath()
-		splits := strings.Split(pkgPath, "/")
-		path := strings.TrimSuffix(pkgPath, splits[len(splits)-1])
-		name = path + strings.Replace(reflect.TypeOf(bean).String(), "*", "", 1)
-	} else {
+	name := getBeanNameFromValue(bean)
+	if name == "" {
 		panic("Class must be interface or ptr. ")
 	}
 
@@ -211,4 +201,70 @@ func GetBean(name string) interface{} {
 	defer beanContext.lock.RUnlock()
 
 	return beanContext.beanMap[name]
+}
+
+// getBeanNameFromType 根据reflect.Type获取Bean名称（核心逻辑）
+// 返回空字符串表示类型不是指针或接口类型
+func getBeanNameFromType(typeOf reflect.Type) string {
+	var pkgPath, typeName string
+
+	switch typeOf.Kind() {
+	case reflect.Interface:
+		pkgPath = typeOf.PkgPath()
+		typeName = typeOf.String()
+	case reflect.Ptr:
+		pkgPath = typeOf.Elem().PkgPath()
+		typeName = strings.Replace(typeOf.String(), "*", "", 1)
+	default:
+		return ""
+	}
+
+	// 提取包路径前缀（去掉最后一级包名，保留/）
+	if idx := strings.LastIndex(pkgPath, "/"); idx >= 0 {
+		return pkgPath[:idx+1] + typeName
+	}
+	return typeName
+}
+
+// getBeanNameFromValue 根据bean实例获取Bean名称（非泛型版本）
+// 返回空字符串表示类型不是指针或接口类型
+func getBeanNameFromValue(bean interface{}) string {
+	return getBeanNameFromType(reflect.TypeOf(bean))
+}
+
+func GetBeanNameFromValue(bean interface{}) string {
+	return getBeanNameFromType(reflect.TypeOf(bean))
+}
+
+// RemoveBean 移除Bean
+func RemoveBean(name string) {
+	beanContext.lock.Lock()
+	defer beanContext.lock.Unlock()
+	delete(beanContext.beanMap, name)
+}
+
+// ClearBeans 清空所有Bean
+func ClearBeans() {
+	beanContext.lock.Lock()
+	defer beanContext.lock.Unlock()
+	beanContext.beanMap = make(map[string]interface{})
+}
+
+// HasBean 检查Bean是否存在
+func HasBean(name string) bool {
+	beanContext.lock.RLock()
+	defer beanContext.lock.RUnlock()
+	return beanContext.beanMap[name] != nil
+}
+
+// GetAllBeans 获取所有Bean名称
+func GetAllBeans() []string {
+	beanContext.lock.RLock()
+	defer beanContext.lock.RUnlock()
+
+	names := make([]string, 0, len(beanContext.beanMap))
+	for name := range beanContext.beanMap {
+		names = append(names, name)
+	}
+	return names
 }
