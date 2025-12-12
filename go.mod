@@ -9,6 +9,7 @@ require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/cenkalti/backoff/v4 v4.1.3
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/netpoll v0.6.5
 	github.com/confluentinc/confluent-kafka-go/v2 v2.0.2
 	github.com/eapache/go-resiliency v1.3.0 // indirect
 	github.com/go-redis/redis/extra/rediscmd/v8 v8.11.4

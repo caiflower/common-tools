@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package webv1
+package webv1
 
 import (
 	"strings"
