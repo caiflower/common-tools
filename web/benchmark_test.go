@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"bytes"
@@ -25,8 +25,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/caiflower/common-tools/web"
 )
 
 // TestController 测试控制器
@@ -57,7 +55,7 @@ func (tc *TestController) ComplexAction(req ComplexRequest) (ComplexResponse, er
 
 // 请求和响应结构
 type SimpleRequest struct {
-	web.Context
+	Context
 	Name string `json:"name"`
 }
 
@@ -67,7 +65,7 @@ type SimpleResponse struct {
 }
 
 type ComplexRequest struct {
-	web.Context
+	Context
 	Count int `json:"count"`
 }
 

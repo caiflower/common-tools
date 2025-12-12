@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"context"
@@ -29,24 +29,10 @@ import (
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/e"
-	"github.com/caiflower/common-tools/web/interceptor"
+	"github.com/caiflower/common-tools/web/common/e"
 )
 
 // 基于云生http.server实现的http服务器
-
-type Config struct {
-	Name                  string     `yaml:"name" default:"default"`
-	Port                  uint       `yaml:"port" default:"8080"`
-	ReadTimeout           uint       `yaml:"readTimeout" default:"20"`
-	WriteTimeout          uint       `yaml:"writeTimeout" default:"35"`
-	HandleTimeout         *uint      `yaml:"handleTimeout" default:"60"` // 请求总处理超时时间
-	RootPath              string     `yaml:"rootPath"`                   // 可以为空
-	HeaderTraceID         string     `yaml:"headerTraceID" default:"X-Request-Id"`
-	ControllerRootPkgName string     `yaml:"controllerRootPkgName" default:"controller"`
-	WebLimiter            WebLimiter `yaml:"webLimiter"`
-	EnablePprof           bool       `yaml:"enablePprof"`
-}
 
 type WebLimiter struct {
 	Enable bool `yaml:"enable"`
@@ -86,10 +72,6 @@ func NewHttpServer(config Config) *HttpServer {
 	return httpServer
 }
 
-func AddController(v interface{}) {
-	DefaultHttpServer.AddController(v)
-}
-
 // AddController 只能增加func、point和interface，其他类型直接忽略
 func (s *HttpServer) AddController(v interface{}) {
 	c, err := newController(v, s.config.ControllerRootPkgName, s.config.RootPath)
@@ -106,10 +88,6 @@ func (s *HttpServer) AddController(v interface{}) {
 	if !bean.HasBean(bean.GetBeanNameFromValue(v)) {
 		bean.AddBean(v)
 	}
-}
-
-func Register(controller *RestfulController) {
-	DefaultHttpServer.Register(controller)
 }
 
 // Register 注册restfulController
@@ -130,24 +108,12 @@ func (s *HttpServer) Register(controller *RestfulController) {
 	logger.Info("Register path %v, Method: %v", "/"+controller.version+controller.originPath, controller.method)
 }
 
-//func AddParamValidFunc(fn ValidFunc) {
-//	DefaultHttpServer.AddParamValidFunc(fn)
-//}
-//
-//func (s *HttpServer) AddParamValidFunc(fn ValidFunc) {
-//	s.handler.paramsValidFuncList = append(s.handler.paramsValidFuncList, fn)
-//}
-
-func AddInterceptor(interceptor interceptor.Interceptor, order int) {
-	DefaultHttpServer.AddInterceptor(interceptor, order)
-}
-
 func (s *HttpServer) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
 	s.handler.beforeDispatchCallbackFunc = callbackFunc
 }
 
-func (s *HttpServer) AddInterceptor(i interceptor.Interceptor, order int) {
-	s.handler.interceptors = append(s.handler.interceptors, interceptor.Item{
+func (s *HttpServer) AddInterceptor(i Interceptor, order int) {
+	s.handler.interceptors = append(s.handler.interceptors, Item{
 		Interceptor: i,
 		Order:       order,
 	})

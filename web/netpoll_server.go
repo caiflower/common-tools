@@ -14,19 +14,19 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/interceptor"
 	"github.com/cloudwego/netpoll"
 )
 
@@ -34,6 +34,41 @@ var DefaultNetpollHttpServer *NetpollHttpServer
 
 type NetpollConfig struct {
 	Config
+	// 性能优化配置
+	MaxConnections    int           `default:"10000"`
+	BufferSize        int           `default:"8192"`
+	ConnectionTimeout time.Duration `default:"30s"`
+	MaxWorkers        int           `default:"1000"`
+	WorkerQueueSize   int           `default:"10000"`
+}
+
+// ConnectionPool 连接池
+type ConnectionPool struct {
+	mu          sync.RWMutex
+	connections map[netpoll.Connection]*PooledConnection
+	maxSize     int
+	currentSize int
+}
+
+// PooledConnection 池化连接
+type PooledConnection struct {
+	conn     netpoll.Connection
+	lastUsed time.Time
+	inUse    bool
+	buffer   []byte
+}
+
+// WorkerJob 工作任务
+type WorkerJob struct {
+	conn   netpoll.Connection
+	server *NetpollHttpServer
+}
+
+// Worker 工作协程
+type Worker struct {
+	workerPool chan chan *WorkerJob
+	jobChannel chan *WorkerJob
+	quit       chan bool
 }
 
 type NetpollHttpServer struct {
@@ -44,6 +79,9 @@ type NetpollHttpServer struct {
 	limiterBucket limiter.Limiter
 	ctx           context.Context
 	cancel        context.CancelFunc
+
+	bufferPool   *sync.Pool
+	responsePool *sync.Pool
 }
 
 func InitDefaultNetpollHttpServer(config NetpollConfig) *NetpollHttpServer {
@@ -64,6 +102,22 @@ func NewNetpollHttpServer(config NetpollConfig) *NetpollHttpServer {
 		logger: logger.DefaultLogger(),
 		ctx:    ctx,
 		cancel: cancel,
+	}
+
+	// 初始化缓冲池
+	server.bufferPool = &sync.Pool{
+		New: func() interface{} {
+			return make([]byte, config.BufferSize)
+		},
+	}
+
+	// 初始化响应池
+	server.responsePool = &sync.Pool{
+		New: func() interface{} {
+			return &NetpollResponseWriter{
+				buffer: make([]byte, config.BufferSize),
+			}
+		},
 	}
 
 	// 初始化公共处理器
@@ -117,8 +171,8 @@ func (s *NetpollHttpServer) SetBeforeDispatchCallBack(callbackFunc BeforeDispatc
 	s.handler.beforeDispatchCallbackFunc = callbackFunc
 }
 
-func (s *NetpollHttpServer) AddInterceptor(i interceptor.Interceptor, order int) {
-	s.handler.interceptors = append(s.handler.interceptors, interceptor.Item{
+func (s *NetpollHttpServer) AddInterceptor(i Interceptor, order int) {
+	s.handler.interceptors = append(s.handler.interceptors, Item{
 		Interceptor: i,
 		Order:       order,
 	})

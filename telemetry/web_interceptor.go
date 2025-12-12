@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
- package telemetry
+package telemetry
 
 import (
 	"errors"
-	"go.opentelemetry.io/otel/trace"
 	"net/http"
+
+	"github.com/caiflower/common-tools/web/common/e"
+	"go.opentelemetry.io/otel/trace"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web"
-	"github.com/caiflower/common-tools/web/e"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 )

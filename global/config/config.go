@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package config
+package config
 
 import (
 	"github.com/caiflower/common-tools/cluster"
@@ -27,7 +27,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 	"github.com/caiflower/common-tools/telemetry"
-	webv1 "github.com/caiflower/common-tools/web/v1"
+	"github.com/caiflower/common-tools/web"
 )
 
 type DefaultConfig struct {
@@ -35,7 +35,7 @@ type DefaultConfig struct {
 	ClusterConfig    cluster.Config   `yaml:"cluster" json:"cluster"`
 	DatabaseConfig   []dbv1.Config    `yaml:"database" json:"database"`
 	HttpClientConfig http.Config      `yaml:"http_client" json:"http_client"`
-	WebConfig        []webv1.Config   `yaml:"web" json:"web"`
+	WebConfig        []web.Config     `yaml:"web" json:"web"`
 	RedisConfig      []redisv1.Config `yaml:"redis" json:"redis"`
 	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
 	KafkaConfig      []xkafka.Config  `yaml:"kafka" json:"kafka"`

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"bufio"
@@ -25,7 +25,7 @@ import (
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/e"
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/cloudwego/netpoll"
 )
 
@@ -37,18 +37,31 @@ type NetpollHttpHandler struct {
 
 // ServeHTTP 处理 HTTP 请求
 func (h *NetpollHttpHandler) ServeHTTP() {
+	// 从响应池获取响应写入器
+	w := h.server.responsePool.Get().(*NetpollResponseWriter)
+	defer h.server.responsePool.Put(w)
+
+	// 重置响应写入器
+	w.conn = h.conn
+	w.server = h.server
+	w.statusCode = 0
+	w.headerSent = false
+	w.bytesWritten = 0
+	w.bufferPos = 0
+	if w.header == nil {
+		w.header = make(http.Header)
+	} else {
+		// 清空 header
+		for k := range w.header {
+			delete(w.header, k)
+		}
+	}
+
 	// 读取请求
-	req, err := h.readRequest()
+	req, err := h.readRequestOptimized()
 	if err != nil {
 		h.server.logger.Error("Failed to read request: %v", err)
 		return
-	}
-
-	// 创建响应写入器
-	w := &NetpollResponseWriter{
-		conn:   h.conn,
-		header: make(http.Header),
-		server: h.server,
 	}
 
 	// 设置 trace ID
@@ -92,18 +105,27 @@ func (h *NetpollHttpHandler) ServeHTTP() {
 	}
 }
 
-// readRequest 读取 HTTP 请求
-func (h *NetpollHttpHandler) readRequest() (req *http.Request, err error) {
-	for {
-		bufReader := bufio.NewReader(netpoll.NewIOReader(h.conn.Reader()))
+// readRequestOptimized 优化的 HTTP 请求读取
+func (h *NetpollHttpHandler) readRequestOptimized() (req *http.Request, err error) {
+	buffer := h.server.bufferPool.Get().([]byte)
+	defer h.server.bufferPool.Put(buffer)
 
-		// 解析请求
+	// 重用 bufio.Reader，避免频繁分配
+	reader := netpoll.NewIOReader(h.conn.Reader())
+	bufReader := bufio.NewReaderSize(reader, len(buffer))
+
+	// 解析请求，增加重试机制
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
 		req, err = http.ReadRequest(bufReader)
-		if err != nil {
-			continue
-		} else {
+		if err == nil {
 			break
 		}
+		if i == maxRetries-1 {
+			return nil, err
+		}
+		// 短暂等待后重试
+		time.Sleep(time.Microsecond * 100)
 	}
 
 	// 设置远程地址
@@ -149,6 +171,8 @@ type NetpollResponseWriter struct {
 	headerSent   bool
 	server       *NetpollHttpServer
 	bytesWritten int64
+	buffer       []byte // 添加缓冲区
+	bufferPos    int    // 缓冲区位置
 }
 
 // Header 返回响应头
@@ -162,19 +186,64 @@ func (w *NetpollResponseWriter) Write(data []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 
-	n, err := w.conn.Writer().WriteBinary(data)
+	totalWritten := 0
+	remaining := data
+
+	for len(remaining) > 0 {
+		// 计算可写入缓冲区的数据量
+		available := cap(w.buffer) - w.bufferPos
+		if available == 0 {
+			// 缓冲区满，刷新
+			if err := w.flushBuffer(); err != nil {
+				return totalWritten, err
+			}
+			// 刷新后重新计算可用空间
+			available = cap(w.buffer) - w.bufferPos
+		}
+
+		// 写入数据到缓冲区
+		writeSize := len(remaining)
+		if writeSize > available {
+			writeSize = available
+		}
+
+		// 防止死循环：如果 writeSize 为 0，直接写入网络
+		if writeSize == 0 {
+			break
+		}
+
+		copy(w.buffer[w.bufferPos:], remaining[:writeSize])
+		w.bufferPos += writeSize
+		totalWritten += writeSize
+		remaining = remaining[writeSize:]
+	}
+
+	w.bytesWritten += int64(totalWritten)
+
+	// 如果数据较大或缓冲区接近满，立即刷新
+	if err := w.flushBuffer(); err != nil {
+		return totalWritten, err
+	}
+
+	return totalWritten, nil
+}
+
+// flushBuffer 刷新缓冲区
+func (w *NetpollResponseWriter) flushBuffer() error {
+	if w.bufferPos == 0 {
+		return nil
+	}
+
+	_, err := w.conn.Writer().WriteBinary(w.buffer[:w.bufferPos])
 	if err != nil {
-		return n, err
+		return err
 	}
 
-	w.bytesWritten += int64(n)
+	// 重置缓冲区位置
+	w.bufferPos = 0
 
-	// 刷新缓冲区
-	if err := w.conn.Writer().Flush(); err != nil {
-		return n, err
-	}
-
-	return n, nil
+	// 刷新网络缓冲区
+	return w.conn.Writer().Flush()
 }
 
 // WriteHeader 写入状态码和响应头
@@ -219,11 +288,20 @@ func (w *NetpollResponseWriter) WriteHeader(statusCode int) {
 
 	// 写入响应头
 	writer := w.conn.Writer()
-	writer.WriteBinary(headerBuf.Bytes())
+	_, _ = writer.WriteBinary(headerBuf.Bytes())
 }
 
 // Flush 刷新缓冲区
 func (w *NetpollResponseWriter) Flush() {
+	// 先刷新内部缓冲区
+	if err := w.flushBuffer(); err != nil {
+		// 记录错误但不返回，保持接口兼容性
+		if w.server != nil && w.server.logger != nil {
+			w.server.logger.Error("Failed to flush buffer: %v", err)
+		}
+	}
+
+	// 然后刷新连接缓冲区
 	if flusher := w.conn.Writer(); flusher != nil {
 		flusher.Flush()
 	}

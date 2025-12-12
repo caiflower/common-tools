@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"reflect"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/interceptor"
 )
 
 // ServerMode 服务器模式
@@ -77,22 +76,22 @@ type WebServer interface {
 	Register(controller *RestfulController)
 
 	// 拦截器管理
-	AddInterceptor(i interceptor.Interceptor, order int)
+	AddInterceptor(i Interceptor, order int)
 	SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc)
 }
 
-// UnifiedWebServer 统一 Web 服务器
-type UnifiedWebServer struct {
+// Flower 统一 Web 服务器
+type Flower struct {
 	config UnifiedConfig
-	server WebServer
+	engine Engine
 	logger logger.ILog
 }
 
-// NewUnifiedWebServer 创建统一 Web 服务器
-func NewUnifiedWebServer(config UnifiedConfig) *UnifiedWebServer {
+// NewFlower 创建统一 Web 服务器
+func NewFlower(config UnifiedConfig) *Flower {
 	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
 
-	uws := &UnifiedWebServer{
+	uws := &Flower{
 		config: config,
 		logger: logger.DefaultLogger(),
 	}
@@ -111,7 +110,7 @@ func NewUnifiedWebServer(config UnifiedConfig) *UnifiedWebServer {
 }
 
 // createStandardServer 创建标准服务器
-func (uws *UnifiedWebServer) createStandardServer() WebServer {
+func (uws *Flower) createStandardServer() WebServer {
 	standardConfig := Config{
 		Name:                  uws.config.Name,
 		Port:                  uws.config.Port,
@@ -129,7 +128,7 @@ func (uws *UnifiedWebServer) createStandardServer() WebServer {
 }
 
 // createNetpollServer 创建 Netpoll 服务器
-func (uws *UnifiedWebServer) createNetpollServer() WebServer {
+func (uws *Flower) createNetpollServer() WebServer {
 	netpollConfig := NetpollConfig{
 		Config: Config{
 			Name:                  uws.config.Name,
@@ -149,65 +148,65 @@ func (uws *UnifiedWebServer) createNetpollServer() WebServer {
 }
 
 // Name 获取服务器名称
-func (uws *UnifiedWebServer) Name() string {
+func (uws *Flower) Name() string {
 	return uws.server.Name()
 }
 
 // Start 启动服务器
-func (uws *UnifiedWebServer) Start() error {
+func (uws *Flower) Start() error {
 	uws.logger.Info("Starting %s server in %s mode", uws.config.Name, uws.config.Mode)
 	return uws.server.Start()
 }
 
 // Close 关闭服务器
-func (uws *UnifiedWebServer) Close() {
+func (uws *Flower) Close() {
 	uws.server.Close()
 }
 
 // AddController 添加控制器
-func (uws *UnifiedWebServer) AddController(v interface{}) {
+func (uws *Flower) AddController(v interface{}) {
 	uws.server.AddController(v)
 }
 
 // Register 注册 RESTful 控制器
-func (uws *UnifiedWebServer) Register(controller *RestfulController) {
+func (uws *Flower) Register(controller *RestfulController) {
 	uws.server.Register(controller)
 }
 
 // AddInterceptor 添加拦截器
-func (uws *UnifiedWebServer) AddInterceptor(i interceptor.Interceptor, order int) {
+func (uws *Flower) AddInterceptor(i Interceptor, order int) {
 	uws.server.AddInterceptor(i, order)
 }
 
 // SetBeforeDispatchCallBack 设置分发前回调
-func (uws *UnifiedWebServer) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
+func (uws *Flower) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
 	uws.server.SetBeforeDispatchCallBack(callbackFunc)
 }
 
 // GetMode 获取服务器模式
-func (uws *UnifiedWebServer) GetMode() ServerMode {
+func (uws *Flower) GetMode() ServerMode {
 	return uws.config.Mode
 }
 
 // IsNetpollMode 判断是否为 Netpoll 模式
-func (uws *UnifiedWebServer) IsNetpollMode() bool {
+func (uws *Flower) IsNetpollMode() bool {
 	return uws.config.Mode == ServerModeNetpoll
 }
 
 // GetConfig 获取配置
-func (uws *UnifiedWebServer) GetConfig() UnifiedConfig {
+func (uws *Flower) GetConfig() UnifiedConfig {
 	return uws.config
 }
 
 // 全局默认服务器实例
-var DefaultUnifiedServer *UnifiedWebServer
+var DefaultUnifiedServer *Flower
 
 // InitDefaultUnifiedServer 初始化默认统一服务器
-func InitDefaultUnifiedServer(config UnifiedConfig) *UnifiedWebServer {
+func InitDefaultUnifiedServer(config UnifiedConfig) *Flower {
 	if DefaultUnifiedServer != nil {
 		return DefaultUnifiedServer
 	}
-	DefaultUnifiedServer = NewUnifiedWebServer(config)
+	DefaultUnifiedServer = NewFlower(config)
 	return DefaultUnifiedServer
 }
 
@@ -232,7 +231,7 @@ func RegisterUnified(controller *RestfulController) {
 	}
 }
 
-func AddInterceptorUnified(interceptor interceptor.Interceptor, order int) {
+func AddInterceptorUnified(interceptor Interceptor, order int) {
 	if DefaultUnifiedServer != nil {
 		DefaultUnifiedServer.AddInterceptor(interceptor, order)
 	} else if DefaultHttpServer != nil {
@@ -331,6 +330,6 @@ func (cb *ConfigBuilder) Build() UnifiedConfig {
 }
 
 // BuildServer 构建服务器
-func (cb *ConfigBuilder) BuildServer() *UnifiedWebServer {
-	return NewUnifiedWebServer(cb.config)
+func (cb *ConfigBuilder) BuildServer() *Flower {
+	return NewFlower(cb.config)
 }

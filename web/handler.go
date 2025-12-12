@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package webv1
+package web
 
 import (
 	"encoding/json"
@@ -34,9 +34,7 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web"
-	"github.com/caiflower/common-tools/web/e"
-	"github.com/caiflower/common-tools/web/interceptor"
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -47,8 +45,8 @@ const (
 var (
 	assignableApiErrorElem   = reflect.TypeOf(new(e.ApiError)).Elem()
 	assignableErrorElem      = reflect.TypeOf(new(error)).Elem()
-	assignableWebContextElem = reflect.TypeOf(new(web.Context)).Elem()
-	assignableWebContext     = reflect.TypeOf(new(web.Context))
+	assignableWebContextElem = reflect.TypeOf(new(Context)).Elem()
+	assignableWebContext     = reflect.TypeOf(new(Context))
 )
 
 // BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
@@ -75,7 +73,7 @@ type handler struct {
 
 	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
 	paramsValidFuncList        []ValidFunc
-	interceptors               interceptor.ItemSort
+	interceptors               ItemSort
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +123,8 @@ type RequestCtx struct {
 	special      string
 }
 
-func (c *RequestCtx) convertToWebCtx() *web.Context {
-	return &web.Context{RequestContext: c, Attributes: make(map[string]interface{})}
+func (c *RequestCtx) convertToWebCtx() *Context {
+	return &Context{RequestContext: c, Attributes: make(map[string]interface{})}
 }
 
 func (c *RequestCtx) SetResponse(v interface{}) {
@@ -291,7 +289,7 @@ func (h *handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 	return ctx.targetMethod != nil
 }
 
-func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *web.Context) e.ApiError {
+func (h *handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *Context) e.ApiError {
 	method := ctx.targetMethod
 
 	if !method.HasArgs() {
@@ -543,7 +541,7 @@ func (h *handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ct
 	}
 }
 
-func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *web.Context, defaultErr e.ApiError) {
+func (h *handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Error("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
 
