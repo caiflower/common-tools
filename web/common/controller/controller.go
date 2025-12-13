@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package controller
 
 import (
 	"fmt"
@@ -23,14 +23,15 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/common/reflectx"
 )
 
-type controller struct {
+type Controller struct {
 	paths []string
 	cls   *basic.Class
 }
 
-func newController(v interface{}, controllerRootPkgName, rootPath string) (*controller, error) {
+func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Controller, error) {
 	kind := reflect.TypeOf(v).Kind()
 	switch kind {
 	case reflect.Ptr, reflect.Interface:
@@ -63,6 +64,11 @@ func newController(v interface{}, controllerRootPkgName, rootPath string) (*cont
 			paths = append(paths, path+"/"+strings.Replace(lowerClsName, "controller", "", 1))
 		}
 
+		if rootPath != "" {
+			if !strings.HasPrefix(rootPath, "/") {
+				rootPath = "/" + rootPath
+			}
+		}
 		for i, _ := range paths {
 			if i == 0 {
 				continue
@@ -71,7 +77,7 @@ func newController(v interface{}, controllerRootPkgName, rootPath string) (*cont
 				paths[i] = "/" + paths[i]
 			}
 			if rootPath != "" {
-				paths[i] = "/" + rootPath + paths[i]
+				paths[i] = rootPath + paths[i]
 			}
 		}
 
@@ -89,14 +95,22 @@ func newController(v interface{}, controllerRootPkgName, rootPath string) (*cont
 				}
 				elem := reflect.TypeOf(argValue.Interface()).Elem()
 				pkgPath := elem.PkgPath() + "." + elem.Name()
-				if err := tools.DoTagFunc(argValue.Interface(), pkgPath, []func(reflect.StructField, reflect.Value, interface{}) error{buildValid}); err != nil {
+				if err := tools.DoTagFunc(argValue.Interface(), pkgPath, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.BuildValid}); err != nil {
 					panic(err.Error())
 				}
 			}
 		}
 
-		return &controller{paths: paths, cls: cls}, nil
+		return &Controller{paths: paths, cls: cls}, nil
 	default:
 		return nil, fmt.Errorf("invalid type %s", kind)
 	}
+}
+
+func (c *Controller) GetCls() *basic.Class {
+	return c.cls
+}
+
+func (c *Controller) GetPaths() []string {
+	return c.paths
 }

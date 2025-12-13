@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package reflectx
 
 import (
 	"fmt"
@@ -27,7 +27,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 )
 
-func setHeader(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func SetHeader(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	if !vValue.CanSet() {
 		return
 	}
@@ -57,7 +57,7 @@ func setHeader(structField reflect.StructField, vValue reflect.Value, data inter
 				for i := 0; i < pValue.NumField(); i++ {
 					field := newValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
-					if err = setHeader(fieldStruct, field, data); err != nil {
+					if err = SetHeader(fieldStruct, field, data); err != nil {
 						return
 					}
 				}
@@ -77,13 +77,13 @@ func setHeader(structField reflect.StructField, vValue reflect.Value, data inter
 					}
 				}
 			default:
-				return setHeader(structField, pValue, data)
+				return SetHeader(structField, pValue, data)
 			}
 		case reflect.Struct:
 			t := structField.Type
 			for i := 0; i < t.NumField(); i++ {
 				fieldStruct := t.Field(i)
-				if err = setHeader(fieldStruct, vValue.Field(i), data); err != nil {
+				if err = SetHeader(fieldStruct, vValue.Field(i), data); err != nil {
 					return
 				}
 			}
@@ -94,7 +94,7 @@ func setHeader(structField reflect.StructField, vValue reflect.Value, data inter
 	return
 }
 
-func setPath(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func SetPath(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	m := data.(map[string]string)
 
 	var value string
@@ -114,7 +114,7 @@ func setPath(structField reflect.StructField, vValue reflect.Value, data interfa
 	return
 }
 
-func setParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func SetParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	if !vValue.CanSet() {
 		return
 	}

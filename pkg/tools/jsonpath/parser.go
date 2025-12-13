@@ -446,7 +446,7 @@ func (p *Parser) advance() bool {
 	return true
 }
 
-// isTerminator reports whether the input is at valid termination character to appear after an identifier.
+// isTerminator reports whether the input is at reflectx termination character to appear after an identifier.
 func isTerminator(r rune) bool {
 	if isSpace(r) || isEndOfLine(r) {
 		return true
@@ -478,7 +478,7 @@ func isBool(s string) bool {
 	return s == "true" || s == "false"
 }
 
-//UnquoteExtend is almost same as strconv.Unquote(), but it support parse single quotes as a string
+// UnquoteExtend is almost same as strconv.Unquote(), but it support parse single quotes as a string
 func UnquoteExtend(s string) (string, error) {
 	n := len(s)
 	if n < 2 {

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
- //This package is copied from Go library text/template.
-//The original private functions eq, ge, gt, le, lt, and ne
-//are exported as public functions.
+// This package is copied from Go library text/template.
+// The original private functions eq, ge, gt, le, lt, and ne
+// are exported as public functions.
 package template
 
 import (
@@ -70,14 +70,14 @@ var builtins = FuncMap{
 
 var builtinFuncs = createValueFuncs(builtins)
 
-// createValueFuncs turns a FuncMap into a map[string]reflect.Value
+// createValueFuncs turns a FuncMap into a map[string]reflectx.Value
 func createValueFuncs(funcMap FuncMap) map[string]reflect.Value {
 	m := make(map[string]reflect.Value)
 	addValueFuncs(m, funcMap)
 	return m
 }
 
-// addValueFuncs adds to values the functions in funcs, converting them to reflect.Values.
+// addValueFuncs adds to values the functions in funcs, converting them to reflectx.Values.
 func addValueFuncs(out map[string]reflect.Value, in FuncMap) {
 	for name, fn := range in {
 		v := reflect.ValueOf(fn)
@@ -591,7 +591,9 @@ func URLQueryEscaper(args ...interface{}) string {
 }
 
 // evalArgs formats the list of arguments into a string. It is therefore equivalent to
+//
 //	fmt.Sprint(args...)
+//
 // except that each argument is indirected (if a pointer), as required,
 // using the same rules as the default string evaluation during template
 // execution.

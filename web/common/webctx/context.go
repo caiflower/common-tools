@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package webctx
 
 import "net/http"
 

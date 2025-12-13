@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package metric
 
 import (
 	"sync"
@@ -52,7 +52,7 @@ func NewHttpMetric() *HttpMetric {
 	return metric
 }
 
-func (m *HttpMetric) saveMetric(web string, code string, method, path string, cost int64) {
+func (m *HttpMetric) SaveMetric(web string, code string, method, path string, cost int64) {
 	m.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
 	m.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
 	m.costHistogram.Observe(float64(cost))

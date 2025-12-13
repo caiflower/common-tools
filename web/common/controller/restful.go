@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package controller
 
 import (
 	"strings"
@@ -80,10 +80,43 @@ func (c *RestfulController) Action(action string) *RestfulController {
 	return c
 }
 
+func (c *RestfulController) TargetMethod(method *basic.Method) *RestfulController {
+	c.targetMethod = method
+	return c
+}
+
 func (c *RestfulController) GetPath() string {
 	return c.path
 }
 
 func (c *RestfulController) GetVersion() string {
 	return c.version
+}
+
+func (c *RestfulController) GetMethod() string {
+	return c.method
+}
+
+func (c *RestfulController) GetAction() string {
+	return c.action
+}
+
+func (c *RestfulController) GetOtherPaths() []string {
+	return c.otherPaths
+}
+
+func (c *RestfulController) GetTargetMethod() *basic.Method {
+	return c.targetMethod
+}
+
+func (c *RestfulController) GetControllerName() string {
+	return c.controllerName
+}
+
+func (c *RestfulController) GetOriginPath() string {
+	return c.originPath
+}
+
+func (c *RestfulController) GetPathParams() []string {
+	return c.pathParams
 }

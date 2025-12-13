@@ -20,12 +20,12 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/common/e"
 	"go.opentelemetry.io/otel/trace"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web"
 	"go.opentelemetry.io/otel/attribute"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 )
@@ -42,7 +42,7 @@ func NewWebInterceptor() *WebInterceptor {
 	return &WebInterceptor{}
 }
 
-func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
+func (wi *WebInterceptor) Before(ctx *webctx.Context) e.ApiError {
 	content := new(Content)
 	attrs := make([]attribute.KeyValue, 6, 10)
 	attrs[0] = attribute.String("http.request.action", ctx.GetAction())
@@ -60,7 +60,7 @@ func (wi *WebInterceptor) Before(ctx *web.Context) e.ApiError {
 	return nil
 }
 
-func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
+func (wi *WebInterceptor) After(ctx *webctx.Context, err e.ApiError) e.ApiError {
 	span := ctx.Get(uptraceSpan).(trace.Span)
 	content := ctx.Get(uptraceContent).(*Content)
 	defer DefaultClient.End(span, content)
@@ -77,7 +77,7 @@ func (wi *WebInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
 	return nil
 }
 
-func (wi *WebInterceptor) OnPanic(ctx *web.Context, recover interface{}) e.ApiError {
+func (wi *WebInterceptor) OnPanic(ctx *webctx.Context, recover interface{}) e.ApiError {
 	span := ctx.Get(uptraceSpan).(trace.Span)
 	content := ctx.Get(uptraceContent).(*Content)
 	defer DefaultClient.End(span, content)

@@ -73,7 +73,7 @@ var (
 	InvalidArgument = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
 )
 
-func NewApiError(errCode *ErrorCode, msg string, err error) ApiError {
+func NewApiError(errCode *ErrorCode, msg string, err error) *Error {
 	return &apiError{
 		Code:    errCode.Code,
 		Type:    errCode.Type,
@@ -82,7 +82,7 @@ func NewApiError(errCode *ErrorCode, msg string, err error) ApiError {
 	}
 }
 
-func NewInternalError(err error) ApiError {
+func NewInternalError(err error) *Error {
 	return &apiError{
 		Code:    Internal.Code,
 		Type:    Internal.Type,

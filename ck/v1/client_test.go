@@ -99,7 +99,7 @@ func TestNewClient(t *testing.T) {
 	//err := client.GetSelect(&host1).
 	//	Where("os_type = ?", "centos7.2").
 	//	Order("create_time desc").
-	//	Scan(context.Background(), &host1)
+	//	Scan(webctx.Background(), &host1)
 	//if err != nil {
 	//	panic(err)
 	//}

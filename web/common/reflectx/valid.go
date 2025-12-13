@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package web
+package reflectx
 
 import (
 	"fmt"
@@ -37,11 +37,21 @@ const (
 	itemLenTag = "itemLen" // 单个元素长度
 )
 
-type ValidFunc func([]string, reflect.StructField, reflect.Value, string) error
+type validItem struct {
+	validField
+	validFunc
+}
 
-var validMap = make(map[string][]ValidFunc)
+type validField struct {
+	FieldKind reflect.Kind
+	TagValue  string
+}
 
-func buildValid(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+type validFunc func([]string, string, *validField) error
+
+var validMap = make(map[string][]validItem)
+
+func BuildValid(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	switch vValue.Kind() {
 	case reflect.Ptr:
 		pValue := reflect.New(structField.Type.Elem()).Elem()
@@ -62,7 +72,7 @@ func buildValid(structField reflect.StructField, vValue reflect.Value, data inte
 					if !structField.Anonymous {
 						dataTmp = data.(string) + "." + structField.Name
 					}
-					if err = buildValid(fieldStruct, field, dataTmp); err != nil {
+					if err = BuildValid(fieldStruct, field, dataTmp); err != nil {
 						return
 					}
 				}
@@ -80,7 +90,7 @@ func buildValid(structField reflect.StructField, vValue reflect.Value, data inte
 				if !structField.Anonymous {
 					dataTmp = data.(string) + "." + structField.Name
 				}
-				if err = buildValid(fieldStruct, vValue.Field(i), dataTmp); err != nil {
+				if err = BuildValid(fieldStruct, vValue.Field(i), dataTmp); err != nil {
 					return
 				}
 			}
@@ -95,76 +105,100 @@ func buildValid(structField reflect.StructField, vValue reflect.Value, data inte
 		return
 	}
 
-	var validFuncs []ValidFunc
+	var validItems []validItem
+	fieldKind := vValue.Kind()
 
 	if tools.ContainTag(structField.Tag, verf) {
-		validFuncs = append(validFuncs, verfValidFunc)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(verf),
+			},
+			validFunc: verfValidFunc,
+		})
 	}
 	if tools.ContainTag(structField.Tag, inList) {
-		validFuncs = append(validFuncs, inListValidFunc)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(inList),
+			},
+			validFunc: inListValidFunc,
+		})
 	}
 	if tools.ContainTag(structField.Tag, reg) {
-		validFuncs = append(validFuncs, regValidFunc)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(reg),
+			},
+			validFunc: regValidFunc,
+		})
 	}
-	if tools.ContainTag(structField.Tag, between) {
-		if len(strings.Split(structField.Tag.Get(between), ",")) != 2 {
-			panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, between))
-		}
-		validFuncs = append(validFuncs, betweenValidFunc)
-	}
-	if tools.ContainTag(structField.Tag, lenTag) {
-		splits := strings.Split(structField.Tag.Get(lenTag), ",")
+	numCheckFn := func(splits []string, tag string) {
 		if len(splits) > 2 {
-			panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, lenTag))
+			panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, tag))
 		}
 		if splits[0] != "" {
 			if _, err = strconv.Atoi(splits[0]); err != nil {
-				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, lenTag))
+				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, tag))
 			}
 		}
 		if len(splits) == 2 {
 			if _, err = strconv.Atoi(splits[1]); err != nil {
-				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, lenTag))
+				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, tag))
 			}
 		}
-		validFuncs = append(validFuncs, lenValidFunc)
-	}
-	if tools.ContainTag(structField.Tag, itemLenTag) {
-		splits := strings.Split(structField.Tag.Get(itemLenTag), ",")
-		if len(splits) > 2 {
-			panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, itemLenTag))
-		}
-		if splits[0] != "" {
-			if _, err = strconv.Atoi(splits[0]); err != nil {
-				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, itemLenTag))
-			}
-		}
-		if len(splits) == 2 {
-			if _, err = strconv.Atoi(splits[1]); err != nil {
-				panic(fmt.Sprintf("%s tag[%s] value is not vaild", structField.Name, itemLenTag))
-			}
-		}
-		validFuncs = append(validFuncs, itemLenValidFunc)
 	}
 
-	//fmt.Println(fieldName)
-	validMap[fieldName] = validFuncs
+	if tools.ContainTag(structField.Tag, between) {
+		numCheckFn(strings.Split(structField.Tag.Get(between), ","), between)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(between),
+			},
+			validFunc: betweenValidFunc,
+		})
+	}
+	if tools.ContainTag(structField.Tag, lenTag) {
+		numCheckFn(strings.Split(structField.Tag.Get(lenTag), ","), lenTag)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(lenTag),
+			},
+			validFunc: lenValidFunc,
+		})
+	}
+	if tools.ContainTag(structField.Tag, itemLenTag) {
+		numCheckFn(strings.Split(structField.Tag.Get(itemLenTag), ","), itemLenTag)
+		validItems = append(validItems, validItem{
+			validField: validField{
+				FieldKind: fieldKind,
+				TagValue:  structField.Tag.Get(itemLenTag),
+			},
+			validFunc: itemLenValidFunc,
+		})
+	}
+
+	validMap[fieldName] = validItems
 
 	return nil
 }
 
-type validObject struct {
-	pkgPath   string
-	filedName string
+type ValidObject struct {
+	PkgPath   string
+	FiledName string
 }
 
-func valid(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func CheckParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	value, ok := structField.Tag.Lookup(verf)
 	if (value == "nilable" || !ok) && vValue.IsZero() {
 		return
 	}
 
-	object := data.(validObject)
+	object := data.(ValidObject)
 	switch vValue.Kind() {
 	case reflect.Ptr:
 		// 获取指针指向的值
@@ -183,9 +217,9 @@ func valid(structField reflect.StructField, vValue reflect.Value, data interface
 					fieldStruct := pValue.Type().Field(i)
 					objectTmp := object
 					if !structField.Anonymous {
-						objectTmp.filedName += "." + structField.Name
+						objectTmp.FiledName += "." + structField.Name
 					}
-					if err = valid(fieldStruct, field, objectTmp); err != nil {
+					if err = CheckParam(fieldStruct, field, objectTmp); err != nil {
 						return
 					}
 				}
@@ -201,9 +235,9 @@ func valid(structField reflect.StructField, vValue reflect.Value, data interface
 				fieldStruct := t.Field(i)
 				objectTmp := object
 				if !structField.Anonymous {
-					objectTmp.filedName += "." + structField.Name
+					objectTmp.FiledName += "." + structField.Name
 				}
-				if err = valid(fieldStruct, vValue.Field(i), objectTmp); err != nil {
+				if err = CheckParam(fieldStruct, vValue.Field(i), objectTmp); err != nil {
 					return
 				}
 			}
@@ -212,9 +246,8 @@ func valid(structField reflect.StructField, vValue reflect.Value, data interface
 	default:
 	}
 
-	fieldName := object.pkgPath + "." + object.filedName + "." + structField.Name
-	//fmt.Printf("valid %s\n", fieldName)
-	if fnList, ok := validMap[fieldName]; ok {
+	fieldName := object.PkgPath + "." + object.FiledName + "." + structField.Name
+	if validItems, ok := validMap[fieldName]; ok {
 		var values []string
 		if value, ok1 := getTimeValue(structField, vValue); ok1 {
 			values = append(values, value)
@@ -222,8 +255,8 @@ func valid(structField reflect.StructField, vValue reflect.Value, data interface
 			values = tools.ReflectCommonGet(structField, vValue)
 		}
 
-		for _, fn := range fnList {
-			if err = fn(values, structField, vValue, object.filedName+"."+structField.Name); err != nil {
+		for _, v := range validItems {
+			if err = v.validFunc(values, object.FiledName+"."+structField.Name, &v.validField); err != nil {
 				return err
 			}
 		}
@@ -267,20 +300,16 @@ func isTime(structField reflect.StructField, value reflect.Value) bool {
 	}
 }
 
-func verfValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
+func verfValidFunc(values []string, fieldName string, field *validField) error {
 	if len(values) == 0 {
 		return fmt.Errorf("%s is missing", fieldName)
 	}
-	switch vValue.Kind() {
+	switch field.FieldKind {
 	case reflect.Slice:
 		for i, v := range values {
 			if v == "" {
 				return fmt.Errorf("%s[%d] is missing", fieldName, i)
 			}
-		}
-	case reflect.Ptr:
-		if vValue.IsZero() {
-			return fmt.Errorf("%s is missing", fieldName)
 		}
 	default:
 		if values[0] == "" {
@@ -291,10 +320,9 @@ func verfValidFunc(values []string, structField reflect.StructField, vValue refl
 	return nil
 }
 
-func inListValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
-	inListValue := structField.Tag.Get(inList)
-	splits := strings.Split(inListValue, ",")
-	switch vValue.Kind() {
+func inListValidFunc(values []string, fieldName string, field *validField) error {
+	splits := strings.Split(field.TagValue, ",")
+	switch field.FieldKind {
 	case reflect.Struct, reflect.Ptr, reflect.Interface:
 	case reflect.Slice:
 		for i, v := range values {
@@ -313,9 +341,9 @@ func inListValidFunc(values []string, structField reflect.StructField, vValue re
 	return nil
 }
 
-func regValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
-	tagValue := structField.Tag.Get(reg)
-	switch vValue.Kind() {
+func regValidFunc(values []string, fieldName string, field *validField) error {
+	tagValue := field.TagValue
+	switch field.FieldKind {
 	case reflect.Struct, reflect.Ptr, reflect.Interface:
 	case reflect.Slice:
 		for i, v := range values {
@@ -334,10 +362,12 @@ func regValidFunc(values []string, structField reflect.StructField, vValue refle
 	return nil
 }
 
-func betweenValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
-	tagValue := structField.Tag.Get(between)
+func betweenValidFunc(values []string, fieldName string, field *validField) error {
+	tagValue := field.TagValue
 	splits := strings.Split(tagValue, ",")
-	switch vValue.Kind() {
+	low, _ := strconv.Atoi(splits[0])
+	high, _ := strconv.Atoi(splits[1])
+	switch field.FieldKind {
 	case reflect.Struct, reflect.Ptr, reflect.Interface:
 	case reflect.Slice:
 		for i, v := range values {
@@ -347,7 +377,8 @@ func betweenValidFunc(values []string, structField reflect.StructField, vValue r
 		}
 	default:
 		for _, v := range values {
-			if v < splits[0] || v > splits[1] {
+			val, _ := strconv.Atoi(v)
+			if val < low || val > high {
 				return fmt.Errorf("%s is not between %s and %s", fieldName, splits[0], splits[1])
 			}
 		}
@@ -356,10 +387,10 @@ func betweenValidFunc(values []string, structField reflect.StructField, vValue r
 	return nil
 }
 
-func lenValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
-	tagValue := structField.Tag.Get(lenTag)
+func lenValidFunc(values []string, fieldName string, field *validField) error {
+	tagValue := field.TagValue
 	splits := strings.Split(tagValue, ",")
-	switch vValue.Kind() {
+	switch field.FieldKind {
 	case reflect.Struct, reflect.Ptr, reflect.Interface:
 	default:
 		str := ""
@@ -383,10 +414,9 @@ func lenValidFunc(values []string, structField reflect.StructField, vValue refle
 	return nil
 }
 
-func itemLenValidFunc(values []string, structField reflect.StructField, vValue reflect.Value, fieldName string) error {
-	tagValue := structField.Tag.Get(itemLenTag)
-	splits := strings.Split(tagValue, ",")
-	switch vValue.Kind() {
+func itemLenValidFunc(values []string, fieldName string, field *validField) error {
+	splits := strings.Split(field.TagValue, ",")
+	switch field.FieldKind {
 	case reflect.Struct, reflect.Ptr, reflect.Interface:
 	default:
 		if splits[0] != "" {

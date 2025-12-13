@@ -145,7 +145,7 @@ func (j *JSONPath) EnableJSONOutput(v bool) {
 // PrintResults writes the results into writer
 func (j *JSONPath) PrintResults(wr io.Writer, results []reflect.Value) error {
 	if j.outputJSON {
-		// convert the []reflect.Value to something that json
+		// convert the []reflectx.Value to something that json
 		// will be able to marshal
 		r := make([]interface{}, 0, len(results))
 		for i := range results {
@@ -567,7 +567,7 @@ func (j *JSONPath) evalFilter(input []reflect.Value, node *FilterNode) ([]reflec
 	return results, nil
 }
 
-// evalToText translates reflect value to corresponding text
+// evalToText translates reflectx value to corresponding text
 func (j *JSONPath) evalToText(v reflect.Value) ([]byte, error) {
 	iface, ok := template.PrintableValue(v)
 	if !ok {

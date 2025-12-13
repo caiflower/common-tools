@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package nio
+package nio
 
 import (
 	"fmt"
@@ -40,7 +40,7 @@ func (v *test) valid(coderName string) {
 	msg := new(Msg)
 	success := codec.Decode(msg, buffer)
 	if !success {
-		panic(fmt.Sprintf("valid faild"))
+		panic(fmt.Sprintf("reflectx faild"))
 	}
 
 	var marshal, marshal1 []byte
@@ -56,7 +56,7 @@ func (v *test) valid(coderName string) {
 	if string(marshal) == string(marshal1) {
 		fmt.Printf("test success. %s \n", string(marshal1))
 	} else {
-		panic(fmt.Sprintf("valid faild. input: %s want: %s, but %s", marshal, v.want, msg.bytes))
+		panic(fmt.Sprintf("reflectx faild. input: %s want: %s, but %s", marshal, v.want, msg.bytes))
 	}
 }
 
