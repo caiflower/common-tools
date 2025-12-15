@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 caiflower Authors
+ * Copyright 2022 CloudWeGo Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,22 @@
  * limitations under the License.
  */
 
-package server
+package network
 
 import (
-	"github.com/caiflower/common-tools/web/common/controller"
-	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/router"
+	"context"
 )
 
-type Core interface {
-	Name() string
-	Start() error
-	Close()
+type Transporter interface {
+	// Close the transporter immediately
+	Close() error
 
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
+	// Graceful shutdown the transporter
+	Shutdown(ctx context.Context) error
 
-	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
+	// Start listen and ready to accept connection
+	ListenAndServe(onData OnData) error
 }
+
+// Callback when data is ready on the connection
+type OnData func(ctx context.Context, conn interface{}) error

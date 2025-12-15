@@ -17,29 +17,29 @@
 package web
 
 import (
-	"github.com/caiflower/common-tools/web/common/cfg"
+	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/server"
 	"github.com/caiflower/common-tools/web/server/net"
+	"github.com/caiflower/common-tools/web/server/netx"
 )
 
-// WebServer 统一服务器接口
 type Engine struct {
 	server.Core
-	opts *cfg.Options
+	opts *config.Options
 }
 
-func Default(opts ...cfg.Option) *Engine {
-	options := cfg.NewOptions(opts)
+func Default(opts ...config.Option) *Engine {
+	options := config.NewOptions(opts)
 	engine := &Engine{
 		opts: options,
 	}
 
 	// 根据模式创建对应的服务器
 	switch options.Mode {
-	case cfg.ServerModeNetpoll:
-		//engine.Core = uws.createNetpollServer()
-	case cfg.ServerModeStandard:
+	case config.ServerModeNetpoll:
+		engine.Core = engine.createNetxServer()
+	case config.ServerModeStandard:
 		fallthrough
 	default:
 		engine.Core = engine.createStandardServer()
@@ -48,18 +48,21 @@ func Default(opts ...cfg.Option) *Engine {
 	return engine
 }
 
-// createStandardServer 创建标准服务器
 func (e *Engine) createStandardServer() server.Core {
 	options := e.opts
 
 	standardConfig := net.NormalConfig{
-		Port:          options.Port,
+		Addr:          options.Addr,
 		ReadTimeout:   options.ReadTimeout,
 		WriteTimeout:  options.WriteTimeout,
 		HandleTimeout: options.HandleTimeout,
 		HandlerCfg:    e.getHandlerCfg(),
 	}
 	return net.NewHttpServer(standardConfig)
+}
+
+func (e *Engine) createNetxServer() server.Core {
+	return netx.NewHttpServer(*e.opts)
 }
 
 func (e *Engine) getHandlerCfg() router.HandlerCfg {

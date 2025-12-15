@@ -40,10 +40,10 @@ type HttpServer struct {
 
 type NormalConfig struct {
 	router.HandlerCfg
-	Port          uint  `yaml:"port" default:"8080"`
-	ReadTimeout   uint  `yaml:"readTimeout" default:"20"`
-	WriteTimeout  uint  `yaml:"writeTimeout" default:"35"`
-	HandleTimeout *uint `yaml:"handleTimeout" default:"60"` // 请求总处理超时时间
+	Addr          string        `yaml:"addr" default:":8080"`
+	ReadTimeout   time.Duration `yaml:"readTimeout" default:"20"`
+	WriteTimeout  time.Duration `yaml:"writeTimeout" default:"35"`
+	HandleTimeout time.Duration `yaml:"handleTimeout" default:"60"` // 请求总处理超时时间
 }
 
 func NewHttpServer(config NormalConfig) *HttpServer {
@@ -51,6 +51,7 @@ func NewHttpServer(config NormalConfig) *HttpServer {
 
 	httpServer := &HttpServer{
 		logger: logger.DefaultLogger(),
+		cfg:    config,
 	}
 
 	// 初始化公共处理器
@@ -66,13 +67,13 @@ func (s *HttpServer) Name() string {
 
 func (s *HttpServer) Start() error {
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.cfg.Port),
-		ReadTimeout:  time.Duration(s.cfg.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(s.cfg.WriteTimeout) * time.Second,
+		Addr:         s.cfg.Addr,
+		ReadTimeout:  s.cfg.ReadTimeout,
+		WriteTimeout: s.cfg.WriteTimeout,
 		Handler:      router.CommonHandler,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			if s.cfg.HandleTimeout != nil {
-				ctx, _ = context.WithTimeout(ctx, time.Duration(*s.cfg.HandleTimeout)*time.Second)
+			if s.cfg.HandleTimeout != 0 {
+				ctx, _ = context.WithTimeout(ctx, s.cfg.HandleTimeout*time.Second)
 			}
 			return ctx
 		},
@@ -82,8 +83,8 @@ func (s *HttpServer) Start() error {
 
 	s.logger.Info(
 		"\n***************************** http server startup ***********************************************\n"+
-			"************* web service [name:%s] [rootPath:%s] listening on %d *********\n"+
-			"*************************************************************************************************", s.cfg.Name, s.cfg.RootPath, s.cfg.Port)
+			"************* web service [name:%s] [rootPath:%s] listening on %s *********\n"+
+			"*************************************************************************************************", s.cfg.Name, s.cfg.RootPath, s.cfg.Addr)
 
 	go func() {
 		if err := s.server.ListenAndServe(); err != nil {

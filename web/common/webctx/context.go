@@ -23,7 +23,6 @@ type RequestContext interface {
 	GetResponse() interface{}
 	IsFinish() bool
 	GetPath() string
-	GetPathParams() map[string]string
 	GetParams() map[string][]string
 	GetMethod() string
 	GetAction() string

@@ -1,5 +1,7 @@
+//go:build (amd64 || arm64) && (linux || darwin)
+
 /*
- * Copyright 2024 caiflower Authors
+ * Copyright 2022 CloudWeGo Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +16,10 @@
  * limitations under the License.
  */
 
-package server
+package dialer
 
-import (
-	"github.com/caiflower/common-tools/web/common/controller"
-	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/router"
-)
+import "github.com/caiflower/common-tools/web/network/netpoll"
 
-type Core interface {
-	Name() string
-	Start() error
-	Close()
-
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
-
-	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
+func init() {
+	defaultDialer = netpoll.NewDialer()
 }

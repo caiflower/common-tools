@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 caiflower Authors
+ * Copyright 2022 CloudWeGo Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,12 @@
  * limitations under the License.
  */
 
-package server
+package network
 
-import (
-	"github.com/caiflower/common-tools/web/common/controller"
-	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/router"
+const (
+	// QUIC version codes
+	VersionTLS     uint32 = 0x1
+	VersionDraft29 uint32 = 0xff00001d
+	Version1       uint32 = 0x1
+	Version2       uint32 = 0x709a50c4
 )
-
-type Core interface {
-	Name() string
-	Start() error
-	Close()
-
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
-
-	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
-}

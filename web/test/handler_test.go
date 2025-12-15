@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024 caiflower Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package webtest
 
 import (
@@ -6,13 +22,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
-	"github.com/caiflower/common-tools/web/common/cfg"
+	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/common/controller"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/router"
@@ -22,7 +39,7 @@ import (
 // UserRequest 用户请求结构体 - 带参数校验
 type UserRequest struct {
 	ID     int    `json:"id" verf:"required" between:"1,1000"`
-	Name   string `json:"name" verf:"required" len:"1,50"`
+	Name   string `json:"name" verf:"required" len:"1,100"`
 	Email  string `json:"email" verf:"nilable" reg:"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
 	Age    int    `json:"age" verf:"required" between:"1,120"`
 	Status string `json:"status" inList:"active,inactive,pending"`
@@ -130,10 +147,10 @@ func setupTestServer(t *testing.T) *web.Engine {
 	once.Do(func() {
 		// 创建测试引擎
 		engine = web.Default(
-			cfg.WithPort(8888), // 使用随机端口
-			cfg.WithName("test-server"),
-			cfg.WithRootPath("/api/v1"),
-			cfg.WithControllerRootPkgName("webctx"),
+			config.WithAddr(":8888"),
+			config.WithName("test-server"),
+			config.WithRootPath("/api/v1"),
+			config.WithControllerRootPkgName("webctx"),
 		)
 
 		if engine == nil {
@@ -211,12 +228,13 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name           string
-		path           string
-		method         string
-		requestBody    interface{}
-		expectedStatus int
-		expectSuccess  bool
+		name             string
+		path             string
+		method           string
+		requestBody      interface{}
+		expectedStatus   int
+		expectSuccess    bool
+		expectErrMessage string
 	}{
 		{
 			name:   "Valid user request",
@@ -233,18 +251,61 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			expectSuccess:  true,
 		},
 		{
+			name:   "nilable email",
+			path:   "/api/v1/web/webtest/UserController?Action=GetUser",
+			method: "POST",
+			requestBody: UserRequest{
+				ID:     1,
+				Name:   "John Doe",
+				Age:    25,
+				Status: "active",
+			},
+			expectedStatus: http.StatusOK,
+			expectSuccess:  true,
+		},
+		{
+			name:   "name out of range",
+			path:   "/api/v1/web/webtest/UserController?Action=GetUser",
+			method: "POST",
+			requestBody: UserRequest{
+				ID:     1,
+				Name:   strings.Repeat("a", 101),
+				Age:    25,
+				Status: "active",
+			},
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: `UserRequest.Name len is greater than 100`,
+		},
+		{
 			name:   "Invalid user request - missing required field",
 			path:   "/api/v1/web/webtest/UserController?Action=CreateUser",
 			method: "POST",
 			requestBody: UserRequest{
-				ID:     0,  // Invalid: should be between 1-1000
-				Name:   "", // Invalid: required field
-				Email:  "****************",
+				ID:     0, // Invalid: should be between 1-1000
+				Name:   "John Doe",
+				Email:  "1239811789@qq.com",
 				Age:    25,
 				Status: "active",
 			},
-			expectedStatus: http.StatusBadRequest,
-			expectSuccess:  false,
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: `UserRequest.ID is not between 1 and 1000`,
+		},
+		{
+			name:   "Invalid user request - missing required field",
+			path:   "/api/v1/web/webtest/UserController?Action=CreateUser",
+			method: "POST",
+			requestBody: UserRequest{
+				ID:     1,
+				Name:   "", // Invalid: required field
+				Email:  "1239811789@qq.com",
+				Age:    25,
+				Status: "active",
+			},
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: "UserRequest.Name is missing",
 		},
 		{
 			name:   "Invalid age range",
@@ -253,12 +314,13 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			requestBody: UserRequest{
 				ID:     1,
 				Name:   "John Doe",
-				Email:  "****************",
+				Email:  "1239811789@qq.com",
 				Age:    150, // Invalid: should be between 1-120
 				Status: "active",
 			},
-			expectedStatus: http.StatusBadRequest,
-			expectSuccess:  false,
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: "UserRequest.Age is not between 1 and 120",
 		},
 		{
 			name:   "Invalid status value",
@@ -267,12 +329,13 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			requestBody: UserRequest{
 				ID:     1,
 				Name:   "John Doe",
-				Email:  "****************",
+				Email:  "1239811789@qq.com",
 				Age:    25,
 				Status: "unknown", // Invalid: not in list
 			},
-			expectedStatus: http.StatusBadRequest,
-			expectSuccess:  false,
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: `UserRequest.Status is not in [active inactive pending]`,
 		},
 	}
 
@@ -307,6 +370,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 					assert.Nil(t, response.Error)
 				} else {
 					assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+					assert.Equal(t, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 				}
 			}
 		})
@@ -331,7 +395,7 @@ func TestRESTfulRouting(t *testing.T) {
 		{
 			name:   "GET product by ID",
 			path:   "/v1/products/123",
-			method: "GET",
+			method: "POST",
 			requestBody: ProductRequest{
 				ProductID:   123,
 				ProductName: "Test Product",
@@ -351,6 +415,18 @@ func TestRESTfulRouting(t *testing.T) {
 				Category:    "Books",
 			},
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name:   "POST create product failed",
+			path:   "/v1/products",
+			method: "POST",
+			requestBody: ProductRequest{
+				ProductID:   10001,
+				ProductName: "New Product",
+				Price:       149.99,
+				Category:    "Books",
+			},
+			expectedStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -372,6 +448,8 @@ func TestRESTfulRouting(t *testing.T) {
 
 			// 执行请求
 			router.CommonHandler.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.expectedStatus, w.Code, tc.name)
 
 			t.Logf("Request: %s %s", tc.method, tc.path)
 			t.Logf("Response Status: %d", w.Code)
@@ -426,32 +504,36 @@ func TestErrorHandling(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name        string
-		path        string
-		method      string
-		requestBody string
-		description string
+		name           string
+		path           string
+		method         string
+		requestBody    string
+		description    string
+		expectedStatus int
 	}{
 		{
-			name:        "Invalid JSON",
-			path:        "/api/v1/web/webtest/UserController?Action=GetUser",
-			method:      "POST",
-			requestBody: `{"invalid": json}`,
-			description: "Should handle malformed JSON",
+			name:           "Invalid JSON",
+			path:           "/api/v1/web/webtest/UserController?Action=GetUser",
+			method:         "POST",
+			requestBody:    `{"invalid": json}`,
+			description:    "Should handle malformed JSON",
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
-			name:        "Missing Action parameter",
-			path:        "/api/v1/web/webtest/UserController",
-			method:      "POST",
-			requestBody: `{"id": 1, "name": "test"}`,
-			description: "Should handle missing action parameter",
+			name:           "Missing Action parameter",
+			path:           "/api/v1/web/webtest/UserController",
+			method:         "POST",
+			requestBody:    `{"id": 1, "name": "test"}`,
+			description:    "Should handle missing action parameter",
+			expectedStatus: http.StatusNotFound,
 		},
 		{
-			name:        "Non-existent webctx",
-			path:        "/api/v1/web/webtest/NonExistentController?Action=GetUser",
-			method:      "POST",
-			requestBody: `{"id": 1}`,
-			description: "Should handle non-existent webctx",
+			name:           "Non-existent webctx",
+			path:           "/api/v1/web/webtest/NonExistentController?Action=GetUser",
+			method:         "POST",
+			requestBody:    `{"id": 1}`,
+			description:    "Should handle non-existent webctx",
+			expectedStatus: http.StatusNotFound,
 		},
 	}
 
@@ -462,6 +544,13 @@ func TestErrorHandling(t *testing.T) {
 
 			w := httptest.NewRecorder()
 			router.CommonHandler.ServeHTTP(w, req)
+
+			var response resp.Result
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Logf("Response body: %s", w.Body.String())
+			} else {
+				assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+			}
 
 			t.Logf("%s - Status: %d, Body: %s", tc.description, w.Code, w.Body.String())
 		})

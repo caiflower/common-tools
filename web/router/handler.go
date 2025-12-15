@@ -32,7 +32,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/limiter"
@@ -49,7 +48,7 @@ import (
 )
 
 const (
-	beginTime = "web/handler/req_beginTime"
+	BeginTime = "web/handler/req_beginTime"
 )
 
 var (
@@ -89,6 +88,10 @@ func InitHandler(config HandlerCfg, logger logger.ILog) {
 			metric:       metric.NewHttpMetric(),
 		}
 
+		CommonHandler.ctxPool.New = func() interface{} {
+			return &webctx.RequestCtx{}
+		}
+
 		if config.WebLimiter.Enable {
 			getLimiterCallBack := func(qos int) limiter.Limiter {
 				limiterBucket := limiter.NewXTokenBucket(qos, qos)
@@ -108,7 +111,7 @@ func InitHandler(config HandlerCfg, logger logger.ILog) {
 
 				w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 				w.WriteHeader(res.Error.GetCode())
-				w.Write([]byte(tools.ToJson(res)))
+				_, _ = w.Write([]byte(tools.ToJson(res)))
 				return true
 
 			}
@@ -126,6 +129,9 @@ type Handler struct {
 
 	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
 	interceptors               interceptor.ItemSort
+
+	// RequestContext pool
+	ctxPool sync.Pool
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +146,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	golocalv1.PutTraceID(traceID)
-	golocalv1.Put(beginTime, time.Now())
+	golocalv1.Put(BeginTime, time.Now())
 	golocalv1.PutContext(r.Context())
 	defer golocalv1.Clean()
 
@@ -154,8 +160,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 执行具体的业务
-	h.dispatch(w, r)
+	ctx := h.getRequestContextWithRequest(w, r)
+	defer h.putRequestContext(ctx)
+
+	// dispatch
+	h.Dispatch(ctx, w, r)
 }
 
 func (h *Handler) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
@@ -218,101 +227,48 @@ func (h *Handler) Register(controller *controllermodel.RestfulController) {
 	logger.Info("Register path %v, Method: %v", "/"+version+originPath, method)
 }
 
-type RequestCtx struct {
-	method       string
-	params       map[string][]string
-	path         string
-	version      string
-	paths        map[string]string
-	action       string
-	restful      bool
-	args         []reflect.Value
-	targetMethod *basic.Method
-	response     interface{}
-	success      int
-	w            http.ResponseWriter
-	r            *http.Request
-	special      string
+func (h *Handler) getRequestContext() *webctx.RequestCtx {
+	ctx := h.ctxPool.Get().(*webctx.RequestCtx)
+
+	return ctx
 }
 
-func (c *RequestCtx) convertToWebCtx() *webctx.Context {
-	return &webctx.Context{RequestContext: c, Attributes: make(map[string]interface{})}
+func (h *Handler) getRequestContextWithRequest(w http.ResponseWriter, r *http.Request) *webctx.RequestCtx {
+	ctx := h.getRequestContext()
+
+	ctx.Method = r.Method
+	ctx.Params = r.URL.Query()
+	ctx.Path = r.URL.Path
+	ctx.Request = r
+	ctx.Writer = w
+	return ctx
 }
 
-func (c *RequestCtx) SetResponse(v interface{}) {
-	c.response = v
-	c.success = 200
+func (h *Handler) putRequestContext(ctx *webctx.RequestCtx) {
+	ctx.Reset()
+	h.ctxPool.Put(ctx)
 }
 
-func (c *RequestCtx) IsFinish() bool {
-	return c.success == 200
-}
-
-func (c *RequestCtx) GetPath() string {
-	return c.path
-}
-
-func (c *RequestCtx) GetPathParams() map[string]string {
-	return c.paths
-}
-
-func (c *RequestCtx) GetParams() map[string][]string {
-	return c.params
-}
-
-func (c *RequestCtx) GetMethod() string {
-	return c.method
-}
-
-func (c *RequestCtx) GetAction() string {
-	return c.action
-}
-
-func (c *RequestCtx) GetVersion() string {
-	return c.version
-}
-
-func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
-	return c.w, c.r
-}
-
-func (c *RequestCtx) GetResponse() interface{} {
-	return c.response
-}
-
-func (c *RequestCtx) UpgradeWebsocket() {
-	c.special = "websocket"
-}
-
-func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
-	ctx := &RequestCtx{
-		method: r.Method,
-		params: r.URL.Query(),
-		paths:  make(map[string]string),
-		path:   r.URL.Path,
-		w:      w,
-		r:      r,
-	}
-
+func (h *Handler) Dispatch(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) {
 	defer h.onCrash("dispatch", w, r, ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
-	// 设置action
+	// action
 	h.setAction(ctx)
 
-	// 设置目标method
+	// method
 	if !h.setTargetMethod(r, ctx) {
 		h.writeError(w, r, ctx, e.NewApiError(e.NotFound, "no such api.", nil))
 		return
 	}
 
-	// 设置args
-	webContext := ctx.convertToWebCtx()
+	// set args
+	webContext := ctx.ConvertToWebCtx()
 	if err := h.setArgs(r, ctx, webContext); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
 
-	// 校验args
+	// valid args
 	if err := h.validArgs(ctx); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
@@ -320,54 +276,54 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request) {
 
 	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
 
-	// 执行目标方法
+	// doTargetMethod
 	doTargetMethod := func() e.ApiError {
 		return h.doTargetMethod(w, r, ctx)
 	}
 
-	// aop切入
+	// aop
 	if err := h.interceptors.DoInterceptor(webContext, doTargetMethod); err != nil {
 		h.writeError(w, r, ctx, err)
 		return
 	}
 
-	// 返回数据
+	// set response
 	h.writeResponse(w, r, ctx)
 }
 
-func (h *Handler) setAction(ctx *RequestCtx) {
-	if len(ctx.params["action"]) > 0 {
-		ctx.action = ctx.params["action"][0]
-	} else if len(ctx.params["Action"]) > 0 {
-		ctx.action = ctx.params["Action"][0]
+func (h *Handler) setAction(ctx *webctx.RequestCtx) {
+	if len(ctx.Params["action"]) > 0 {
+		ctx.Action = ctx.Params["action"][0]
+	} else if len(ctx.Params["Action"]) > 0 {
+		ctx.Action = ctx.Params["Action"][0]
+	} else {
+		ctx.Restful = true
 	}
 }
 
-func (h *Handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
-	if ctx.action != "" {
+func (h *Handler) setTargetMethod(r *http.Request, ctx *webctx.RequestCtx) bool {
+	if !ctx.IsRestful() {
 		// action风格
-		ctx.restful = false
-		c := h.controllers[ctx.path]
+		c := h.controllers[ctx.Path]
 		if c != nil {
 			cls := c.GetCls()
-			method := cls.GetMethod(cls.GetPkgName() + "." + ctx.action)
-			ctx.targetMethod = method
+			method := cls.GetMethod(cls.GetPkgName() + "." + ctx.Action)
+			ctx.TargetMethod = method
 		}
 	} else {
 		// 根据restful风格查询method
-		ctx.restful = true
 		for _, c := range h.restfulControllers {
 			method := c.GetMethod()
 			version := c.GetVersion()
 			path := c.GetPath()
 			pathParams := c.GetPathParams()
 
-			if method == ctx.method && tools.MatchReg(ctx.path, "/"+version+path) {
-				ctx.version = version
-				ctx.targetMethod = c.GetTargetMethod()
-				ctx.action = c.GetAction()
+			if method == ctx.Method && tools.MatchReg(ctx.Path, "/"+version+path) {
+				ctx.Version = version
+				ctx.TargetMethod = c.GetTargetMethod()
+				ctx.Action = c.GetAction()
 
-				path := strings.TrimPrefix(ctx.path, "/"+version)
+				path := strings.TrimPrefix(ctx.Path, "/"+version)
 				k := 0
 				otherPaths := c.GetOtherPaths()
 				for i, cur := range otherPaths {
@@ -389,7 +345,7 @@ func (h *Handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 					}
 
 					if pathValue != "" {
-						ctx.paths[pathParams[k]] = pathValue
+						ctx.Paths[pathParams[k]] = pathValue
 						k++
 					}
 				}
@@ -399,11 +355,11 @@ func (h *Handler) setTargetMethod(r *http.Request, ctx *RequestCtx) bool {
 		}
 	}
 
-	return ctx.targetMethod != nil
+	return ctx.TargetMethod != nil
 }
 
-func (h *Handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *webctx.Context) e.ApiError {
-	method := ctx.targetMethod
+func (h *Handler) setArgs(r *http.Request, ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
+	method := ctx.TargetMethod
 
 	if !method.HasArgs() {
 		return nil
@@ -412,9 +368,9 @@ func (h *Handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *webctx.C
 	arg := method.GetArgs()[0]
 	switch arg.Kind() {
 	case reflect.Ptr:
-		ctx.args = append(ctx.args, reflect.New(arg.Elem()))
+		ctx.Args = append(ctx.Args, reflect.New(arg.Elem()))
 	case reflect.Struct:
-		ctx.args = append(ctx.args, reflect.New(arg))
+		ctx.Args = append(ctx.Args, reflect.New(arg))
 	default:
 		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
 	}
@@ -442,55 +398,48 @@ func (h *Handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *webctx.C
 	}
 
 	// 非restful风格
-	if !ctx.restful {
+	if !ctx.IsRestful() {
 		// 先解析body，解析param
 
-		if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
-			err = json.Unmarshal(bytes, ctx.args[0].Interface())
+		if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
+			err = json.Unmarshal(bytes, ctx.Args[0].Interface())
 			var typeError *json.UnmarshalTypeError
 			if errors.As(err, &typeError) {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
 			}
 
 			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
 		}
-
-		if len(ctx.params) > 0 {
-			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetParam}); err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
-			}
-		}
-
 	} else {
-		switch ctx.method {
+		switch ctx.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			// 先解析body，解析param
-			if err := tools.Unmarshal(bytes, ctx.args[0].Interface()); err != nil {
+			if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
 				var typeError *json.UnmarshalTypeError
 				if errors.As(err, &typeError) {
-					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
 				}
 
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
 			}
 		case http.MethodGet:
-			if len(ctx.params) > 0 {
-				if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.params, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetParam}); err != nil {
+			if len(ctx.Params) > 0 {
+				if err := tools.DoTagFunc(ctx.Args[0].Interface(), ctx.Params, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetParam}); err != nil {
 					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
 				}
 			}
 		}
 
 		// 设置paths
-		if ctx.paths != nil && len(ctx.paths) > 0 {
-			if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetPath}); err != nil {
+		if len(ctx.Paths) > 0 {
+			if err := tools.DoTagFunc(ctx.Args[0].Interface(), ctx.Paths, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetPath}); err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
 			}
 		}
 	}
 
 	// 设置context
-	indirect := reflect.Indirect(reflect.ValueOf(ctx.args[0].Interface()))
+	indirect := reflect.Indirect(reflect.ValueOf(ctx.Args[0].Interface()))
 	for i := 0; i < indirect.NumField(); i++ {
 		field := indirect.Field(i)
 		if field.Type().AssignableTo(assignableWebContextElem) {
@@ -503,47 +452,47 @@ func (h *Handler) setArgs(r *http.Request, ctx *RequestCtx, webContext *webctx.C
 	}
 
 	// 设置header
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), r.Header, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetHeader}); err != nil {
+	if err := tools.DoTagFunc(ctx.Args[0].Interface(), r.Header, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetHeader}); err != nil {
 		return e.NewApiError(e.Internal, fmt.Sprintf("set header failed. detail: %s", err.Error()), err)
 	}
 
 	// 设置默认值
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), ctx.paths, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
+	if err := tools.DoTagFunc(ctx.Args[0].Interface(), nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
 		return e.NewApiError(e.Internal, fmt.Sprintf("set default value failed. detail: %s", err.Error()), err)
 	}
 
 	return nil
 }
 
-func (h *Handler) validArgs(ctx *RequestCtx) e.ApiError {
-	method := ctx.targetMethod
+func (h *Handler) validArgs(ctx *webctx.RequestCtx) e.ApiError {
+	method := ctx.TargetMethod
 	if !method.HasArgs() {
 		return nil
 	}
 
-	elem := reflect.TypeOf(ctx.args[0].Interface()).Elem()
+	elem := reflect.TypeOf(ctx.Args[0].Interface()).Elem()
 	pkgPath := elem.PkgPath()
 	object := reflectx.ValidObject{
 		PkgPath:   pkgPath,
 		FiledName: elem.Name(),
 	}
 	funcList := []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.CheckParam}
-	if err := tools.DoTagFunc(ctx.args[0].Interface(), object, funcList); err != nil {
+	if err := tools.DoTagFunc(ctx.Args[0].Interface(), object, funcList); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
 	}
 
 	return nil
 }
 
-func (h *Handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) (err e.ApiError) {
-	if ctx.targetMethod.HasArgs() {
-		if ctx.targetMethod.GetArgs()[0].Kind() == reflect.Struct {
-			ctx.args[0] = ctx.args[0].Elem()
+func (h *Handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx) (err e.ApiError) {
+	if ctx.TargetMethod.HasArgs() {
+		if ctx.TargetMethod.GetArgs()[0].Kind() == reflect.Struct {
+			ctx.Args[0] = ctx.Args[0].Elem()
 		}
 	}
 
-	results := ctx.targetMethod.Invoke(ctx.args)
-	rets := ctx.targetMethod.GetRets()
+	results := ctx.TargetMethod.Invoke(ctx.Args)
+	rets := ctx.TargetMethod.GetRets()
 	for i, ret := range rets {
 		if ret.AssignableTo(assignableApiErrorElem) {
 			_err := results[i].Interface()
@@ -563,14 +512,14 @@ func (h *Handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *Re
 	return nil
 }
 
-func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *RequestCtx, err e.ApiError) {
-	if ctx.special != "" {
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, err e.ApiError) {
+	if ctx.IsSpecial() {
 		return
 	}
 
 	// 记录metric
-	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
-	go h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.method, ctx.path, sub.Milliseconds())
+	sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
+	go h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.Method, ctx.Path, sub.Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	res := resp.Result{
@@ -578,23 +527,25 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 		Error:     &e.Error{Code: err.GetCode(), Message: err.GetMessage(), Type: err.GetType(), Cause: err.GetCause()},
 	}
 
-	if ctx.restful && res.Error != nil {
-		// 如果是restful风格设置http响应码等于code
+	restful := ctx.IsRestful()
+	if restful && res.Error != nil {
 		w.WriteHeader(res.Error.GetCode())
 	}
 
 	bytes, _ := tools.Marshal(res)
-	if !ctx.restful && acceptGzip(r.Header) {
-		tmpBytes, err := tools.Gzip(bytes)
-		if err == nil {
-			bytes = tmpBytes
-			w.Header().Set("Content-Encoding", "gzip")
-		}
-	} else if !ctx.restful && acceptBr(r.Header) {
-		tmpBytes, err := tools.Brotil(bytes)
-		if err == nil {
-			bytes = tmpBytes
-			w.Header().Set("Content-Encoding", "br")
+	if !restful {
+		if acceptGzip(r.Header) {
+			tmpBytes, err := tools.Gzip(bytes)
+			if err == nil {
+				bytes = tmpBytes
+				w.Header().Set("Content-Encoding", "gzip")
+			}
+		} else if acceptBr(r.Header) {
+			tmpBytes, err := tools.Brotil(bytes)
+			if err == nil {
+				bytes = tmpBytes
+				w.Header().Set("Content-Encoding", "br")
+			}
 		}
 	}
 
@@ -604,20 +555,20 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *Reques
 	}
 }
 
-func (h *Handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *RequestCtx) {
-	if ctx.special != "" {
+func (h *Handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx) {
+	if ctx.IsSpecial() {
 		return
 	}
 
 	// 记录metric
-	sub := time.Now().Sub(golocalv1.Get(beginTime).(time.Time))
-	go h.metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.success), ctx.method, ctx.path, sub.Milliseconds())
+	sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
+	go h.metric.SaveMetric(h.config.Name, "200", ctx.Method, ctx.Path, sub.Milliseconds())
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
 	res := resp.Result{
 		RequestId: golocalv1.GetTraceID(),
-		Data:      ctx.response,
+		Data:      ctx.GetResponse(),
 	}
 
 	bytes, _ := tools.Marshal(res)
@@ -641,14 +592,14 @@ func (h *Handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *Req
 	}
 }
 
-func (h *Handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, e e.ApiError) {
+func (h *Handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
 		fmt.Printf("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
 		h.writeError(w, r, ctx, e)
 	}
 }
 
-func (h *Handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *RequestCtx, interceptorCtx *webctx.Context, defaultErr e.ApiError) {
+func (h *Handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, interceptorCtx *webctx.Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Error("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
 

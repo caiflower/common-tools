@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 caiflower Authors
+ * Copyright 2022 CloudWeGo Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,11 @@
  * limitations under the License.
  */
 
-package server
+// The files in bytebufferpool package are forked from fasthttp[github.com/valyala/fasthttp],
+// and we keep the original Copyright[Copyright 2015 fasthttp authors] and License of fasthttp for those files.
+// We also need to modify as we need, the modifications are Copyright of 2022 CloudWeGo Authors.
+// Thanks for fasthttp authors! Below is the source code information:
+// 		Repo: github.com/valyala/fasthttp
+//		Forked Version: v1.36.0
 
-import (
-	"github.com/caiflower/common-tools/web/common/controller"
-	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/router"
-)
-
-type Core interface {
-	Name() string
-	Start() error
-	Close()
-
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
-
-	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
-}
+package bytebufferpool

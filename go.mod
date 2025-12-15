@@ -7,7 +7,9 @@ replace github.com/json-iterator/go v1.1.12 => github.com/caiflower/json-iterato
 require (
 	github.com/IBM/sarama v1.42.2
 	github.com/andybalholm/brotli v1.1.1
+	github.com/bytedance/gopkg v0.1.1
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/cloudwego/netpoll v0.7.0
 	github.com/confluentinc/confluent-kafka-go/v2 v2.2.0
 	github.com/dominikbraun/graph v0.23.0
 	github.com/go-redis/redis/extra/rediscmd/v8 v8.11.5
@@ -32,6 +34,7 @@ require (
 	go.opentelemetry.io/otel/metric v0.37.0
 	go.opentelemetry.io/otel/trace v1.14.0
 	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91
+	golang.org/x/sys v0.24.0
 	golang.org/x/time v0.3.0
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -39,6 +42,7 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/gopkg v0.1.4 // indirect
 	github.com/codemodus/kace v0.5.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
@@ -91,12 +95,10 @@ require (
 	golang.org/x/crypto v0.22.0 // indirect
 	golang.org/x/mod v0.8.0 // indirect
 	golang.org/x/net v0.24.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20230822172742-b8732ec3820d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230822172742-b8732ec3820d // indirect
 	google.golang.org/grpc v1.57.0 // indirect
-	google.golang.org/protobuf v1.31.0 // indirect
+	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

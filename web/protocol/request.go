@@ -14,22 +14,15 @@
  * limitations under the License.
  */
 
-package server
+package protocol
 
 import (
-	"github.com/caiflower/common-tools/web/common/controller"
-	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/router"
+	"github.com/caiflower/common-tools/web/common/nocopy"
 )
 
-type Core interface {
-	Name() string
-	Start() error
-	Close()
+type Request struct {
+	noCopy nocopy.NoCopy //lint:ignore U1000 until noCopy is used
+}
 
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
-
-	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
+func (r *Request) Reset() {
 }
