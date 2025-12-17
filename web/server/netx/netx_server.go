@@ -163,7 +163,10 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 			_ = ctx.GetConn().SetReadTimeout(s.options.ReadTimeout)
 		}
 
+		start := time.Now()
 		req, err = ctx.GetHttpRequest()
+
+		fmt.Println("demo-api", time.Since(start).Nanoseconds())
 		if err != nil {
 			s.logger.Error("GetHttpRequest failed. Error: %s", err.Error())
 			err = errParseRequest

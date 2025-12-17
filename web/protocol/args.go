@@ -45,7 +45,7 @@ import (
 	"bytes"
 	"io"
 
-	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	bytesconv2 "github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/common/nocopy"
 )
 
@@ -88,7 +88,7 @@ func (a *Args) Del(key string) {
 
 // DelBytes deletes argument with the given key from query args.
 func (a *Args) DelBytes(key []byte) {
-	a.args = delAllArgs(a.args, bytesconv.B2s(key))
+	a.args = delAllArgs(a.args, bytesconv2.B2s(key))
 }
 
 func (s *argsScanner) next(kv *argsKV) bool {
@@ -144,8 +144,8 @@ func decodeArgAppend(dst, src []byte) []byte {
 			if i+2 >= len(src) {
 				return append(dst, src[i:]...)
 			}
-			x2 := bytesconv.Hex2intTable[src[i+2]]
-			x1 := bytesconv.Hex2intTable[src[i+1]]
+			x2 := bytesconv2.Hex2intTable[src[i+2]]
+			x1 := bytesconv2.Hex2intTable[src[i+1]]
 			if x1 == 16 || x2 == 16 {
 				dst = append(dst, '%')
 			} else {
@@ -249,7 +249,7 @@ func peekAllArgBytesToDst(dst [][]byte, h []argsKV, k []byte) [][]byte {
 }
 
 func delAllArgsBytes(args []argsKV, key []byte) []argsKV {
-	return delAllArgs(args, bytesconv.B2s(key))
+	return delAllArgs(args, bytesconv2.B2s(key))
 }
 
 func delAllArgs(args []argsKV, key string) []argsKV {
@@ -305,8 +305,8 @@ func decodeArgAppendNoPlus(dst, src []byte) []byte {
 			if i+2 >= len(src) {
 				return append(dst, src[i:]...)
 			}
-			x2 := bytesconv.Hex2intTable[src[i+2]]
-			x1 := bytesconv.Hex2intTable[src[i+1]]
+			x2 := bytesconv2.Hex2intTable[src[i+2]]
+			x1 := bytesconv2.Hex2intTable[src[i+1]]
 			if x1 == 16 || x2 == 16 {
 				dst = append(dst, '%')
 			} else {
@@ -384,7 +384,7 @@ func (a *Args) PeekExists(key string) (string, bool) {
 func (a *Args) PeekAll(key string) [][]byte {
 	var values [][]byte
 	a.VisitAll(func(k, v []byte) {
-		if bytesconv.B2s(k) == key {
+		if bytesconv2.B2s(k) == key {
 			values = append(values, v)
 		}
 	})
@@ -407,11 +407,11 @@ func (a *Args) Len() int {
 func (a *Args) AppendBytes(dst []byte) []byte {
 	for i, n := 0, len(a.args); i < n; i++ {
 		kv := &a.args[i]
-		dst = bytesconv.AppendQuotedArg(dst, kv.key)
+		dst = bytesconv2.AppendQuotedArg(dst, kv.key)
 		if !kv.noValue {
 			dst = append(dst, '=')
 			if len(kv.value) > 0 {
-				dst = bytesconv.AppendQuotedArg(dst, kv.value)
+				dst = bytesconv2.AppendQuotedArg(dst, kv.value)
 			}
 		}
 		if i+1 < n {

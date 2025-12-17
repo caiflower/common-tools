@@ -49,7 +49,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	bytesconv2 "github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/nocopy"
@@ -148,11 +148,11 @@ func (h *ResponseHeader) SetContentRange(startPos, endPos, contentLength int) {
 	b := h.bufKV.value[:0]
 	b = append(b, bytestr.StrBytes...)
 	b = append(b, ' ')
-	b = bytesconv.AppendUint(b, startPos)
+	b = bytesconv2.AppendUint(b, startPos)
 	b = append(b, '-')
-	b = bytesconv.AppendUint(b, endPos)
+	b = bytesconv2.AppendUint(b, endPos)
 	b = append(b, '/')
-	b = bytesconv.AppendUint(b, contentLength)
+	b = bytesconv2.AppendUint(b, contentLength)
 	h.bufKV.value = b
 
 	h.SetCanonical(bytestr.StrContentRange, h.bufKV.value)
@@ -251,12 +251,12 @@ func (h *ResponseHeader) CopyTo(dst *ResponseHeader) {
 // Transfer-Encoding, Host and User-Agent headers can only be set once
 // and will overwrite the previous value.
 func (h *RequestHeader) Add(key, value string) {
-	if h.setSpecialHeader(bytesconv.S2b(key), bytesconv.S2b(value)) {
+	if h.setSpecialHeader(bytesconv2.S2b(key), bytesconv2.S2b(value)) {
 		return
 	}
 	k := []byte(key)
 	utils.NormalizeHeaderKey(k, h.disableNormalizing)
-	h.h = appendArg(h.h, bytesconv.B2s(k), value, ArgsHasValue)
+	h.h = appendArg(h.h, bytesconv2.B2s(k), value, ArgsHasValue)
 }
 
 // VisitAll calls f for each header.
@@ -536,12 +536,12 @@ func (h *ResponseHeader) Set(key, value string) {
 // Transfer-Encoding and Date headers can only be set once and will
 // overwrite the previous value.
 func (h *ResponseHeader) Add(key, value string) {
-	if h.setSpecialHeader(bytesconv.S2b(key), bytesconv.S2b(value)) {
+	if h.setSpecialHeader(bytesconv2.S2b(key), bytesconv2.S2b(value)) {
 		return
 	}
 	k := []byte(key)
 	utils.NormalizeHeaderKey(k, h.disableNormalizing)
-	h.h = appendArg(h.h, bytesconv.B2s(k), value, ArgsHasValue)
+	h.h = appendArg(h.h, bytesconv2.B2s(k), value, ArgsHasValue)
 }
 
 // SetContentLength sets Content-Length header value.
@@ -555,7 +555,7 @@ func (h *ResponseHeader) SetContentLength(contentLength int) {
 	}
 	h.contentLength = contentLength
 	if contentLength >= 0 {
-		h.contentLengthBytes = bytesconv.AppendUint(h.contentLengthBytes[:0], contentLength)
+		h.contentLengthBytes = bytesconv2.AppendUint(h.contentLengthBytes[:0], contentLength)
 		h.h = delAllArgsBytes(h.h, bytestr.StrTransferEncoding)
 	} else {
 		h.contentLengthBytes = h.contentLengthBytes[:0]
@@ -605,7 +605,7 @@ func (h *ResponseHeader) DelCookie(key string) {
 // Note that DelCookieBytes doesn't remove the cookie from the client.
 // Use DelClientCookieBytes instead.
 func (h *ResponseHeader) DelCookieBytes(key []byte) {
-	h.DelCookie(bytesconv.B2s(key))
+	h.DelCookie(bytesconv2.B2s(key))
 }
 
 // DelBytes deletes header with the given key.
@@ -664,7 +664,7 @@ func (h *ResponseHeader) DelClientCookie(key string) {
 //
 // Use DelCookieBytes if you want just removing the cookie from response header.
 func (h *ResponseHeader) DelClientCookieBytes(key []byte) {
-	h.DelClientCookie(bytesconv.B2s(key))
+	h.DelClientCookie(bytesconv2.B2s(key))
 }
 
 // Peek returns header value for the given key.
@@ -674,7 +674,7 @@ func (h *ResponseHeader) DelClientCookieBytes(key []byte) {
 func (h *ResponseHeader) Peek(key string) []byte {
 	k := []byte(key)
 	utils.NormalizeHeaderKey(k, h.disableNormalizing)
-	return h.peek(bytesconv.B2s(k))
+	return h.peek(bytesconv2.B2s(k))
 }
 
 func (h *ResponseHeader) IsDisableNormalizing() bool {
@@ -1037,13 +1037,13 @@ func (h *RequestHeader) SetByteRange(startPos, endPos int) {
 	b = append(b, bytestr.StrBytes...)
 	b = append(b, '=')
 	if startPos >= 0 {
-		b = bytesconv.AppendUint(b, startPos)
+		b = bytesconv2.AppendUint(b, startPos)
 	} else {
 		endPos = -startPos
 	}
 	b = append(b, '-')
 	if endPos >= 0 {
-		b = bytesconv.AppendUint(b, endPos)
+		b = bytesconv2.AppendUint(b, endPos)
 	}
 	h.bufKV.value = b
 
@@ -1119,7 +1119,7 @@ func (h *RequestHeader) CopyTo(dst *RequestHeader) {
 func (h *RequestHeader) Peek(key string) []byte {
 	k := []byte(key)
 	utils.NormalizeHeaderKey(k, h.disableNormalizing)
-	return h.peek(bytesconv.B2s(k))
+	return h.peek(bytesconv2.B2s(k))
 }
 
 // SetMultipartFormBoundary sets the following Content-Type:
@@ -1169,7 +1169,7 @@ func (h *RequestHeader) SetNoDefaultContentType(b bool) {
 func (h *RequestHeader) SetContentLength(contentLength int) {
 	h.contentLength = contentLength
 	if contentLength >= 0 {
-		h.contentLengthBytes = bytesconv.AppendUint(h.contentLengthBytes[:0], contentLength)
+		h.contentLengthBytes = bytesconv2.AppendUint(h.contentLengthBytes[:0], contentLength)
 		h.h = delAllArgsBytes(h.h, bytestr.StrTransferEncoding)
 	} else {
 		h.contentLengthBytes = h.contentLengthBytes[:0]
@@ -1548,7 +1548,7 @@ func (h *RequestHeader) VisitAllCustomHeader(f func(key, value []byte)) {
 }
 
 func ParseContentLength(b []byte) (int, error) {
-	v, n, err := bytesconv.ParseUintBuf(b)
+	v, n, err := bytesconv2.ParseUintBuf(b)
 	if err != nil {
 		return -1, err
 	}
@@ -1642,7 +1642,7 @@ func (h *ResponseHeader) GetAll(key string) []string {
 func appendHeaderLine(dst, key, value []byte) []byte {
 	for _, k := range key {
 		// if header field contains invalid key, just skip it.
-		if bytesconv.ValidHeaderFieldNameTable[k] == 0 {
+		if bytesconv2.ValidHeaderFieldNameTable[k] == 0 {
 			return dst
 		}
 	}
@@ -1674,7 +1674,7 @@ func UpdateServerDate() {
 }
 
 func refreshServerDate() {
-	b := bytesconv.AppendHTTPDate(make([]byte, 0, len(http.TimeFormat)), time.Now())
+	b := bytesconv2.AppendHTTPDate(make([]byte, 0, len(http.TimeFormat)), time.Now())
 	ServerDate.Store(b)
 }
 

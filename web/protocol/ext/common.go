@@ -49,7 +49,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/utils"
