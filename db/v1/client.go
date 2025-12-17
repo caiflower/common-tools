@@ -71,9 +71,7 @@ type Client struct {
 var once sync.Once
 
 func NewDBClient(config Config) (c *Client, err error) {
-	if err = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		return nil, err
-	}
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	logger.Info(" *** db Config *** %s", tools.ToJson(config))
 

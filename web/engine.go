@@ -77,5 +77,6 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
+		Debug: options.Debug,
 	}
 }

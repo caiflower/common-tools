@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 caiflower Authors
+ * Copyright 2024 CloudWeGo Authors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,23 @@
  * limitations under the License.
  */
 
-package protocol
+package utils
 
 import (
-	"github.com/caiflower/common-tools/web/common/nocopy"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/caiflower/common-tools/web/common/errors"
 )
 
-type Request struct {
-	noCopy nocopy.NoCopy //lint:ignore U1000 until noCopy is used
-}
+// Get bool from env
+func GetBoolFromEnv(key string) (bool, error) {
+	value, isExist := os.LookupEnv(key)
+	if !isExist {
+		return false, errors.NewPublic("env not exist")
+	}
 
-func (r *Request) Reset() {
+	value = strings.TrimSpace(value)
+	return strconv.ParseBool(value)
 }

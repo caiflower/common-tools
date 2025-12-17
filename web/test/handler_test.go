@@ -30,19 +30,20 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/common/config"
-	"github.com/caiflower/common-tools/web/common/controller"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/router"
+	"github.com/caiflower/common-tools/web/router/controller"
 	"github.com/stretchr/testify/assert"
 )
 
 // UserRequest 用户请求结构体 - 带参数校验
 type UserRequest struct {
-	ID     int    `json:"id" verf:"required" between:"1,1000"`
-	Name   string `json:"name" verf:"required" len:"1,100"`
-	Email  string `json:"email" verf:"nilable" reg:"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
-	Age    int    `json:"age" verf:"required" between:"1,120"`
-	Status string `json:"status" inList:"active,inactive,pending"`
+	RequestID string `header:"X-Request-Id"`
+	ID        int    `json:"id" verf:"required" between:"1,1000"`
+	Name      string `json:"name" verf:"required" len:"1,100"`
+	Email     string `json:"email" verf:"nilable" reg:"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
+	Age       int    `json:"age" verf:"required" between:"1,120"`
+	Status    string `json:"status" inList:"active,inactive,pending"`
 }
 
 // UserResponse 用户响应结构体
@@ -61,11 +62,12 @@ func (uc *UserController) GetUser(req *UserRequest) *UserResponse {
 		Success: true,
 		Message: "User retrieved successfully",
 		Data: map[string]interface{}{
-			"id":     req.ID,
-			"name":   req.Name,
-			"email":  req.Email,
-			"age":    req.Age,
-			"status": req.Status,
+			"id":        req.ID,
+			"name":      req.Name,
+			"email":     req.Email,
+			"age":       req.Age,
+			"status":    req.Status,
+			"requestId": req.RequestID,
 		},
 	}
 }
@@ -111,16 +113,20 @@ type ProductRequest struct {
 	Category    string  `json:"category" verf:"required" len:"1,50"`
 }
 
+type ProductRequestV1 struct {
+	ProductID int `json:"product_id" verf:"required" between:"1,10000"`
+}
+
 // GetProduct 获取产品信息
-func (pc *ProductController) GetProduct(req *ProductRequest) *UserResponse {
+func (pc *ProductController) GetProduct(req *ProductRequestV1) *UserResponse {
 	return &UserResponse{
 		Success: true,
 		Message: "Product retrieved successfully",
 		Data: map[string]interface{}{
 			"product_id":   req.ProductID,
-			"product_name": req.ProductName,
-			"price":        req.Price,
-			"category":     req.Category,
+			"product_name": "Test Product",
+			"price":        99.99,
+			"category":     "Electronics",
 		},
 	}
 }
@@ -139,11 +145,16 @@ func (pc *ProductController) CreateProduct(req *ProductRequest) *UserResponse {
 	}
 }
 
+func (pc *ProductController) CreateProductPanic() *UserResponse {
+	panic("panic")
+}
+
 var once sync.Once
 var engine *web.Engine
+var handler *router.Handler
 
 // setupTestServer 设置测试服务器
-func setupTestServer(t *testing.T) *web.Engine {
+func setupTestServer(t *testing.T) (*web.Engine, *router.Handler) {
 	once.Do(func() {
 		// 创建测试引擎
 		engine = web.Default(
@@ -166,67 +177,62 @@ func setupTestServer(t *testing.T) *web.Engine {
 			EnablePprof:           false,
 		}
 
-		router.InitHandler(handlerCfg, logger.DefaultLogger())
+		handler = router.NewHandler(handlerCfg, logger.DefaultLogger())
 
 		// 添加控制器
-		if router.CommonHandler != nil {
-			router.CommonHandler.AddController(&UserController{})
-			router.CommonHandler.AddController(&ProductController{})
+		if handler != nil {
+			handler.AddController(&UserController{})
+			productController := handler.AddController(&ProductController{})
 
-			// 注册RESTful路由
-			restfulController := controller.NewRestFul().
-				Version("v1").
-				Path("/products/{productId}").
+			group := controller.NewRestFul().Version("v1").Group("/products")
+
+			restfulController := group.
+				Path("/:productID").
 				Method("GET").
-				Controller("webtest.ProductController").
+				Controller(productController.GetPaths()[0]).
 				Action("GetProduct")
 
-			router.CommonHandler.Register(restfulController)
+			handler.Register(restfulController)
 
-			restfulController2 := controller.NewRestFul().
-				Version("v1").
-				Path("/products").
+			restfulController2 := group.
 				Method("POST").
-				Controller("webtest.ProductController").
-				Action("CreateProduct")
+				TargetMethod(productController.GetTargetMethod("CreateProduct"))
 
-			router.CommonHandler.Register(restfulController2)
+			handler.Register(restfulController2)
+
+			restfulController3 := group.
+				Method("POST").
+				Path("panic").
+				TargetMethod(productController.GetTargetMethod("CreateProductPanic"))
+			handler.Register(restfulController3)
 		}
 	})
 
-	return engine
+	return engine, handler
 }
 
 // TestServerBasicFunctionality 测试服务器基本功能
 func TestServerBasicFunctionality(t *testing.T) {
-	engine := setupTestServer(t)
+	engine, handler = setupTestServer(t)
 
 	if engine.Core == nil {
 		t.Fatal("Engine.Core should not be nil")
+	}
+	if handler == nil {
+		t.Fatal("handler should not be nil")
 	}
 
 	t.Logf("Server name: %s", engine.Core.Name())
 }
 
-// TestControllerRegistration 测试控制器注册
-func TestControllerRegistration(t *testing.T) {
-	_ = setupTestServer(t)
-
-	if router.CommonHandler == nil {
-		t.Fatal("CommonHandler should not be nil after setup")
-	}
-
-	t.Log("Controllers registered successfully")
-}
-
 // TestHTTPRequestWithValidation 测试HTTP请求和参数校验
 func TestHTTPRequestWithValidation(t *testing.T) {
-	_ = setupTestServer(t)
-
-	if router.CommonHandler == nil {
+	engine, handler = setupTestServer(t)
+	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
+	requestId := "test-request-id"
 	testCases := []struct {
 		name             string
 		path             string
@@ -235,6 +241,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 		expectedStatus   int
 		expectSuccess    bool
 		expectErrMessage string
+		expectData       interface{}
 	}{
 		{
 			name:   "Valid user request",
@@ -249,6 +256,18 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 			expectSuccess:  true,
+			expectData: map[string]interface{}{
+				"success": true,
+				"message": "User retrieved successfully",
+				"data": map[string]interface{}{
+					"id":        float64(1),
+					"name":      "John Doe",
+					"email":     "1239811789@qq.com",
+					"age":       float64(25),
+					"status":    "active",
+					"requestId": requestId,
+				},
+			},
 		},
 		{
 			name:   "nilable email",
@@ -262,6 +281,18 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 			expectSuccess:  true,
+			expectData: map[string]interface{}{
+				"success": true,
+				"message": "User retrieved successfully",
+				"data": map[string]interface{}{
+					"id":        float64(1),
+					"name":      "John Doe",
+					"email":     "",
+					"age":       float64(25),
+					"status":    "active",
+					"requestId": requestId,
+				},
+			},
 		},
 		{
 			name:   "name out of range",
@@ -350,13 +381,13 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			// 创建HTTP请求
 			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Request-Id", "test-request-id")
+			req.Header.Set("X-Request-Id", requestId)
 
 			// 创建响应记录器
 			w := httptest.NewRecorder()
 
 			// 执行请求
-			router.CommonHandler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 
 			assert.Equal(t, 200, w.Code, "want 200 status code")
 
@@ -368,20 +399,23 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			} else {
 				if tc.expectedStatus == 200 {
 					assert.Nil(t, response.Error)
+					assert.Equal(t, response.Data, tc.expectData)
+					assert.NotNil(t, response.RequestId, "want request id not nil")
 				} else {
 					assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
 					assert.Equal(t, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 				}
 			}
+			assert.Equal(t, response.RequestId, requestId, "request id should be equal")
 		})
 	}
 }
 
 // TestRESTfulRouting 测试RESTful路由
 func TestRESTfulRouting(t *testing.T) {
-	_ = setupTestServer(t)
+	engine, handler = setupTestServer(t)
 
-	if router.CommonHandler == nil {
+	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
@@ -390,19 +424,30 @@ func TestRESTfulRouting(t *testing.T) {
 		path           string
 		method         string
 		requestBody    interface{}
+		expectData     interface{}
 		expectedStatus int
 	}{
 		{
 			name:   "GET product by ID",
 			path:   "/v1/products/123",
-			method: "POST",
-			requestBody: ProductRequest{
-				ProductID:   123,
-				ProductName: "Test Product",
-				Price:       99.99,
-				Category:    "Electronics",
+			method: "GET",
+			expectData: map[string]interface{}{
+				"success": true,
+				"message": "Product retrieved successfully",
+				"data": map[string]interface{}{
+					"product_id":   float64(123),
+					"product_name": "Test Product",
+					"price":        float64(99.99),
+					"category":     "Electronics",
+				},
 			},
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "GET product by ID Not found",
+			path:           "/v1/products/123",
+			method:         "POST",
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:   "POST create product",
@@ -414,7 +459,29 @@ func TestRESTfulRouting(t *testing.T) {
 				Price:       149.99,
 				Category:    "Books",
 			},
+			expectData: map[string]interface{}{
+				"success": true,
+				"message": "Product created successfully",
+				"data": map[string]interface{}{
+					"product_id":   float64(456),
+					"product_name": "New Product",
+					"price":        float64(149.99),
+					"category":     "Books",
+				},
+			},
 			expectedStatus: http.StatusOK,
+		},
+		{
+			name:   "POST create product",
+			path:   "/v1/products",
+			method: "PUT",
+			requestBody: ProductRequest{
+				ProductID:   456,
+				ProductName: "New Product",
+				Price:       149.99,
+				Category:    "Books",
+			},
+			expectedStatus: http.StatusNotFound,
 		},
 		{
 			name:   "POST create product failed",
@@ -427,6 +494,12 @@ func TestRESTfulRouting(t *testing.T) {
 				Category:    "Books",
 			},
 			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "POST create product panic",
+			path:           "/v1/products/panic",
+			method:         "POST",
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -447,9 +520,21 @@ func TestRESTfulRouting(t *testing.T) {
 			w := httptest.NewRecorder()
 
 			// 执行请求
-			router.CommonHandler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 
+			var response resp.Result
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Logf("Response body: %s", w.Body.String())
+				// 某些错误情况下可能不是JSON格式，这里只记录日志
+			}
 			assert.Equal(t, tc.expectedStatus, w.Code, tc.name)
+			if w.Code == http.StatusOK {
+				assert.Equal(t, response.Data, tc.expectData)
+				assert.NotNil(t, response.Data, tc.name)
+			} else {
+				assert.NotNil(t, response.Error, tc.name)
+				assert.Equal(t, response.Error.GetCode(), w.Code, tc.name)
+			}
 
 			t.Logf("Request: %s %s", tc.method, tc.path)
 			t.Logf("Response Status: %d", w.Code)
@@ -460,9 +545,9 @@ func TestRESTfulRouting(t *testing.T) {
 
 // TestServerPerformance 测试服务器性能
 func TestServerPerformance(t *testing.T) {
-	_ = setupTestServer(t)
+	engine, handler = setupTestServer(t)
 
-	if router.CommonHandler == nil {
+	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
@@ -486,7 +571,7 @@ func TestServerPerformance(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
-			router.CommonHandler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 		}(i)
 	}
 
@@ -497,9 +582,9 @@ func TestServerPerformance(t *testing.T) {
 
 // TestErrorHandling 测试错误处理
 func TestErrorHandling(t *testing.T) {
-	_ = setupTestServer(t)
+	engine, handler = setupTestServer(t)
 
-	if router.CommonHandler == nil {
+	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
@@ -543,7 +628,7 @@ func TestErrorHandling(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
-			router.CommonHandler.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 
 			var response resp.Result
 			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {

@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,6 +148,6 @@ func TestSetDefaultValueIfNil(t *testing.T) {
 			F4:  0.4,
 		},
 	}
-	_ = DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{SetDefaultValueIfNil})
+	_ = DoTagFunc(&config, []FnObj{{Fn: SetDefaultValueIfNil}})
 	assert.Equal(t, config, cmpConfig)
 }

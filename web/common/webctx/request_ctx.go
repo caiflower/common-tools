@@ -21,12 +21,12 @@ import (
 	"context"
 	"net/http"
 	"reflect"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/web/network"
 	netpoll1 "github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/cloudwego/netpoll"
 )
 
@@ -35,22 +35,22 @@ type RequestCtx struct {
 
 	// net
 	Request  *http.Request
+	Writer   http.ResponseWriter
 	Response interface{}
-	//StatusCode int
-	Writer http.ResponseWriter
 
 	// netx
-	XRequest  *protocol.Request
 	XResponse *protocol.Response
 	conn      network.Conn
 
 	Method  string
-	Params  map[string][]string
-	Path    string
 	Version string
-	Paths   map[string]string
 	Action  string
 	Restful bool
+
+	Params map[string][]string
+
+	Path  string
+	Paths param.Params
 
 	Args         []reflect.Value
 	TargetMethod *basic.Method
@@ -114,13 +114,12 @@ func (c *RequestCtx) Reset() {
 	c.Special = ""
 	c.TargetMethod = nil
 	c.Response = nil
-	c.Paths = make(map[string]string)
+	c.Paths = c.Paths[:0]
 	c.Version = ""
 	c.Action = ""
 	c.Restful = false
 	c.Response = nil
-	if c.XRequest != nil {
-		c.XRequest.Reset()
+	if c.XResponse != nil {
 		c.XResponse.Reset()
 	}
 }
@@ -131,12 +130,17 @@ func (c *RequestCtx) GetConn() network.Conn {
 
 func (c *RequestCtx) SetConn(conn network.Conn) *RequestCtx {
 	c.conn = conn
+	c.XResponse.SetConn(conn)
 	return c
 }
 
 func (c *RequestCtx) SetContext(ctx context.Context) *RequestCtx {
 	c.ctx = ctx
 	return c
+}
+
+func (c *RequestCtx) GetContext() context.Context {
+	return c.ctx
 }
 
 func (c *RequestCtx) GetReader() network.Reader {
@@ -152,15 +156,11 @@ func (c *RequestCtx) GetHttpRequest() (req *http.Request, err error) {
 	reader := netpoll.NewIOReader(conn.Conn.(netpoll.Connection).Reader())
 	bufReader := bufio.NewReaderSize(reader, 256)
 
-	for {
-		req, err = http.ReadRequest(bufReader)
-		if err != nil {
-			time.Sleep(time.Microsecond * 100)
-			continue
-		} else {
-			break
-		}
+	req, err = http.ReadRequest(bufReader)
+	if err != nil {
+		return
 	}
 
-	return req, err
+	req = req.WithContext(c.ctx)
+	return
 }

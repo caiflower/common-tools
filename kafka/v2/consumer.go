@@ -19,7 +19,6 @@ package v2
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +36,7 @@ import (
 type KafkaMessage = sarama.ConsumerMessage
 
 func NewConsumerClient(cfg xkafka.Config) *KafkaClient {
-	_ = tools.DoTagFunc(&cfg, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	if strings.ToUpper(cfg.Enable) != "TRUE" {
 		logger.Warn("[kafka-consumer] consumer '%s' is disable", cfg.Name)

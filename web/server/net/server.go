@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"reflect"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -41,23 +40,20 @@ type HttpServer struct {
 type NormalConfig struct {
 	router.HandlerCfg
 	Addr          string        `yaml:"addr" default:":8080"`
-	ReadTimeout   time.Duration `yaml:"readTimeout" default:"20"`
-	WriteTimeout  time.Duration `yaml:"writeTimeout" default:"35"`
-	HandleTimeout time.Duration `yaml:"handleTimeout" default:"60"` // 请求总处理超时时间
+	ReadTimeout   time.Duration `yaml:"readTimeout" default:"20s"`
+	WriteTimeout  time.Duration `yaml:"writeTimeout" default:"35s"`
+	HandleTimeout time.Duration `yaml:"handleTimeout" default:"60s"` // 请求总处理超时时间
 }
 
 func NewHttpServer(config NormalConfig) *HttpServer {
-	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	httpServer := &HttpServer{
 		logger: logger.DefaultLogger(),
 		cfg:    config,
 	}
 
-	// 初始化公共处理器
-	router.InitHandler(config.HandlerCfg, httpServer.logger)
-
-	httpServer.Handler = router.CommonHandler
+	httpServer.Handler = router.NewHandler(config.HandlerCfg, httpServer.logger)
 	return httpServer
 }
 
@@ -70,7 +66,7 @@ func (s *HttpServer) Start() error {
 		Addr:         s.cfg.Addr,
 		ReadTimeout:  s.cfg.ReadTimeout,
 		WriteTimeout: s.cfg.WriteTimeout,
-		Handler:      router.CommonHandler,
+		Handler:      s.Handler,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			if s.cfg.HandleTimeout != 0 {
 				ctx, _ = context.WithTimeout(ctx, s.cfg.HandleTimeout*time.Second)

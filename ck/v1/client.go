@@ -1,3 +1,6 @@
+//go:build go1.18
+// +build go1.18
+
 /*
  * Copyright 2024 caiflower Authors
  *
@@ -13,8 +16,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
- // +build go1.18
 
 package v1
 
@@ -79,9 +80,7 @@ type Client struct {
 }
 
 func NewClient(config Config) IClickHouseDB {
-	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("Clickhouse set default config failed. err: %s", err.Error())
-	}
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	db := ch.Connect(
 		// clickhouse://<user>:<password>@<host>:<port>/<database>?sslmode=disable

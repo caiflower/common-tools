@@ -18,7 +18,6 @@ package v1
 
 import (
 	"errors"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -37,9 +36,7 @@ type Producer interface {
 }
 
 func NewProducerClient(config xkafka.Config) *KafkaClient {
-	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("[kafka-product] producer '%s' set default config failed. err: %s", config.Name, err.Error())
-	}
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	kafkaClient := &KafkaClient{config: &config, lock: syncx.NewSpinLock()}
 	if strings.ToUpper(config.Enable) != "TRUE" {

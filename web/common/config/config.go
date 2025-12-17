@@ -19,7 +19,6 @@ package config
 import (
 	"context"
 	"net"
-	"reflect"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -41,7 +40,7 @@ type Options struct {
 	ReadTimeout              time.Duration `yaml:"readTimeout" default:"20s"`
 	WriteTimeout             time.Duration `yaml:"writeTimeout" default:"35s"`
 	HandleTimeout            time.Duration `yaml:"handleTimeout" default:"60s"`
-	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"s"`
+	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"60s"`
 	RootPath                 string        `yaml:"rootPath"`
 	HeaderTraceID            string        `yaml:"headerTraceID" default:"X-Request-Id"`
 	ControllerRootPkgName    string        `yaml:"controllerRootPkgName" default:"controller"`
@@ -50,15 +49,16 @@ type Options struct {
 	LimiterEnabled           bool          `yaml:"limiterEnabled"`
 	Qps                      int           `yaml:"qps"`
 	Network                  string        `yaml:"netWork" default:"tcp"`
-	SenseClientDisconnection bool          `yaml:"senseClientDisconnection" default:"false"`
+	SenseClientDisconnection bool          `yaml:"senseClientDisconnection"`
 	ListenConfig             *net.ListenConfig
 	OnAccept                 func(conn net.Conn) context.Context
 	OnConnect                func(ctx context.Context, conn network.Conn) context.Context
+	Debug                    bool
 }
 
 func NewOptions(opts []Option) *Options {
 	options := &Options{}
-	_ = tools.DoTagFunc(options, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	for _, opt := range opts {
 		options = opt(options)
@@ -168,6 +168,13 @@ func WithOnConnect(onConnect func(context.Context, network.Conn) context.Context
 func WithListenConfig(listenConfig *net.ListenConfig) Option {
 	return func(opts *Options) *Options {
 		opts.ListenConfig = listenConfig
+		return opts
+	}
+}
+
+func WithDebug(debug bool) Option {
+	return func(opts *Options) *Options {
+		opts.Debug = debug
 		return opts
 	}
 }

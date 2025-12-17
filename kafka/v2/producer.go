@@ -18,7 +18,6 @@ package v2
 
 import (
 	"errors"
-	"reflect"
 	"strings"
 	"time"
 
@@ -31,7 +30,7 @@ import (
 )
 
 func NewProducerClient(cfg xkafka.Config) *KafkaClient {
-	_ = tools.DoTagFunc(&cfg, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	if strings.ToUpper(cfg.Enable) != "TRUE" {
 		logger.Warn("[kafka-product] producer '%s' is disable", cfg.Name)

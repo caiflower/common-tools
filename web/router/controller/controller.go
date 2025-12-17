@@ -95,7 +95,9 @@ func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Cont
 				}
 				elem := reflect.TypeOf(argValue.Interface()).Elem()
 				pkgPath := elem.PkgPath() + "." + elem.Name()
-				if err := tools.DoTagFunc(argValue.Interface(), pkgPath, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.BuildValid}); err != nil {
+				if err := tools.DoTagFunc(argValue.Interface(), []tools.FnObj{
+					{Fn: reflectx.BuildValid, Data: pkgPath},
+				}); err != nil {
 					panic(err.Error())
 				}
 			}
@@ -113,4 +115,8 @@ func (c *Controller) GetCls() *basic.Class {
 
 func (c *Controller) GetPaths() []string {
 	return c.paths
+}
+
+func (c *Controller) GetTargetMethod(action string) *basic.Method {
+	return c.cls.GetMethod(c.cls.GetPkgName() + "." + action)
 }

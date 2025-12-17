@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
 	"fmt"
@@ -27,7 +27,12 @@ import (
 	"github.com/modern-go/reflect2"
 )
 
-func DoTagFunc(v interface{}, data interface{}, fn []func(reflect.StructField, reflect.Value, interface{}) error) (err error) {
+type FnObj struct {
+	Fn   func(reflect.StructField, reflect.Value, interface{}) error
+	Data interface{}
+}
+
+func DoTagFunc(v interface{}, fnObjs []FnObj) (err error) {
 	if reflect2.IsNil(v) {
 		return
 	}
@@ -48,8 +53,8 @@ func DoTagFunc(v interface{}, data interface{}, fn []func(reflect.StructField, r
 		field := indirect.Field(i)
 		fieldStruct := vType1.Elem().Field(i)
 
-		for _, f := range fn {
-			if err = f(fieldStruct, field, data); err != nil {
+		for _, fnObj := range fnObjs {
+			if err = fnObj.Fn(fieldStruct, field, fnObj.Data); err != nil {
 				return
 			}
 		}

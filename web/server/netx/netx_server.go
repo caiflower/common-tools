@@ -20,11 +20,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 	"time"
 
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/common/config"
@@ -37,7 +35,8 @@ import (
 )
 
 var (
-	errIdleTimeout = errs.New(errs.ErrIdleTimeout, errs.ErrorTypePrivate, nil)
+	errIdleTimeout  = errs.New(errs.ErrIdleTimeout, errs.ErrorTypePrivate, nil)
+	errParseRequest = errs.NewPrivate("parseRequest failed")
 )
 
 type HttpServer struct {
@@ -46,35 +45,27 @@ type HttpServer struct {
 	options        *config.Options
 	logger         logger.ILog
 	transporter    network.Transporter
-	ctx            context.Context
-	cancel         context.CancelFunc
 	requestCtxPool sync.Pool
 }
 
 func NewHttpServer(options config.Options) *HttpServer {
-	_ = tools.DoTagFunc(&options, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
-
-	ctx, cancel := context.WithCancel(context.Background())
+	_ = tools.DoTagFunc(&options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	s := &HttpServer{
 		options:     &options,
 		logger:      logger.DefaultLogger(),
-		ctx:         ctx,
-		cancel:      cancel,
 		transporter: netpoll.NewTransporter(&options),
 	}
 	s.requestCtxPool.New = func() interface{} {
-		return &webctx.RequestCtx{
-			XRequest: &protocol.Request{},
+		wctx := &webctx.RequestCtx{
 			XResponse: &protocol.Response{
 				Headers: make(map[string][]string),
 			},
 		}
+		wctx.XResponse.WriteHeader(http.StatusOK)
+		return wctx
 	}
-
-	// 初始化公共处理器
-	router.InitHandler(s.getHandlerCfg(), s.logger)
-	s.Handler = router.CommonHandler
+	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
 	return s
 }
@@ -90,19 +81,17 @@ func (s *HttpServer) Start() error {
 			"*************************************************************************************************", s.options.Name, s.options.RootPath, s.options.Addr)
 
 	var err error
-	if err = s.transporter.ListenAndServe(s.OnReq); err != nil {
-		s.logger.Error("ListenAndServe failed. Error: %s", err.Error())
-	}
+	go func() {
+		if err = s.transporter.ListenAndServe(s.OnReq); err != nil {
+			s.logger.Error("ListenAndServe failed. Error: %s", err.Error())
+		}
+	}()
 
 	return err
 }
 
 func (s *HttpServer) Close() {
-	s.logger.Info("      **** netx http server shutdown ****")
-
-	if s.cancel != nil {
-		s.cancel()
-	}
+	s.logger.Info("      **** netx http server shutdown, wait at most 5s ****")
 
 	timeout, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancelFunc()
@@ -123,6 +112,7 @@ func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
+		Debug: options.Debug,
 	}
 }
 
@@ -132,7 +122,6 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 		zr             network.Reader
 		connRequestNum = uint64(0)
 		req            *http.Request
-		headerID       = s.options.HeaderTraceID
 		zw             network.Writer
 	)
 
@@ -143,20 +132,15 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 
 	ctx := s.getRequestContext()
 	ctx = ctx.SetConn(conn.(network.Conn)).SetContext(c)
+	zr = ctx.GetReader()
+	zw = ctx.GetWriter()
 
 	defer func() {
 		s.requestCtxPool.Put(ctx)
-		ctx.GetConn().Close()
+		_ = ctx.GetConn().Close()
 	}()
 
 	for {
-		if zr == nil {
-			zr = ctx.GetReader()
-		}
-		if zw == nil {
-			zw = ctx.GetWriter()
-		}
-
 		connRequestNum++
 
 		// If this is a keep-alive connection we want to try and read the first bytes
@@ -182,35 +166,23 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 		req, err = ctx.GetHttpRequest()
 		if err != nil {
 			s.logger.Error("GetHttpRequest failed. Error: %s", err.Error())
+			err = errParseRequest
 			return
 		}
 
 		ctx.Method = req.Method
 		ctx.Params = req.URL.Query()
 		ctx.Path = req.URL.Path
+		ctx.Request = req
+		ctx.Writer = ctx.XResponse
 
-		var traceID string
-		if headerID != "" {
-			traceID = req.Header.Get(headerID)
-		}
-		if traceID == "" {
-			traceID = tools.UUID()
-			if headerID != "" {
-				req.Header.Set(headerID, traceID)
-			}
-		}
-		golocalv1.PutTraceID(traceID)
-		golocalv1.Put(router.BeginTime, time.Now())
-		golocalv1.PutContext(c)
-
-		s.Handler.Dispatch(ctx, ctx.XResponse, req)
+		s.Handler.ServeHTTPWithRequestContext(ctx, ctx.XResponse, req)
 		err = writeResponse(ctx, zw)
 		if err != nil {
 			return
 		}
 
 		_ = zr.Release()
-		golocalv1.Clean()
 		ctx.Reset()
 	}
 }
@@ -220,14 +192,14 @@ func (s *HttpServer) getRequestContext() *webctx.RequestCtx {
 }
 
 func writeResponse(ctx *webctx.RequestCtx, w network.Writer) error {
-	bytes := ctx.XResponse.ByteBuffer.Bytes()
+	bytes := ctx.XResponse.Bytes()
 
 	_, err := w.WriteBinary(bytes)
 	if err != nil {
 		return err
 	}
 
-	w.Flush()
+	err = w.Flush()
 
 	return err
 }

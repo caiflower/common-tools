@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package redisv1
+package redisv1
 
 import (
 	"context"
@@ -79,7 +79,7 @@ type redisClient struct {
 }
 
 func NewRedisClient(config Config) RedisClient {
-	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	logger.Info("**** Create Redis Client **** \n Redis config: %v", tools.ToJson(config))
 	c := &redisClient{

@@ -67,7 +67,7 @@ type Config struct {
 }
 
 func InitTaskDispatcher(cfg *Config) {
-	_ = tools.DoTagFunc(&cfg, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 	_tr.subtaskWorker = cfg.SubtaskWorker
 	_tr.taskWorker = cfg.TaskWorker
 	_tr.subtaskRollbackWorker = cfg.SubtaskRollbackWorker

@@ -123,7 +123,7 @@ func (rm *resourceManger) Signal() {
 				}
 			}
 
-			sign := make(chan os.Signal)
+			sign := make(chan os.Signal, 1)
 			signal.Notify(sign, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 			rm.lock.Unlock()
 			s := <-sign
@@ -135,7 +135,7 @@ func (rm *resourceManger) Signal() {
 }
 
 func (rm *resourceManger) destroy() {
-	for _, resource := range rm.pagePackageResource {
-		resource.Close()
+	for i := len(rm.pagePackageResource) - 1; i >= 0; i-- {
+		rm.pagePackageResource[i].Close()
 	}
 }

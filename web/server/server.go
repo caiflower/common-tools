@@ -17,9 +17,9 @@
 package server
 
 import (
-	"github.com/caiflower/common-tools/web/common/controller"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/router"
+	controller2 "github.com/caiflower/common-tools/web/router/controller"
 )
 
 type Core interface {
@@ -27,8 +27,8 @@ type Core interface {
 	Start() error
 	Close()
 
-	AddController(v interface{})
-	Register(controller *controller.RestfulController)
+	AddController(v interface{}) *controller2.Controller
+	Register(controller *controller2.RestfulController)
 
 	AddInterceptor(i interceptor.Interceptor, order int)
 	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)

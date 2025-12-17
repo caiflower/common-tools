@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package http
+package http
 
 import (
 	"bytes"
@@ -25,7 +25,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -77,7 +76,7 @@ type httpClient struct {
 
 func NewHttpClient(config Config) HttpClient {
 	// 初始化默认配置
-	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,

@@ -32,18 +32,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	controllermodel "github.com/caiflower/common-tools/web/common/controller"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/common/metric"
 	"github.com/caiflower/common-tools/web/common/reflectx"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/common/webctx"
+	"github.com/caiflower/common-tools/web/router/controller"
+	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -65,6 +67,7 @@ type HandlerCfg struct {
 	ControllerRootPkgName string        `yaml:"controllerRootPkgName" default:"controller"`
 	EnablePprof           bool          `yaml:"enablePprof"`
 	WebLimiter            LimiterConfig `yaml:"webLimiter"`
+	Debug                 bool          `yaml:"debug"`
 }
 
 type LimiterConfig struct {
@@ -75,57 +78,59 @@ type LimiterConfig struct {
 // BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
 type BeforeDispatchCallbackFunc func(w http.ResponseWriter, r *http.Request) bool
 
-var once = sync.Once{}
-var CommonHandler *Handler
+var metrics = metric.NewHttpMetric()
 
-func InitHandler(config HandlerCfg, logger logger.ILog) {
-	once.Do(func() {
-		CommonHandler = &Handler{
-			config:       &config,
-			controllers:  make(map[string]*controllermodel.Controller),
-			restfulPaths: make(map[string]struct{}),
-			logger:       logger,
-			metric:       metric.NewHttpMetric(),
+func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
+	commonHandler := &Handler{
+		config:       &config,
+		controllers:  make(map[string]*controller.Controller),
+		restfulPaths: make(map[string]struct{}),
+		logger:       logger,
+		metric:       metrics,
+	}
+
+	commonHandler.ctxPool.New = func() interface{} {
+		return &webctx.RequestCtx{
+			Paths: make(param.Params, 0, 1),
+		}
+	}
+
+	if config.WebLimiter.Enable {
+		getLimiterCallBack := func(qos int) limiter.Limiter {
+			limiterBucket := limiter.NewXTokenBucket(qos, qos)
+			return limiterBucket
 		}
 
-		CommonHandler.ctxPool.New = func() interface{} {
-			return &webctx.RequestCtx{}
-		}
-
-		if config.WebLimiter.Enable {
-			getLimiterCallBack := func(qos int) limiter.Limiter {
-				limiterBucket := limiter.NewXTokenBucket(qos, qos)
-				return limiterBucket
+		limiterBucket := getLimiterCallBack(config.WebLimiter.Qos)
+		commonHandler.beforeDispatchCallbackFunc = func(w http.ResponseWriter, r *http.Request) bool {
+			if limiterBucket.TakeTokenNonBlocking() {
+				return false
 			}
 
-			limiterBucket := getLimiterCallBack(config.WebLimiter.Qos)
-			CommonHandler.beforeDispatchCallbackFunc = func(w http.ResponseWriter, r *http.Request) bool {
-				if limiterBucket.TakeTokenNonBlocking() {
-					return false
-				}
-
-				res := resp.Result{
-					RequestId: tools.UUID(),
-					Error:     e.NewApiError(e.TooManyRequests, "TooManyRequests", nil),
-				}
-
-				w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-				w.WriteHeader(res.Error.GetCode())
-				_, _ = w.Write([]byte(tools.ToJson(res)))
-				return true
-
+			res := resp.Result{
+				RequestId: tools.UUID(),
+				Error:     e.NewApiError(e.TooManyRequests, "TooManyRequests", nil),
 			}
+
+			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+			w.WriteHeader(res.Error.GetCode())
+			_, _ = w.Write([]byte(tools.ToJson(res)))
+			return true
+
 		}
-	})
+	}
+	return commonHandler
 }
 
 type Handler struct {
-	config             *HandlerCfg
-	controllers        map[string]*controllermodel.Controller
-	restfulControllers []*controllermodel.RestfulController
-	restfulPaths       map[string]struct{}
-	logger             logger.ILog
-	metric             *metric.HttpMetric
+	config *HandlerCfg
+
+	controllers  map[string]*controller.Controller
+	trees        MethodTrees
+	restfulPaths map[string]struct{}
+
+	logger logger.ILog
+	metric *metric.HttpMetric
 
 	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
 	interceptors               interceptor.ItemSort
@@ -135,6 +140,34 @@ type Handler struct {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer golocalv1.Clean()
+	if h.serverCommon(w, r) {
+		return
+	}
+
+	ctx := h.getRequestContextWithRequest(w, r)
+	defer h.putRequestContext(ctx)
+
+	// dispatch
+	h.Dispatch(ctx, w, r)
+}
+
+func (h *Handler) ServeHTTPWithRequestContext(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) {
+	defer golocalv1.Clean()
+	if h.serverCommon(w, r) {
+		return
+	}
+
+	// dispatch
+	h.Dispatch(ctx, w, r)
+}
+
+func (h *Handler) serverCommon(w http.ResponseWriter, r *http.Request) (done bool) {
+	if h.specialRequest(w, r) {
+		done = true
+		return
+	}
+
 	var traceID string
 	if h.config.HeaderTraceID != "" {
 		traceID = r.Header.Get(h.config.HeaderTraceID)
@@ -148,23 +181,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	golocalv1.PutTraceID(traceID)
 	golocalv1.Put(BeginTime, time.Now())
 	golocalv1.PutContext(r.Context())
-	defer golocalv1.Clean()
-
-	if h.specialRequest(w, r) {
-		return
-	}
 
 	if h.beforeDispatchCallbackFunc != nil {
 		if h.beforeDispatchCallbackFunc(w, r) {
+			done = true
 			return
 		}
 	}
 
-	ctx := h.getRequestContextWithRequest(w, r)
-	defer h.putRequestContext(ctx)
-
-	// dispatch
-	h.Dispatch(ctx, w, r)
+	return
 }
 
 func (h *Handler) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
@@ -182,11 +207,11 @@ func (h *Handler) SortInterceptors() {
 	sort.Sort(h.interceptors)
 }
 
-func (h *Handler) AddController(v interface{}) {
-	c, err := controllermodel.NewController(v, h.config.ControllerRootPkgName, h.config.RootPath)
+func (h *Handler) AddController(v interface{}) *controller.Controller {
+	c, err := controller.NewController(v, h.config.ControllerRootPkgName, h.config.RootPath)
 	if err != nil {
 		logger.Warn("[AddController] add error: %s", err.Error())
-		return
+		return nil
 	}
 
 	paths := c.GetPaths()
@@ -198,33 +223,44 @@ func (h *Handler) AddController(v interface{}) {
 	if !bean.HasBean(bean.GetBeanNameFromValue(v)) {
 		bean.AddBean(v)
 	}
+
+	return c
 }
 
-func (h *Handler) Register(controller *controllermodel.RestfulController) {
+func (h *Handler) Register(controller *controller.RestfulController) {
 	method := controller.GetMethod()
 	version := controller.GetVersion()
-	cpath := controller.GetPath()
 	action := controller.GetAction()
 	controllerName := controller.GetControllerName()
 	originPath := controller.GetOriginPath()
 
-	path := "method:" + method + "version:" + version + "path:" + cpath
+	path := fmt.Sprintf("/%s%s%s", version, controller.GetGroup(), originPath)
 	if _, ok := h.restfulPaths[path]; ok {
-		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exsit. ", method, version, cpath))
+		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exist. ", method, version, originPath))
 	}
 
-	c := h.controllers[controllerName]
-	if c != nil {
-		cls := c.GetCls()
-		targetMethod := cls.GetMethod(cls.GetPkgName() + "." + action)
-		controller = controller.TargetMethod(targetMethod)
-		h.restfulPaths[path] = struct{}{}
-		h.restfulControllers = append(h.restfulControllers, controller)
-	} else {
-		panic(fmt.Sprintf("Register restfulApi failed. Not found controller[%s] action[%s]. ", controllerName, action))
+	targetMethod := controller.GetTargetMethod()
+	if targetMethod == nil && controllerName != "" {
+		c := h.controllers[controllerName]
+		if c != nil {
+			cls := c.GetCls()
+			targetMethod = cls.GetMethod(cls.GetPkgName() + "." + action)
+		}
 	}
 
-	logger.Info("Register path %v, Method: %v", "/"+version+originPath, method)
+	if targetMethod == nil {
+		panic(fmt.Sprintf("Register restfulApi failed. path[%s] Not found controller[%s] action[%s]. ", path, controllerName, action))
+	}
+
+	methodRouter := h.trees.get(method)
+	if methodRouter == nil {
+		methodRouter = &router{method: method, root: &node{}}
+		h.trees = append(h.trees, methodRouter)
+	}
+
+	methodRouter.addRoute(path, []*basic.Method{targetMethod})
+
+	logger.Info("Register path %v, Method: %v", path, method)
 }
 
 func (h *Handler) getRequestContext() *webctx.RequestCtx {
@@ -311,46 +347,12 @@ func (h *Handler) setTargetMethod(r *http.Request, ctx *webctx.RequestCtx) bool 
 			ctx.TargetMethod = method
 		}
 	} else {
-		// 根据restful风格查询method
-		for _, c := range h.restfulControllers {
-			method := c.GetMethod()
-			version := c.GetVersion()
-			path := c.GetPath()
-			pathParams := c.GetPathParams()
-
-			if method == ctx.Method && tools.MatchReg(ctx.Path, "/"+version+path) {
-				ctx.Version = version
-				ctx.TargetMethod = c.GetTargetMethod()
-				ctx.Action = c.GetAction()
-
-				path := strings.TrimPrefix(ctx.Path, "/"+version)
-				k := 0
-				otherPaths := c.GetOtherPaths()
-				for i, cur := range otherPaths {
-					next := ""
-					if i+1 < len(otherPaths) {
-						next = otherPaths[i+1]
-					}
-					path = strings.TrimPrefix(path, "/"+cur+"/")
-					pathValue := ""
-					for j := 0; j < len(path); j++ {
-						if next != "" && strings.HasPrefix(path[j:], "/"+next+"/") {
-							pathValue = path[:j]
-							path = path[j:]
-							break
-						} else if next == "" {
-							pathValue = path[j:]
-							break
-						}
-					}
-
-					if pathValue != "" {
-						ctx.Paths[pathParams[k]] = pathValue
-						k++
-					}
-				}
-
-				break
+		// restful
+		tree := h.trees.get(ctx.Method)
+		if tree != nil {
+			res := tree.find(ctx.Path, &ctx.Paths, false)
+			if res.handlers != nil {
+				ctx.TargetMethod = res.handlers[0]
 			}
 		}
 	}
@@ -397,6 +399,20 @@ func (h *Handler) setArgs(r *http.Request, ctx *webctx.RequestCtx, webContext *w
 		bytes = []byte("{}")
 	}
 
+	// set context
+	indirect := reflect.Indirect(reflect.ValueOf(ctx.Args[0].Interface()))
+	for i := 0; i < indirect.NumField(); i++ {
+		field := indirect.Field(i)
+		if field.Type().AssignableTo(assignableWebContextElem) {
+			field.Set(reflect.ValueOf(*webContext))
+			break
+		} else if field.Type().AssignableTo(assignableWebContext) {
+			field.Set(reflect.ValueOf(webContext))
+			break
+		}
+	}
+
+	fnObjs := make([]tools.FnObj, 0, 10)
 	// 非restful风格
 	if !ctx.IsRestful() {
 		// 先解析body，解析param
@@ -406,6 +422,13 @@ func (h *Handler) setArgs(r *http.Request, ctx *webctx.RequestCtx, webContext *w
 			var typeError *json.UnmarshalTypeError
 			if errors.As(err, &typeError) {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+			}
+
+			if len(ctx.Params) > 0 {
+				fnObjs = append(fnObjs, tools.FnObj{
+					Fn:   reflectx.SetParam,
+					Data: ctx.Params,
+				})
 			}
 
 			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
@@ -424,41 +447,37 @@ func (h *Handler) setArgs(r *http.Request, ctx *webctx.RequestCtx, webContext *w
 			}
 		case http.MethodGet:
 			if len(ctx.Params) > 0 {
-				if err := tools.DoTagFunc(ctx.Args[0].Interface(), ctx.Params, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetParam}); err != nil {
-					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse params failed. detail: %s", err.Error()), err)
-				}
+				fnObjs = append(fnObjs, tools.FnObj{
+					Fn:   reflectx.SetParam,
+					Data: ctx.Params,
+				})
 			}
 		}
 
-		// 设置paths
+		// set paths
 		if len(ctx.Paths) > 0 {
-			if err := tools.DoTagFunc(ctx.Args[0].Interface(), ctx.Paths, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetPath}); err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse paths failed. detail: %s", err.Error()), err)
-			}
+			fnObjs = append(fnObjs, tools.FnObj{
+				Fn:   reflectx.SetPath,
+				Data: ctx.Paths,
+			})
 		}
 	}
 
-	// 设置context
-	indirect := reflect.Indirect(reflect.ValueOf(ctx.Args[0].Interface()))
-	for i := 0; i < indirect.NumField(); i++ {
-		field := indirect.Field(i)
-		if field.Type().AssignableTo(assignableWebContextElem) {
-			field.Set(reflect.ValueOf(*webContext))
-			break
-		} else if field.Type().AssignableTo(assignableWebContext) {
-			field.Set(reflect.ValueOf(webContext))
-			break
-		}
-	}
+	// set header
+	fnObjs = append(fnObjs, tools.FnObj{
+		Fn:   reflectx.SetHeader,
+		Data: r.Header,
+	})
 
-	// 设置header
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), r.Header, []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.SetHeader}); err != nil {
-		return e.NewApiError(e.Internal, fmt.Sprintf("set header failed. detail: %s", err.Error()), err)
-	}
+	// set default
+	fnObjs = append(fnObjs, tools.FnObj{
+		Fn:   tools.SetDefaultValueIfNil,
+		Data: r.Header,
+	})
 
-	// 设置默认值
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		return e.NewApiError(e.Internal, fmt.Sprintf("set default value failed. detail: %s", err.Error()), err)
+	if err := tools.DoTagFunc(ctx.Args[0].Interface(), fnObjs); err != nil {
+		logger.Error("do tag function failed.", err)
+		return e.NewInternalError(err)
 	}
 
 	return nil
@@ -472,12 +491,14 @@ func (h *Handler) validArgs(ctx *webctx.RequestCtx) e.ApiError {
 
 	elem := reflect.TypeOf(ctx.Args[0].Interface()).Elem()
 	pkgPath := elem.PkgPath()
-	object := reflectx.ValidObject{
-		PkgPath:   pkgPath,
-		FiledName: elem.Name(),
-	}
-	funcList := []func(reflect.StructField, reflect.Value, interface{}) error{reflectx.CheckParam}
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), object, funcList); err != nil {
+	if err := tools.DoTagFunc(ctx.Args[0].Interface(), []tools.FnObj{
+		{
+			Fn: reflectx.CheckParam,
+			Data: reflectx.ValidObject{
+				PkgPath:   pkgPath,
+				FiledName: elem.Name(),
+			}},
+	}); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
 	}
 
@@ -650,6 +671,10 @@ func (h *Handler) specialRequest(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/metrics":
 		promHttpHandler.ServeHTTP(w, r)
+		return true
+	case "/debugxxx":
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte("ok"))
 		return true
 	}
 	if h.config.EnablePprof {

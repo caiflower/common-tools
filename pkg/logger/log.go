@@ -104,7 +104,7 @@ type Config struct {
 	Level          string `yaml:"level" json:"level"`                     // 日志级别
 	EnableTrace    string `yaml:"trace" json:"trace"`                     // 是否开启Trace, True/False。默认False
 	QueueLength    int    `yaml:"queueLength" json:"queueLength"`         // 缓存队列大小，默认50000
-	AppenderNum    int    `yaml:"appenderNum" json:"appenderNum"`         // 日志输出器数量，默认2
+	AppenderNum    int    `yaml:"appenderNum" json:"appenderNum"`         // 日志输出器数量，默认1
 	TimeFormat     string `yaml:"timeFormat" json:"timeFormat"`           // 日志时间输出格式
 	Path           string `yaml:"path" json:"path"`                       // 日志存储目录
 	FileName       string `yaml:"fileName" json:"fileName"`               // 日志文件名称
@@ -153,7 +153,7 @@ func newLoggerHandler(config *Config) *LoggerHandler {
 		config.QueueLength = 50000
 	}
 	if config.AppenderNum <= 0 {
-		config.AppenderNum = 2
+		config.AppenderNum = 1
 	}
 	if config.TimeFormat == "" {
 		config.TimeFormat = _timeFormat

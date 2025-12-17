@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
-	"github.com/caiflower/common-tools/pkg/tools"
 )
 
 const (
@@ -30,12 +29,10 @@ const (
 type RestfulController struct {
 	method         string
 	version        string
+	group          string
 	originPath     string
-	path           string
 	controllerName string
 	action         string
-	pathParams     []string // 路经参数 /v1/products/{productId}/subProducts/{subProductId}, 那么pathParams = ["productId","subProductId"]
-	otherPaths     []string
 	targetMethod   *basic.Method
 }
 
@@ -43,30 +40,19 @@ func NewRestFul() *RestfulController {
 	return &RestfulController{}
 }
 
-func (c *RestfulController) Version(version string) *RestfulController {
-	c.version = version
-	return c
-}
-
-func (c *RestfulController) Path(path string) *RestfulController {
-	c.originPath = path
-	if tools.MatchReg(path, pathParamReg) {
-		strList := tools.RegFind(path, pathParamReg)
-		for _, str := range strList {
-			c.pathParams = append(c.pathParams, str[2:len(str)-1])
-		}
-		clean := tools.RegReplace(path, pathParamReg, "")
-		c.otherPaths = strings.Split(clean, "/")[1:]
-
-		c.path = tools.RegReplace(path, pathParamReg, `/[a-zA-Z0-9_-]+`) + "/?$"
-	} else {
-		c.path = path
+func (c *RestfulController) Group(group string) *RestfulController {
+	if !strings.HasPrefix(c.group, "/") {
+		c.group = "/" + group
 	}
+	c.group = group
 	return c
 }
 
-func (c *RestfulController) Method(method string) *RestfulController {
-	c.method = method
+func (c *RestfulController) Version(version string) *RestfulController {
+	if strings.HasPrefix(version, "/") {
+		version = version[1:]
+	}
+	c.version = version
 	return c
 }
 
@@ -75,18 +61,35 @@ func (c *RestfulController) Controller(controllerName string) *RestfulController
 	return c
 }
 
+func (c *RestfulController) Path(path string) *RestfulController {
+	copyC := c.copyC()
+	if !strings.HasPrefix(path, "/") {
+		copyC.originPath = "/" + path
+	} else {
+		copyC.originPath = path
+	}
+	return copyC
+}
+
+func (c *RestfulController) Method(method string) *RestfulController {
+	copyC := c.copyC()
+	copyC.method = method
+	return copyC
+}
+
 func (c *RestfulController) Action(action string) *RestfulController {
-	c.action = action
-	return c
+	copyC := c.copyC()
+	copyC.action = action
+	return copyC
 }
 
 func (c *RestfulController) TargetMethod(method *basic.Method) *RestfulController {
-	c.targetMethod = method
-	return c
-}
-
-func (c *RestfulController) GetPath() string {
-	return c.path
+	copyC := c.copyC()
+	if method == nil {
+		panic("TargetMethod the method is nil")
+	}
+	copyC.targetMethod = method
+	return copyC
 }
 
 func (c *RestfulController) GetVersion() string {
@@ -101,10 +104,6 @@ func (c *RestfulController) GetAction() string {
 	return c.action
 }
 
-func (c *RestfulController) GetOtherPaths() []string {
-	return c.otherPaths
-}
-
 func (c *RestfulController) GetTargetMethod() *basic.Method {
 	return c.targetMethod
 }
@@ -117,6 +116,18 @@ func (c *RestfulController) GetOriginPath() string {
 	return c.originPath
 }
 
-func (c *RestfulController) GetPathParams() []string {
-	return c.pathParams
+func (c *RestfulController) GetGroup() string {
+	return c.group
+}
+
+func (c *RestfulController) copyC() *RestfulController {
+	return &RestfulController{
+		method:         c.method,
+		version:        c.version,
+		controllerName: c.controllerName,
+		action:         c.action,
+		targetMethod:   c.targetMethod,
+		originPath:     c.originPath,
+		group:          c.group,
+	}
 }

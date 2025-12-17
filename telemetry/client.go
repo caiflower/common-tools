@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
- package telemetry
+package telemetry
 
 import (
 	"context"
+	"sync"
+
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -26,8 +28,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"reflect"
-	"sync"
 )
 
 type Config struct {
@@ -45,7 +45,7 @@ type client struct {
 }
 
 func Init(config Config) {
-	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 	uptrace.SetLogger(logger.DefaultLogger())
 
 	options := make([]uptrace.Option, 0, 10)

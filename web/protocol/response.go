@@ -24,6 +24,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/bytebufferpool"
 	"github.com/caiflower/common-tools/web/common/nocopy"
+	"github.com/caiflower/common-tools/web/network"
 )
 
 type Response struct {
@@ -32,7 +33,8 @@ type Response struct {
 	Headers http.Header
 
 	statusCode int
-	headerSent bool
+
+	conn network.Conn
 
 	// response buffer
 	bytebufferpool.ByteBuffer
@@ -42,52 +44,38 @@ func (resp *Response) Header() http.Header {
 	return resp.Headers
 }
 
-//// flushBuffer flushBuffer
-//func (resp *Response) flushBuffer() error {
-//	if resp.ByteBuffer.Len() <= 0 {
-//		return nil
-//	}
-//
-//	_, err := resp.conn.WriteBinary(resp.ByteBuffer.Bytes())
-//	if err != nil {
-//		return err
-//	}
-//
-//	return resp.conn.Flush()
-//}
-
 func (resp *Response) Write(data []byte) (int, error) {
-	if !resp.headerSent {
-		resp.WriteHeader(200)
-	}
-	resp.headerSent = true
-	resp.ByteBuffer.Write([]byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))))
 	return resp.ByteBuffer.Write(data)
 }
 
-// WriteHeader WriteHeader
+func (resp *Response) Bytes() []byte {
+	return append(resp.getHeaderBytes(), resp.ByteBuffer.Bytes()...)
+}
+
 func (resp *Response) WriteHeader(statusCode int) {
-	if resp.headerSent {
-		return
-	}
-
 	resp.statusCode = statusCode
-	resp.headerSent = true
+}
 
-	// 构建响应行
-	statusText := http.StatusText(statusCode)
+func (resp *Response) Reset() {
+	resp.ByteBuffer.Reset()
+	resp.statusCode = http.StatusOK
+	resp.Headers = make(map[string][]string)
+}
+
+func (resp *Response) getHeaderBytes() []byte {
+	statusText := http.StatusText(resp.statusCode)
 	if statusText == "" {
-		statusText = "Unknown"
+		statusText = "Internal Server Error"
 	}
 
-	responseLine := fmt.Sprintf("HTTP/1.1 %d %s\r\n", statusCode, statusText)
+	responseLine := fmt.Sprintf("HTTP/1.1 %d %s\r\n", resp.statusCode, statusText)
 
 	var headerBuf bytes.Buffer
 	headerBuf.WriteString(responseLine)
 
 	for key, values := range resp.Headers {
 		for _, value := range values {
-			if key != "Content-Length" {
+			if key == "Content-Length" {
 				continue
 			}
 			headerBuf.WriteString(fmt.Sprintf("%s: %s\r\n", key, value))
@@ -99,15 +87,13 @@ func (resp *Response) WriteHeader(statusCode int) {
 	}
 
 	if resp.Headers.Get("Server") == "" {
-		headerBuf.WriteString("Server: caiflower/1.0\r\n")
+		headerBuf.WriteString("Server: caiflower\r\n")
 	}
 
-	resp.ByteBuffer.Write(headerBuf.Bytes())
+	headerBuf.WriteString(fmt.Sprintf("Content-Length: %d\r\n\r\n", resp.ByteBuffer.Len()))
+	return headerBuf.Bytes()
 }
 
-func (resp *Response) Reset() {
-	resp.ByteBuffer.Reset()
-	resp.statusCode = 0
-	resp.headerSent = false
-	resp.Headers = make(map[string][]string)
+func (resp *Response) SetConn(conn network.Conn) {
+	resp.conn = conn
 }

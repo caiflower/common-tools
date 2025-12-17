@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -141,7 +140,7 @@ type Cluster struct {
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
-	_ = tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil})
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	if config.Timeout <= 0 {
 		config.Timeout = 10

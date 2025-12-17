@@ -19,7 +19,6 @@ package v1
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -41,9 +40,7 @@ type Consumer interface {
 type KafkaMessage = kafka.Message
 
 func NewConsumerClient(config xkafka.Config) *KafkaClient {
-	if err := tools.DoTagFunc(&config, nil, []func(reflect.StructField, reflect.Value, interface{}) error{tools.SetDefaultValueIfNil}); err != nil {
-		logger.Warn("[kafka-consumer] consumer '%s' set default config failed. err: %s", config.Name, err.Error())
-	}
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	if config.GroupID == "" {
 		panic("[kafka-consumer] consumer group id should not be empty")

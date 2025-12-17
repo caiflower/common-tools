@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/router/param"
 )
 
 func SetHeader(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
@@ -95,22 +96,20 @@ func SetHeader(structField reflect.StructField, vValue reflect.Value, data inter
 }
 
 func SetPath(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
-	m := data.(map[string]string)
+	if !vValue.CanSet() {
+		return
+	}
 
-	var value string
+	paths := data.(param.Params)
+
 	name := structField.Name
 	// 首字母变小
 	lName := strings.ToLower(name[:1]) + name[1:]
-	for k, v := range m {
-		if tools.ToCamel(k) == lName || name == k {
-			value = v
-			break
-		}
+
+	if v, e := paths.Get(lName); e {
+		_ = tools.ReflectCommonSet(structField, vValue, []string{v})
 	}
 
-	if value != "" {
-		err = tools.ReflectCommonSet(structField, vValue, []string{value})
-	}
 	return
 }
 
