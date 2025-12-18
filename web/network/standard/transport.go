@@ -25,8 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/network"
+	"github.com/caiflower/common-tools/web/server/config"
 )
 
 type transport struct {

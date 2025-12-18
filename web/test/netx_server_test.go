@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/web/common/config"
-	"github.com/caiflower/common-tools/web/server/netx"
+	"github.com/caiflower/common-tools/web/server/config"
+	"github.com/caiflower/common-tools/web/server/netpoll"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -67,35 +67,13 @@ func TestNewHttpServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := netx.NewHttpServer(tt.options)
+			server := netpoll.NewHttpServer(tt.options)
 
 			assert.NotNil(t, server, "Server should not be nil")
 			assert.NotNil(t, server.Handler, "Handler should not be nil")
 			assert.Equal(t, fmt.Sprintf("NETPOLL_HTTP_SERVER:%s", tt.options.Name), server.Name())
 		})
 	}
-}
-
-func TestHttpServerOutOfRangPort(t *testing.T) {
-	// 测试无效端口
-	options := config.Options{
-		Name: "error-server",
-		Addr: ":99999", // 无效端口
-	}
-
-	server := netx.NewHttpServer(options)
-	assert.NotNil(t, server)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Log("Server panic:", r)
-		}
-	}()
-
-	// 尝试启动应该会失败
-	_ = server.Start()
-
-	server.Close()
 }
 
 func TestHttpServerIntegration(t *testing.T) {
@@ -128,7 +106,7 @@ func TestHttpServerIntegration(t *testing.T) {
 		SenseClientDisconnection: false,
 	}
 
-	server := netx.NewHttpServer(options)
+	server := netpoll.NewHttpServer(options)
 	assert.NotNil(t, server)
 
 	// 启动服务器

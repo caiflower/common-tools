@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/network"
+	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/stretchr/testify/assert"
 )
 

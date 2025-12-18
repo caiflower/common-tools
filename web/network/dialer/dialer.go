@@ -25,7 +25,7 @@ import (
 	"github.com/caiflower/common-tools/web/network/standard"
 )
 
-// will be netx.NewDialer() if available, see netx.go
+// will be netpoll.NewDialer() if available, see netpoll.go
 var defaultDialer network.Dialer = standard.NewDialer()
 
 // SetDialer is used to set the global default dialer.

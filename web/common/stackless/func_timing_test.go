@@ -1,5 +1,3 @@
-//go:build amd64 || arm64 || ppc64
-
 /*
  * Copyright 2022 CloudWeGo Authors
  *
@@ -41,71 +39,43 @@
  * Modifications are Copyright 2022 CloudWeGo Authors.
  */
 
-package bytesconv
+package stackless
 
 import (
-	"fmt"
+	"sync/atomic"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
-func TestParseUint(t *testing.T) {
-	t.Parallel()
-
-	for _, v := range []struct {
-		s string
-		i int
-	}{
-		{"0", 0},
-		{"123", 123},
-		{"1234567890", 1234567890},
-		{"123456789012345678", 123456789012345678},
-		{"9223372036854775807", 9223372036854775807},
-	} {
-		n, err := ParseUint(S2b(v.s))
-		if err != nil {
-			t.Errorf("unexpected error: %v. s=%q n=%v", err, v.s, n)
+func BenchmarkFuncOverhead(b *testing.B) {
+	var n uint64
+	f := NewFunc(func(ctx interface{}) {
+		atomic.AddUint64(&n, *(ctx.(*uint64)))
+	})
+	b.RunParallel(func(pb *testing.PB) {
+		x := uint64(1)
+		for pb.Next() {
+			if !f(&x) {
+				b.Fatalf("f mustn't return false")
+			}
 		}
-		assert.Equal(t, n, v.i)
+	})
+	if n != uint64(b.N) {
+		b.Fatalf("unexpected n: %d. Expecting %d", n, b.N)
 	}
 }
 
-func TestParseUintError(t *testing.T) {
-	t.Parallel()
-
-	for _, v := range []struct {
-		s string
-	}{
-		{""},
-		{"cloudwego123"},
-		{"1234.545"},
-		{"-9223372036854775808"},
-		{"9223372036854775808"},
-		{"18446744073709551615"},
-	} {
-		n, err := ParseUint(S2b(v.s))
-		if err == nil {
-			t.Fatalf("Expecting error when parsing %q. obtained %d", v.s, n)
-		}
-		if n >= 0 {
-			t.Fatalf("Unexpected n=%d when parsing %q. Expected negative num", n, v.s)
-		}
+func BenchmarkFuncPure(b *testing.B) {
+	var n uint64
+	f := func(x *uint64) {
+		atomic.AddUint64(&n, *x)
 	}
-}
-
-func TestAppendUint(t *testing.T) {
-	t.Parallel()
-
-	for _, s := range []struct {
-		n int
-	}{
-		{0},
-		{123},
-		{0x7fffffffffffffff},
-	} {
-		expectedS := fmt.Sprintf("%d", s.n)
-		s := AppendUint(nil, s.n)
-		assert.Equal(t, expectedS, B2s(s))
+	b.RunParallel(func(pb *testing.PB) {
+		x := uint64(1)
+		for pb.Next() {
+			f(&x)
+		}
+	})
+	if n != uint64(b.N) {
+		b.Fatalf("unexpected n: %d. Expecting %d", n, b.N)
 	}
 }

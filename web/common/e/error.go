@@ -27,6 +27,7 @@ type ApiError interface {
 	GetType() string
 	GetMessage() string
 	GetCause() error
+	IsInternalError() bool
 }
 
 type Error = apiError
@@ -56,6 +57,10 @@ func (e *apiError) GetCause() error {
 
 func (e *apiError) Error() string {
 	return tools.ToJson(e.Cause)
+}
+
+func (e *apiError) IsInternalError() bool {
+	return e.Code == http.StatusInternalServerError
 }
 
 type ErrorCode struct {

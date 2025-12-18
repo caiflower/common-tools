@@ -14,31 +14,26 @@
  * limitations under the License.
  */
 
-package protocol
+package router
 
 import (
-	"github.com/caiflower/common-tools/pkg/bytebufferpool"
-	"github.com/caiflower/common-tools/web/common/nocopy"
+	"strings"
+
+	"github.com/caiflower/common-tools/web/common/webctx"
 )
 
-type Response struct {
-	noCopy nocopy.NoCopy //lint:ignore U1000 until noCopy is used
-
-	Header ResponseHeader
-
-	// response buffer
-	bytebufferpool.ByteBuffer
+func acceptGzip(ctx *webctx.RequestCtx) bool {
+	return strings.Contains(ctx.GetAcceptEncoding(), "gzip")
 }
 
-func (resp *Response) Write(data []byte) (int, error) {
-	return resp.ByteBuffer.Write(data)
+func acceptBr(ctx *webctx.RequestCtx) bool {
+	return strings.Contains(ctx.GetAcceptEncoding(), "br")
 }
 
-func (resp *Response) WriteHeader(statusCode int) {
-	resp.Header.statusCode = statusCode
+func isGzip(ctx *webctx.RequestCtx) bool {
+	return strings.Contains(ctx.GetContentEncoding(), "gzip")
 }
 
-func (resp *Response) Reset() {
-	resp.ByteBuffer.Reset()
-	resp.Header.Reset()
+func isBr(ctx *webctx.RequestCtx) bool {
+	return strings.Contains(ctx.GetContentEncoding(), "br")
 }

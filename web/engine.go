@@ -17,11 +17,11 @@
 package web
 
 import (
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/server"
+	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/caiflower/common-tools/web/server/net"
-	"github.com/caiflower/common-tools/web/server/netx"
+	"github.com/caiflower/common-tools/web/server/netpoll"
 )
 
 type Engine struct {
@@ -62,7 +62,7 @@ func (e *Engine) createStandardServer() server.Core {
 }
 
 func (e *Engine) createNetxServer() server.Core {
-	return netx.NewHttpServer(*e.opts)
+	return netpoll.NewHttpServer(*e.opts)
 }
 
 func (e *Engine) getHandlerCfg() router.HandlerCfg {
@@ -77,6 +77,6 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
-		Debug: options.Debug,
+		EnableMetrics: options.EnableMetrics,
 	}
 }

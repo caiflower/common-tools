@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/network"
+	"github.com/caiflower/common-tools/web/server/config"
 )
 
 func assertWriteRead(t *testing.T, c io.ReadWriter, w, r string) {

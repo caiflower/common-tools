@@ -19,14 +19,12 @@ package webctx
 import "net/http"
 
 type RequestContext interface {
-	SetResponse(data interface{})
-	GetResponse() interface{}
+	GetData() interface{}
 	IsFinish() bool
 	GetPath() string
 	GetParams() map[string][]string
 	GetMethod() string
 	GetAction() string
-	GetVersion() string
 	GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request)
 	UpgradeWebsocket()
 }
@@ -37,9 +35,15 @@ type Context struct {
 }
 
 func (c *Context) Put(key string, value interface{}) {
+	if c.Attributes == nil {
+		c.Attributes = make(map[string]interface{})
+	}
 	c.Attributes[key] = value
 }
 
 func (c *Context) Get(key string) interface{} {
+	if c.Attributes == nil {
+		c.Attributes = make(map[string]interface{})
+	}
 	return c.Attributes[key]
 }

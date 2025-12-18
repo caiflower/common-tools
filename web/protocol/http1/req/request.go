@@ -41,7 +41,15 @@
 
 package req
 
-import errs "github.com/caiflower/common-tools/web/common/errors"
+import (
+	"io"
+
+	errs "github.com/caiflower/common-tools/web/common/errors"
+	"github.com/caiflower/common-tools/web/network"
+	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/protocol/consts"
+	"github.com/caiflower/common-tools/web/protocol/ext"
+)
 
 var (
 	errRequestHostRequired = errs.NewPublic("missing required Host header in request")
@@ -50,344 +58,349 @@ var (
 	errHeaderTooLarge      = errs.New(errs.ErrHeaderTooLarge, errs.ErrorTypePublic, "http1/req")
 )
 
-//
-//type h1Request struct {
-//	*protocol.Request
-//}
-//
-//// String returns request representation.
-////
-//// Returns error message instead of request representation on error.
-////
-//// Use Write instead of String for performance-critical code.
-//func (h1Req *h1Request) String() string {
-//	w := bytebufferpool.Get()
-//	zw := network.NewWriter(w)
-//	if err := Write(h1Req.Request, zw); err != nil {
-//		return err.Error()
-//	}
-//	if err := zw.Flush(); err != nil {
-//		return err.Error()
-//	}
-//	s := string(w.B)
-//	bytebufferpool.Put(w)
-//	return s
-//}
-//
-//func GetHTTP1Request(req *protocol.Request) fmt.Stringer {
-//	return &h1Request{req}
-//}
-//
-//// ReadHeaderAndLimitBody reads request from the given r, limiting the body size.
-////
-//// If maxBodySize > 0 and the body size exceeds maxBodySize,
-//// then errBodyTooLarge is returned.
-////
-//// RemoveMultipartFormFiles or Reset must be called after
-//// reading multipart/form-data request in order to delete temporarily
-//// uploaded files.
-////
-//// If MayContinue returns true, the caller must:
-////
-////   - Either send StatusExpectationFailed response if request headers don't
-////     satisfy the caller.
-////   - Or send StatusContinue response before reading request body
-////     with ContinueReadBody.
-////   - Or close the connection.
-////
-//// io.EOF is returned if r is closed before reading the first header byte.
-//func ReadHeaderAndLimitBody(req *protocol.Request, r network.Reader, maxBodySize int, preParse ...bool) error {
-//	var parse bool
-//	if len(preParse) == 0 {
-//		parse = true
-//	} else {
-//		parse = preParse[0]
-//	}
-//	req.ResetSkipHeader()
-//
-//	if err := ReadHeader(&req.Header, r); err != nil {
-//		return err
+//	type h1Request struct {
+//		*protocol.Request
 //	}
 //
-//	return ReadLimitBody(req, r, maxBodySize, false, parse)
-//}
+// // String returns request representation.
+// //
+// // Returns error message instead of request representation on error.
+// //
+// // Use Write instead of String for performance-critical code.
 //
-//// Read reads request (including body) from the given r.
-////
-//// RemoveMultipartFormFiles or Reset must be called after
-//// reading multipart/form-data request in order to delete temporarily
-//// uploaded files.
-////
-//// If MayContinue returns true, the caller must:
-////
-////   - Either send StatusExpectationFailed response if request headers don't
-////     satisfy the caller.
-////   - Or send StatusContinue response before reading request body
-////     with ContinueReadBody.
-////   - Or close the connection.
-////
-//// io.EOF is returned if r is closed before reading the first header byte.
-//func Read(req *protocol.Request, r network.Reader, preParse ...bool) error {
-//	return ReadHeaderAndLimitBody(req, r, 0, preParse...)
-//}
+//	func (h1Req *h1Request) String() string {
+//		w := bytebufferpool.Get()
+//		zw := network.NewWriter(w)
+//		if err := Write(h1Req.Request, zw); err != nil {
+//			return err.Error()
+//		}
+//		if err := zw.Flush(); err != nil {
+//			return err.Error()
+//		}
+//		s := string(w.B)
+//		bytebufferpool.Put(w)
+//		return s
+//	}
 //
-//// Write writes request to w.
-////
-//// Write doesn't flush request to w for performance reasons.
-////
-//// See also WriteTo.
-//func Write(req *protocol.Request, w network.Writer) error {
-//	return write(req, w, false)
-//}
+//	func GetHTTP1Request(req *protocol.Request) fmt.Stringer {
+//		return &h1Request{req}
+//	}
 //
-//// ProxyWrite is like Write but writes the request in the form
-//// expected by an HTTP proxy. In particular, ProxyWrite writes the
-//// initial Request-URI line of the request with an absolute URI, per
-//// section 5.3 of RFC 7230, including the scheme and host.
-//func ProxyWrite(req *protocol.Request, w network.Writer) error {
-//	return write(req, w, true)
-//}
+// // ReadHeaderAndLimitBody reads request from the given r, limiting the body size.
+// //
+// // If maxBodySize > 0 and the body size exceeds maxBodySize,
+// // then errBodyTooLarge is returned.
+// //
+// // RemoveMultipartFormFiles or Reset must be called after
+// // reading multipart/form-data request in order to delete temporarily
+// // uploaded files.
+// //
+// // If MayContinue returns true, the caller must:
+// //
+// //   - Either send StatusExpectationFailed response if request headers don't
+// //     satisfy the caller.
+// //   - Or send StatusContinue response before reading request body
+// //     with ContinueReadBody.
+// //   - Or close the connection.
+// //
+// // io.EOF is returned if r is closed before reading the first header byte.
 //
-//// write writes request to w.
-//// It supports proxy situation.
-//func write(req *protocol.Request, w network.Writer, usingProxy bool) error {
-//	if len(req.Header.Host()) == 0 || req.IsURIParsed() {
-//		uri := req.URI()
-//		host := uri.Host()
-//		if len(host) == 0 {
-//			return errRequestHostRequired
+//	func ReadHeaderAndLimitBody(req *protocol.Request, r network.Reader, maxBodySize int, preParse ...bool) error {
+//		var parse bool
+//		if len(preParse) == 0 {
+//			parse = true
+//		} else {
+//			parse = preParse[0]
+//		}
+//		req.ResetSkipHeader()
+//
+//		if err := ReadHeader(&req.Header, r); err != nil {
+//			return err
 //		}
 //
-//		if len(req.Header.Host()) == 0 {
-//			req.Header.SetHostBytes(host)
-//		}
-//
-//		ruri := uri.RequestURI()
-//		if bytes.Equal(req.Method(), bytestr.StrConnect) {
-//			ruri = uri.Host()
-//		} else if usingProxy {
-//			ruri = uri.FullURI()
-//		}
-//
-//		req.Header.SetRequestURIBytes(ruri)
-//
-//		if len(uri.Username()) > 0 {
-//			// RequestHeader.SetBytesKV only uses RequestHeader.bufKV.key
-//			// So we are free to use RequestHeader.bufKV.value as a scratch pad for
-//			// the base64 encoding.
-//			nl := len(uri.Username()) + len(uri.Password()) + 1
-//			nb := nl + len(bytestr.StrBasicSpace)
-//			tl := nb + base64.StdEncoding.EncodedLen(nl)
-//
-//			req.Header.InitBufValue(tl)
-//			buf := req.Header.GetBufValue()[:0]
-//			buf = append(buf, uri.Username()...)
-//			buf = append(buf, bytestr.StrColon...)
-//			buf = append(buf, uri.Password()...)
-//			buf = append(buf, bytestr.StrBasicSpace...)
-//			base64.StdEncoding.Encode(buf[nb:tl], buf[:nl])
-//			req.Header.SetBytesKV(bytestr.StrAuthorization, buf[nl:tl])
-//		}
+//		return ReadLimitBody(req, r, maxBodySize, false, parse)
 //	}
 //
-//	if req.IsBodyStream() {
-//		return writeBodyStream(req, w)
+// // Read reads request (including body) from the given r.
+// //
+// // RemoveMultipartFormFiles or Reset must be called after
+// // reading multipart/form-data request in order to delete temporarily
+// // uploaded files.
+// //
+// // If MayContinue returns true, the caller must:
+// //
+// //   - Either send StatusExpectationFailed response if request headers don't
+// //     satisfy the caller.
+// //   - Or send StatusContinue response before reading request body
+// //     with ContinueReadBody.
+// //   - Or close the connection.
+// //
+// // io.EOF is returned if r is closed before reading the first header byte.
+//
+//	func Read(req *protocol.Request, r network.Reader, preParse ...bool) error {
+//		return ReadHeaderAndLimitBody(req, r, 0, preParse...)
 //	}
 //
-//	body := req.BodyBytes()
-//	err := handleMultipart(req)
-//	if err != nil {
-//		return fmt.Errorf("error when handle multipart: %s", err)
-//	}
-//	if req.OnlyMultipartForm() {
-//		m, _ := req.MultipartForm() // req.multipartForm != nil
-//		body, err = protocol.MarshalMultipartForm(m, req.MultipartFormBoundary())
-//		if err != nil {
-//			return fmt.Errorf("error when marshaling multipart form: %s", err)
-//		}
-//		req.Header.SetMultipartFormBoundary(req.MultipartFormBoundary())
+// // Write writes request to w.
+// //
+// // Write doesn't flush request to w for performance reasons.
+// //
+// // See also WriteTo.
+//
+//	func Write(req *protocol.Request, w network.Writer) error {
+//		return write(req, w, false)
 //	}
 //
-//	hasBody := false
-//	if len(body) == 0 {
-//		body = req.PostArgString()
-//	}
-//	if len(body) != 0 || !req.Header.IgnoreBody() {
-//		hasBody = true
-//		req.Header.SetContentLength(len(body))
+// // ProxyWrite is like Write but writes the request in the form
+// // expected by an HTTP proxy. In particular, ProxyWrite writes the
+// // initial Request-URI line of the request with an absolute URI, per
+// // section 5.3 of RFC 7230, including the scheme and host.
+//
+//	func ProxyWrite(req *protocol.Request, w network.Writer) error {
+//		return write(req, w, true)
 //	}
 //
-//	header := req.Header.Header()
-//	if _, err := w.WriteBinary(header); err != nil {
-//		return err
-//	}
+// // write writes request to w.
+// // It supports proxy situation.
 //
-//	// Write body
-//	if hasBody {
-//		w.WriteBinary(body) //nolint:errcheck
-//	} else if len(body) > 0 {
-//		return fmt.Errorf("non-zero body for non-POST request. body=%q", body)
-//	}
-//	return nil
-//}
-//
-//// ContinueReadBodyStream reads request body in stream if request header contains
-//// 'Expect: 100-continue'.
-////
-//// The caller must send StatusContinue response before calling this method.
-////
-//// If maxBodySize > 0 and the body size exceeds maxBodySize,
-//// then errBodyTooLarge is returned.
-//func ContinueReadBodyStream(req *protocol.Request, zr network.Reader, maxBodySize int, preParseMultipartForm ...bool) error {
-//	var err error
-//	contentLength := req.Header.ContentLength()
-//	if contentLength > 0 {
-//		if len(preParseMultipartForm) == 0 || preParseMultipartForm[0] {
-//			// Pre-read multipart form data of known length.
-//			// This way we limit memory usage for large file uploads, since their contents
-//			// is streamed into temporary files if file size exceeds defaultMaxInMemoryFileSize.
-//			req.SetMultipartFormBoundary(string(req.Header.MultipartFormBoundary()))
-//			if len(req.MultipartFormBoundary()) > 0 && len(req.Header.PeekContentEncoding()) == 0 {
-//				err := protocol.ParseMultipartForm(zr.(io.Reader), req, contentLength, consts.DefaultMaxInMemoryFileSize)
-//				if err != nil {
-//					req.Reset()
-//				}
-//				return err
+//	func write(req *protocol.Request, w network.Writer, usingProxy bool) error {
+//		if len(req.Header.Host()) == 0 || req.IsURIParsed() {
+//			uri := req.URI()
+//			host := uri.Host()
+//			if len(host) == 0 {
+//				return errRequestHostRequired
 //			}
-//		}
-//	}
 //
-//	if contentLength == -2 {
-//		// identity body has no sense for http requests, since
-//		// the end of body is determined by connection close.
-//		// So just ignore request body for requests without
-//		// 'Content-Length' and 'Transfer-Encoding' headers.
+//			if len(req.Header.Host()) == 0 {
+//				req.Header.SetHostBytes(host)
+//			}
 //
-//		// refer to https://tools.ietf.org/html/rfc7230#section-3.3.2
-//		if !req.Header.IgnoreBody() {
-//			req.Header.SetContentLength(0)
-//		}
-//		return nil
-//	}
+//			ruri := uri.RequestURI()
+//			if bytes.Equal(req.Method(), bytestr.StrConnect) {
+//				ruri = uri.Host()
+//			} else if usingProxy {
+//				ruri = uri.FullURI()
+//			}
 //
-//	bodyBuf := req.BodyBuffer()
-//	bodyBuf.Reset()
-//	bodyBuf.B, err = ext.ReadBodyWithStreaming(zr, contentLength, maxBodySize, bodyBuf.B)
-//	if err != nil {
-//		if errors.Is(err, errs.ErrBodyTooLarge) {
-//			req.Header.SetContentLength(contentLength)
-//			req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
+//			req.Header.SetRequestURIBytes(ruri)
 //
-//			return nil
-//		}
-//		if errors.Is(err, errs.ErrChunkedStream) {
-//			req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
-//			return nil
-//		}
-//		req.Reset()
-//		return err
-//	}
+//			if len(uri.Username()) > 0 {
+//				// RequestHeader.SetBytesKV only uses RequestHeader.bufKV.key
+//				// So we are free to use RequestHeader.bufKV.value as a scratch pad for
+//				// the base64 encoding.
+//				nl := len(uri.Username()) + len(uri.Password()) + 1
+//				nb := nl + len(bytestr.StrBasicSpace)
+//				tl := nb + base64.StdEncoding.EncodedLen(nl)
 //
-//	req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
-//	return nil
-//}
-//
-//func ContinueReadBody(req *protocol.Request, r network.Reader, maxBodySize int, preParseMultipartForm ...bool) error {
-//	var err error
-//	contentLength := req.Header.ContentLength()
-//	if contentLength > 0 {
-//		if maxBodySize > 0 && contentLength > maxBodySize {
-//			return errBodyTooLarge
-//		}
-//
-//		if len(preParseMultipartForm) == 0 || preParseMultipartForm[0] {
-//			// Pre-read multipart form data of known length.
-//			// This way we limit memory usage for large file uploads, since their contents
-//			// is streamed into temporary files if file size exceeds defaultMaxInMemoryFileSize.
-//			req.SetMultipartFormBoundary(string(req.Header.MultipartFormBoundary()))
-//			if len(req.MultipartFormBoundary()) > 0 && len(req.Header.PeekContentEncoding()) == 0 {
-//				err := protocol.ParseMultipartForm(r.(io.Reader), req, contentLength, consts.DefaultMaxInMemoryFileSize)
-//				if err != nil {
-//					req.Reset()
-//				}
-//				return err
+//				req.Header.InitBufValue(tl)
+//				buf := req.Header.GetBufValue()[:0]
+//				buf = append(buf, uri.Username()...)
+//				buf = append(buf, bytestr.StrColon...)
+//				buf = append(buf, uri.Password()...)
+//				buf = append(buf, bytestr.StrBasicSpace...)
+//				base64.StdEncoding.Encode(buf[nb:tl], buf[:nl])
+//				req.Header.SetBytesKV(bytestr.StrAuthorization, buf[nl:tl])
 //			}
 //		}
 //
-//		// This optimization is just suitable for ping-pong case and the ext.ReadBody is
-//		// a common function, so we just handle this situation before ext.ReadBody
-//		buf, err := r.Peek(contentLength)
+//		if req.IsBodyStream() {
+//			return writeBodyStream(req, w)
+//		}
+//
+//		body := req.BodyBytes()
+//		err := handleMultipart(req)
 //		if err != nil {
+//			return fmt.Errorf("error when handle multipart: %s", err)
+//		}
+//		if req.OnlyMultipartForm() {
+//			m, _ := req.MultipartForm() // req.multipartForm != nil
+//			body, err = protocol.MarshalMultipartForm(m, req.MultipartFormBoundary())
+//			if err != nil {
+//				return fmt.Errorf("error when marshaling multipart form: %s", err)
+//			}
+//			req.Header.SetMultipartFormBoundary(req.MultipartFormBoundary())
+//		}
+//
+//		hasBody := false
+//		if len(body) == 0 {
+//			body = req.PostArgString()
+//		}
+//		if len(body) != 0 || !req.Header.IgnoreBody() {
+//			hasBody = true
+//			req.Header.SetContentLength(len(body))
+//		}
+//
+//		header := req.Header.Header()
+//		if _, err := w.WriteBinary(header); err != nil {
 //			return err
 //		}
-//		r.Skip(contentLength) // nolint: errcheck
-//		req.SetBodyRaw(buf)
-//		return nil
-//	}
 //
-//	if contentLength == -2 {
-//		// identity body has no sense for http requests, since
-//		// the end of body is determined by connection close.
-//		// So just ignore request body for requests without
-//		// 'Content-Length' and 'Transfer-Encoding' headers.
-//
-//		// refer to https://tools.ietf.org/html/rfc7230#section-3.3.2
-//		if !req.Header.IgnoreBody() {
-//			req.Header.SetContentLength(0)
+//		// Write body
+//		if hasBody {
+//			w.WriteBinary(body) //nolint:errcheck
+//		} else if len(body) > 0 {
+//			return fmt.Errorf("non-zero body for non-POST request. body=%q", body)
 //		}
 //		return nil
 //	}
 //
-//	bodyBuf := req.BodyBuffer()
-//	bodyBuf.Reset()
-//	bodyBuf.B, err = ext.ReadBody(r, contentLength, maxBodySize, bodyBuf.B)
-//	if err != nil {
-//		req.Reset()
-//		return err
-//	}
+// // ContinueReadBodyStream reads request body in stream if request header contains
+// // 'Expect: 100-continue'.
+// //
+// // The caller must send StatusContinue response before calling this method.
+// //
+// // If maxBodySize > 0 and the body size exceeds maxBodySize,
+// // then errBodyTooLarge is returned.
 //
-//	if req.Header.ContentLength() == -1 {
-//		err = ext.ReadTrailer(req.Header.Trailer(), r)
-//		if err != nil && err != io.EOF {
+//	func ContinueReadBodyStream(req *protocol.Request, zr network.Reader, maxBodySize int, preParseMultipartForm ...bool) error {
+//		var err error
+//		contentLength := req.Header.ContentLength()
+//		if contentLength > 0 {
+//			if len(preParseMultipartForm) == 0 || preParseMultipartForm[0] {
+//				// Pre-read multipart form data of known length.
+//				// This way we limit memory usage for large file uploads, since their contents
+//				// is streamed into temporary files if file size exceeds defaultMaxInMemoryFileSize.
+//				req.SetMultipartFormBoundary(string(req.Header.MultipartFormBoundary()))
+//				if len(req.MultipartFormBoundary()) > 0 && len(req.Header.PeekContentEncoding()) == 0 {
+//					err := protocol.ParseMultipartForm(zr.(io.Reader), req, contentLength, consts.DefaultMaxInMemoryFileSize)
+//					if err != nil {
+//						req.Reset()
+//					}
+//					return err
+//				}
+//			}
+//		}
+//
+//		if contentLength == -2 {
+//			// identity body has no sense for http requests, since
+//			// the end of body is determined by connection close.
+//			// So just ignore request body for requests without
+//			// 'Content-Length' and 'Transfer-Encoding' headers.
+//
+//			// refer to https://tools.ietf.org/html/rfc7230#section-3.3.2
+//			if !req.Header.IgnoreBody() {
+//				req.Header.SetContentLength(0)
+//			}
+//			return nil
+//		}
+//
+//		bodyBuf := req.BodyBuffer()
+//		bodyBuf.Reset()
+//		bodyBuf.B, err = ext.ReadBodyWithStreaming(zr, contentLength, maxBodySize, bodyBuf.B)
+//		if err != nil {
+//			if errors.Is(err, errs.ErrBodyTooLarge) {
+//				req.Header.SetContentLength(contentLength)
+//				req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
+//
+//				return nil
+//			}
+//			if errors.Is(err, errs.ErrChunkedStream) {
+//				req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
+//				return nil
+//			}
+//			req.Reset()
 //			return err
 //		}
-//	}
 //
-//	req.Header.SetContentLength(len(bodyBuf.B))
-//	return nil
-//}
-//
-//func ReadBodyStream(req *protocol.Request, zr network.Reader, maxBodySize int, getOnly, preParseMultipartForm bool) error {
-//	if getOnly && !req.Header.IsGet() {
-//		return errGetOnly
-//	}
-//
-//	if req.MayContinue() {
-//		// 'Expect: 100-continue' header found. Let the caller deciding
-//		// whether to read request body or
-//		// to return StatusExpectationFailed.
+//		req.ConstructBodyStream(bodyBuf, ext.AcquireBodyStream(bodyBuf, zr, req.Header.Trailer(), contentLength))
 //		return nil
 //	}
+func ContinueReadBody(req *protocol.Request, r network.Reader, maxBodySize int, preParseMultipartForm ...bool) error {
+	var err error
+	contentLength := req.Header.ContentLength()
+	if contentLength > 0 {
+		if maxBodySize > 0 && contentLength > maxBodySize {
+			return errBodyTooLarge
+		}
+
+		if len(preParseMultipartForm) == 0 || preParseMultipartForm[0] {
+			// Pre-read multipart form data of known length.
+			// This way we limit memory usage for large file uploads, since their contents
+			// is streamed into temporary files if file size exceeds defaultMaxInMemoryFileSize.
+			req.SetMultipartFormBoundary(string(req.Header.MultipartFormBoundary()))
+			if len(req.MultipartFormBoundary()) > 0 && len(req.Header.PeekContentEncoding()) == 0 {
+				err := protocol.ParseMultipartForm(r.(io.Reader), req, contentLength, consts.DefaultMaxInMemoryFileSize)
+				if err != nil {
+					req.Reset()
+				}
+				return err
+			}
+		}
+
+		// This optimization is just suitable for ping-pong case and the ext.ReadBody is
+		// a common function, so we just handle this situation before ext.ReadBody
+		buf, err := r.Peek(contentLength)
+		if err != nil {
+			return err
+		}
+		r.Skip(contentLength) // nolint: errcheck
+		req.SetBodyRaw(buf)
+		return nil
+	}
+
+	if contentLength == -2 {
+		// identity body has no sense for http requests, since
+		// the end of body is determined by connection close.
+		// So just ignore request body for requests without
+		// 'Content-Length' and 'Transfer-Encoding' headers.
+
+		// refer to https://tools.ietf.org/html/rfc7230#section-3.3.2
+		if !req.Header.IgnoreBody() {
+			req.Header.SetContentLength(0)
+		}
+		return nil
+	}
+
+	bodyBuf := req.BodyBuffer()
+	bodyBuf.Reset()
+	bodyBuf.B, err = ext.ReadBody(r, contentLength, maxBodySize, bodyBuf.B)
+	if err != nil {
+		req.Reset()
+		return err
+	}
+
+	if req.Header.ContentLength() == -1 {
+		//err = ext.ReadTrailer(req.Header.Trailer(), r)
+		//if err != nil && err != io.EOF {
+		//	return err
+		//}
+	}
+
+	req.Header.SetContentLength(len(bodyBuf.B))
+	return nil
+}
+
+//	func ReadBodyStream(req *protocol.Request, zr network.Reader, maxBodySize int, getOnly, preParseMultipartForm bool) error {
+//		if getOnly && !req.Header.IsGet() {
+//			return errGetOnly
+//		}
 //
-//	return ContinueReadBodyStream(req, zr, maxBodySize, preParseMultipartForm)
-//}
+//		if req.MayContinue() {
+//			// 'Expect: 100-continue' header found. Let the caller deciding
+//			// whether to read request body or
+//			// to return StatusExpectationFailed.
+//			return nil
+//		}
 //
-//func ReadLimitBody(req *protocol.Request, r network.Reader, maxBodySize int, getOnly, preParseMultipartForm bool) error {
-//	// Do not reset the request here - the caller must reset it before
-//	// calling this method.
-//	if getOnly && !req.Header.IsGet() {
-//		return errGetOnly
+//		return ContinueReadBodyStream(req, zr, maxBodySize, preParseMultipartForm)
 //	}
-//
-//	if req.MayContinue() {
-//		// 'Expect: 100-continue' header found. Let the caller deciding
-//		// whether to read request body or
-//		// to return StatusExpectationFailed.
-//		return nil
-//	}
-//
-//	return ContinueReadBody(req, r, maxBodySize, preParseMultipartForm)
-//}
+func ReadLimitBody(req *protocol.Request, r network.Reader, maxBodySize int, getOnly, preParseMultipartForm bool) error {
+	// Do not reset the request here - the caller must reset it before
+	// calling this method.
+	if getOnly && !req.Header.IsGet() {
+		return errGetOnly
+	}
+
+	if req.MayContinue() {
+		// 'Expect: 100-continue' header found. Let the caller deciding
+		// whether to read request body or
+		// to return StatusExpectationFailed.
+		return nil
+	}
+
+	return ContinueReadBody(req, r, maxBodySize, preParseMultipartForm)
+}
+
 //
 //func writeBodyStream(req *protocol.Request, w network.Writer) error {
 //	var err error

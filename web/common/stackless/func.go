@@ -1,5 +1,3 @@
-//go:build amd64 || arm64 || ppc64
-
 /*
  * Copyright 2022 CloudWeGo Authors
  *
@@ -41,71 +39,82 @@
  * Modifications are Copyright 2022 CloudWeGo Authors.
  */
 
-package bytesconv
+package stackless
 
 import (
-	"fmt"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"runtime"
+	"sync"
 )
 
-func TestParseUint(t *testing.T) {
-	t.Parallel()
+// NewFunc returns stackless wrapper for the function f.
+//
+// Unlike f, the returned stackless wrapper doesn't use stack space
+// on the goroutine that calls it.
+// The wrapper may save a lot of stack space if the following conditions
+// are met:
+//
+//   - f doesn't contain blocking calls on network, I/O or channels;
+//   - f uses a lot of stack space;
+//   - the wrapper is called from high number of concurrent goroutines.
+//
+// The stackless wrapper returns false if the call cannot be processed
+// at the moment due to high load.
+func NewFunc(f func(ctx interface{})) func(ctx interface{}) bool {
+	if f == nil {
+		panic("BUG: f cannot be nil")
+	}
 
-	for _, v := range []struct {
-		s string
-		i int
-	}{
-		{"0", 0},
-		{"123", 123},
-		{"1234567890", 1234567890},
-		{"123456789012345678", 123456789012345678},
-		{"9223372036854775807", 9223372036854775807},
-	} {
-		n, err := ParseUint(S2b(v.s))
-		if err != nil {
-			t.Errorf("unexpected error: %v. s=%q n=%v", err, v.s, n)
+	funcWorkCh := make(chan *funcWork, runtime.GOMAXPROCS(-1)*2048)
+	onceInit := func() {
+		n := runtime.GOMAXPROCS(-1)
+		for i := 0; i < n; i++ {
+			go funcWorker(funcWorkCh, f)
 		}
-		assert.Equal(t, n, v.i)
+	}
+	var once sync.Once
+
+	return func(ctx interface{}) bool {
+		once.Do(onceInit)
+		fw := getFuncWork()
+		fw.ctx = ctx
+
+		select {
+		case funcWorkCh <- fw:
+		default:
+			putFuncWork(fw)
+			return false
+		}
+		<-fw.done
+		putFuncWork(fw)
+		return true
 	}
 }
 
-func TestParseUintError(t *testing.T) {
-	t.Parallel()
-
-	for _, v := range []struct {
-		s string
-	}{
-		{""},
-		{"cloudwego123"},
-		{"1234.545"},
-		{"-9223372036854775808"},
-		{"9223372036854775808"},
-		{"18446744073709551615"},
-	} {
-		n, err := ParseUint(S2b(v.s))
-		if err == nil {
-			t.Fatalf("Expecting error when parsing %q. obtained %d", v.s, n)
-		}
-		if n >= 0 {
-			t.Fatalf("Unexpected n=%d when parsing %q. Expected negative num", n, v.s)
-		}
+func funcWorker(funcWorkCh <-chan *funcWork, f func(ctx interface{})) {
+	for fw := range funcWorkCh {
+		f(fw.ctx)
+		fw.done <- struct{}{}
 	}
 }
 
-func TestAppendUint(t *testing.T) {
-	t.Parallel()
-
-	for _, s := range []struct {
-		n int
-	}{
-		{0},
-		{123},
-		{0x7fffffffffffffff},
-	} {
-		expectedS := fmt.Sprintf("%d", s.n)
-		s := AppendUint(nil, s.n)
-		assert.Equal(t, expectedS, B2s(s))
+func getFuncWork() *funcWork {
+	v := funcWorkPool.Get()
+	if v == nil {
+		v = &funcWork{
+			done: make(chan struct{}, 1),
+		}
 	}
+	return v.(*funcWork)
+}
+
+func putFuncWork(fw *funcWork) {
+	fw.ctx = nil
+	funcWorkPool.Put(fw)
+}
+
+var funcWorkPool sync.Pool
+
+type funcWork struct {
+	ctx  interface{}
+	done chan struct{}
 }

@@ -29,7 +29,7 @@ type ServerMode string
 
 const (
 	ServerModeStandard ServerMode = "standard" // 标准 HTTP 服务器
-	ServerModeNetpoll  ServerMode = "netx"     // Netpoll 高性能服务器
+	ServerModeNetpoll  ServerMode = "netpoll"  // Netpoll 高性能服务器
 )
 
 type Option func(*Options) *Options
@@ -53,7 +53,10 @@ type Options struct {
 	ListenConfig             *net.ListenConfig
 	OnAccept                 func(conn net.Conn) context.Context
 	OnConnect                func(ctx context.Context, conn network.Conn) context.Context
-	Debug                    bool
+	DisableOptimization      bool `yaml:"optimization"`
+	MaxHeaderBytes           int  `yaml:"maxHeaderBytes" default:"1048576"`
+	MaxRequestBodySize       int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
+	EnableMetrics            bool `yaml:"enableMetrics"`
 }
 
 func NewOptions(opts []Option) *Options {
@@ -172,9 +175,9 @@ func WithListenConfig(listenConfig *net.ListenConfig) Option {
 	}
 }
 
-func WithDebug(debug bool) Option {
+func WithDisableOptimization(opt bool) Option {
 	return func(opts *Options) *Options {
-		opts.Debug = debug
+		opts.DisableOptimization = opt
 		return opts
 	}
 }

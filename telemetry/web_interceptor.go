@@ -20,8 +20,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/common/e"
+	"github.com/caiflower/common-tools/web/common/webctx"
 	"go.opentelemetry.io/otel/trace"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -71,7 +71,7 @@ func (wi *WebInterceptor) After(ctx *webctx.Context, err e.ApiError) e.ApiError 
 		content.Failed = err.GetCause()
 	} else {
 		content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusOK)
-		content.Attrs[5] = attribute.String("http.response.data", tools.ToJson(ctx.GetResponse()))
+		content.Attrs[5] = attribute.String("http.response.data", tools.ToJson(ctx.GetData()))
 	}
 
 	return nil

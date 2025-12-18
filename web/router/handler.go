@@ -17,10 +17,7 @@
 package router
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/pprof"
 	"reflect"
@@ -38,10 +35,10 @@ import (
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/common/metric"
-	"github.com/caiflower/common-tools/web/common/reflectx"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/router/controller"
@@ -67,7 +64,7 @@ type HandlerCfg struct {
 	ControllerRootPkgName string        `yaml:"controllerRootPkgName" default:"controller"`
 	EnablePprof           bool          `yaml:"enablePprof"`
 	WebLimiter            LimiterConfig `yaml:"webLimiter"`
-	Debug                 bool          `yaml:"debug"`
+	EnableMetrics         bool          `yaml:"enableMetrics"`
 }
 
 type LimiterConfig struct {
@@ -141,50 +138,46 @@ type Handler struct {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer golocalv1.Clean()
-	if h.serverCommon(w, r) {
-		return
-	}
 
-	ctx := h.getRequestContextWithRequest(w, r)
+	ctx := h.getRequestContext()
+	ctx = InitCtx(ctx, w, r)
 	defer h.putRequestContext(ctx)
 
-	// dispatch
-	h.Dispatch(ctx, w, r)
-}
+	h.serverCommon(ctx)
 
-func (h *Handler) ServeHTTPWithRequestContext(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) {
-	defer golocalv1.Clean()
-	if h.serverCommon(w, r) {
-		return
-	}
-
-	// dispatch
-	h.Dispatch(ctx, w, r)
-}
-
-func (h *Handler) serverCommon(w http.ResponseWriter, r *http.Request) (done bool) {
 	if h.specialRequest(w, r) {
-		done = true
 		return
 	}
 
+	// dispatch
+	h.Dispatch(ctx)
+}
+
+func (h *Handler) Serve(ctx *webctx.RequestCtx) {
+	defer golocalv1.Clean()
+
+	h.serverCommon(ctx)
+
+	// dispatch
+	h.Dispatch(ctx)
+}
+
+func (h *Handler) serverCommon(ctx *webctx.RequestCtx) {
 	var traceID string
-	if h.config.HeaderTraceID != "" {
-		traceID = r.Header.Get(h.config.HeaderTraceID)
-	}
+	traceID = ctx.HeaderGet(h.config.HeaderTraceID)
 	if traceID == "" {
 		traceID = tools.UUID()
-		if h.config.HeaderTraceID != "" {
-			r.Header.Set(h.config.HeaderTraceID, traceID)
-		}
 	}
-	golocalv1.PutTraceID(traceID)
-	golocalv1.Put(BeginTime, time.Now())
-	golocalv1.PutContext(r.Context())
 
+	golocalv1.PutTraceID(traceID)
+	if h.config.EnableMetrics {
+		golocalv1.Put(BeginTime, time.Now())
+	}
+	golocalv1.PutContext(ctx.GetContext())
+
+	// TODO writer request is nil
 	if h.beforeDispatchCallbackFunc != nil {
-		if h.beforeDispatchCallbackFunc(w, r) {
-			done = true
+		if h.beforeDispatchCallbackFunc(ctx.Writer, ctx.Request) {
 			return
 		}
 	}
@@ -269,12 +262,10 @@ func (h *Handler) getRequestContext() *webctx.RequestCtx {
 	return ctx
 }
 
-func (h *Handler) getRequestContextWithRequest(w http.ResponseWriter, r *http.Request) *webctx.RequestCtx {
-	ctx := h.getRequestContext()
-
-	ctx.Method = r.Method
-	ctx.Params = r.URL.Query()
-	ctx.Path = r.URL.Path
+func InitCtx(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) *webctx.RequestCtx {
+	ctx.Request = r
+	ctx.SetMethod(bytesconv.S2b(r.Method))
+	ctx.SetPath(bytesconv.S2b(r.URL.Path))
 	ctx.Request = r
 	ctx.Writer = w
 	return ctx
@@ -285,74 +276,72 @@ func (h *Handler) putRequestContext(ctx *webctx.RequestCtx) {
 	h.ctxPool.Put(ctx)
 }
 
-func (h *Handler) Dispatch(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) {
-	defer h.onCrash("dispatch", w, r, ctx, e.NewApiError(e.Internal, "InternalError", nil))
-
-	// action
-	h.setAction(ctx)
+func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
+	defer h.onCrash("dispatch", ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// method
-	if !h.setTargetMethod(r, ctx) {
-		h.writeError(w, r, ctx, e.NewApiError(e.NotFound, "no such api.", nil))
+	if !h.setTargetMethod(ctx) {
+		h.writeError(ctx, e.NewApiError(e.NotFound, "no such api.", nil))
 		return
 	}
 
 	// set args
 	webContext := ctx.ConvertToWebCtx()
-	if err := h.setArgs(r, ctx, webContext); err != nil {
-		h.writeError(w, r, ctx, err)
+	if err := setArgs(ctx, webContext); err != nil {
+		if err.IsInternalError() {
+			h.logger.Warn("setArgs failed. Error: %v", err)
+		}
+		h.writeError(ctx, err)
 		return
 	}
 
 	// valid args
-	if err := h.validArgs(ctx); err != nil {
-		h.writeError(w, r, ctx, err)
+	if err := validArgs(ctx); err != nil {
+		h.writeError(ctx, err)
 		return
 	}
 
-	defer h.onDoTargetMethodCrash("doTargetMethod", w, r, ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
+	defer h.onDoTargetMethodCrash("doTargetMethod", ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// doTargetMethod
-	doTargetMethod := func() e.ApiError {
-		return h.doTargetMethod(w, r, ctx)
+	targetMethod := func() e.ApiError {
+		return doTargetMethod(ctx)
 	}
 
 	// aop
-	if err := h.interceptors.DoInterceptor(webContext, doTargetMethod); err != nil {
-		h.writeError(w, r, ctx, err)
+	if err := h.interceptors.DoInterceptor(webContext, targetMethod); err != nil {
+		h.writeError(ctx, err)
 		return
 	}
 
 	// set response
-	h.writeResponse(w, r, ctx)
+	h.writeResponse(ctx)
 }
 
-func (h *Handler) setAction(ctx *webctx.RequestCtx) {
-	if len(ctx.Params["action"]) > 0 {
-		ctx.Action = ctx.Params["action"][0]
-	} else if len(ctx.Params["Action"]) > 0 {
-		ctx.Action = ctx.Params["Action"][0]
+func (h *Handler) setTargetMethod(ctx *webctx.RequestCtx) bool {
+	ctx.Action = ctx.SetAction()
+	if ctx.Action != "" {
+		ctx.Restful = false
 	} else {
 		ctx.Restful = true
 	}
-}
 
-func (h *Handler) setTargetMethod(r *http.Request, ctx *webctx.RequestCtx) bool {
+	path := ctx.GetPath()
 	if !ctx.IsRestful() {
 		// action风格
-		c := h.controllers[ctx.Path]
+		c := h.controllers[path]
 		if c != nil {
 			cls := c.GetCls()
-			method := cls.GetMethod(cls.GetPkgName() + "." + ctx.Action)
-			ctx.TargetMethod = method
+			ctx.TargetMethod = cls.GetMethod(cls.GetPkgName() + "." + ctx.Action)
 		}
 	} else {
 		// restful
-		tree := h.trees.get(ctx.Method)
+		tree := h.trees.get(ctx.GetMethod())
 		if tree != nil {
-			res := tree.find(ctx.Path, &ctx.Paths, false)
+			res := tree.find(path, &ctx.Paths, false)
 			if res.handlers != nil {
 				ctx.TargetMethod = res.handlers[0]
+				ctx.Action = ctx.TargetMethod.GetName()
 			}
 		}
 	}
@@ -360,152 +349,7 @@ func (h *Handler) setTargetMethod(r *http.Request, ctx *webctx.RequestCtx) bool 
 	return ctx.TargetMethod != nil
 }
 
-func (h *Handler) setArgs(r *http.Request, ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
-	method := ctx.TargetMethod
-
-	if !method.HasArgs() {
-		return nil
-	}
-
-	arg := method.GetArgs()[0]
-	switch arg.Kind() {
-	case reflect.Ptr:
-		ctx.Args = append(ctx.Args, reflect.New(arg.Elem()))
-	case reflect.Struct:
-		ctx.Args = append(ctx.Args, reflect.New(arg))
-	default:
-		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
-	}
-
-	var bytes []byte
-	if r.ContentLength != 0 {
-		bytes, _ = io.ReadAll(r.Body)
-		if isGzip(r.Header) {
-			tmpBytes, err := tools.Gunzip(bytes)
-			if err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
-			}
-
-			bytes = tmpBytes
-		} else if isBr(r.Header) {
-			tmpBytes, err := tools.UnBrotil(bytes)
-			if err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
-			}
-
-			bytes = tmpBytes
-		}
-	} else {
-		bytes = []byte("{}")
-	}
-
-	// set context
-	indirect := reflect.Indirect(reflect.ValueOf(ctx.Args[0].Interface()))
-	for i := 0; i < indirect.NumField(); i++ {
-		field := indirect.Field(i)
-		if field.Type().AssignableTo(assignableWebContextElem) {
-			field.Set(reflect.ValueOf(*webContext))
-			break
-		} else if field.Type().AssignableTo(assignableWebContext) {
-			field.Set(reflect.ValueOf(webContext))
-			break
-		}
-	}
-
-	fnObjs := make([]tools.FnObj, 0, 10)
-	// 非restful风格
-	if !ctx.IsRestful() {
-		// 先解析body，解析param
-
-		if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
-			err = json.Unmarshal(bytes, ctx.Args[0].Interface())
-			var typeError *json.UnmarshalTypeError
-			if errors.As(err, &typeError) {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
-			}
-
-			if len(ctx.Params) > 0 {
-				fnObjs = append(fnObjs, tools.FnObj{
-					Fn:   reflectx.SetParam,
-					Data: ctx.Params,
-				})
-			}
-
-			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
-		}
-	} else {
-		switch ctx.Method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-			// 先解析body，解析param
-			if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
-				var typeError *json.UnmarshalTypeError
-				if errors.As(err, &typeError) {
-					return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
-				}
-
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
-			}
-		case http.MethodGet:
-			if len(ctx.Params) > 0 {
-				fnObjs = append(fnObjs, tools.FnObj{
-					Fn:   reflectx.SetParam,
-					Data: ctx.Params,
-				})
-			}
-		}
-
-		// set paths
-		if len(ctx.Paths) > 0 {
-			fnObjs = append(fnObjs, tools.FnObj{
-				Fn:   reflectx.SetPath,
-				Data: ctx.Paths,
-			})
-		}
-	}
-
-	// set header
-	fnObjs = append(fnObjs, tools.FnObj{
-		Fn:   reflectx.SetHeader,
-		Data: r.Header,
-	})
-
-	// set default
-	fnObjs = append(fnObjs, tools.FnObj{
-		Fn:   tools.SetDefaultValueIfNil,
-		Data: r.Header,
-	})
-
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), fnObjs); err != nil {
-		logger.Error("do tag function failed.", err)
-		return e.NewInternalError(err)
-	}
-
-	return nil
-}
-
-func (h *Handler) validArgs(ctx *webctx.RequestCtx) e.ApiError {
-	method := ctx.TargetMethod
-	if !method.HasArgs() {
-		return nil
-	}
-
-	elem := reflect.TypeOf(ctx.Args[0].Interface()).Elem()
-	pkgPath := elem.PkgPath()
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), []tools.FnObj{
-		{
-			Fn: reflectx.CheckParam,
-			Data: reflectx.ValidObject{
-				PkgPath:   pkgPath,
-				FiledName: elem.Name(),
-			}},
-	}); err != nil {
-		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
-	}
-
-	return nil
-}
-
-func (h *Handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx) (err e.ApiError) {
+func doTargetMethod(ctx *webctx.RequestCtx) (err e.ApiError) {
 	if ctx.TargetMethod.HasArgs() {
 		if ctx.TargetMethod.GetArgs()[0].Kind() == reflect.Struct {
 			ctx.Args[0] = ctx.Args[0].Elem()
@@ -526,23 +370,28 @@ func (h *Handler) doTargetMethod(w http.ResponseWriter, r *http.Request, ctx *we
 				return e.NewApiError(e.Unknown, _err.Error(), _err)
 			}
 		} else {
-			ctx.SetResponse(results[i].Interface())
+			ctx.SetData(results[i].Interface())
 		}
 	}
 
 	return nil
 }
 
-func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, err e.ApiError) {
+func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
 	if ctx.IsSpecial() {
 		return
 	}
 
-	// 记录metric
-	sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
-	go h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.Method, ctx.Path, sub.Milliseconds())
+	// metric
+	if h.config.EnableMetrics {
+		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
+		// fix: 关闭协程提升性能
+		h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
+	}
 
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	ctx.SetHeader("Content-Type", "application/json; charset=UTF-8")
+	ctx.SetHeader("Accept-Encoding", "gzip, br")
+
 	res := resp.Result{
 		RequestId: golocalv1.GetTraceID(),
 		Error:     &e.Error{Code: err.GetCode(), Message: err.GetMessage(), Type: err.GetType(), Cause: err.GetCause()},
@@ -550,79 +399,81 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, ctx *webctx
 
 	restful := ctx.IsRestful()
 	if restful && res.Error != nil {
-		w.WriteHeader(res.Error.GetCode())
+		ctx.WriteHeader(res.Error.GetCode())
 	}
 
 	bytes, _ := tools.Marshal(res)
 	if !restful {
-		if acceptGzip(r.Header) {
+		if acceptGzip(ctx) {
 			tmpBytes, err := tools.Gzip(bytes)
 			if err == nil {
 				bytes = tmpBytes
-				w.Header().Set("Content-Encoding", "gzip")
+				ctx.SetHeader("Content-Encoding", "gzip")
 			}
-		} else if acceptBr(r.Header) {
+		} else if acceptBr(ctx) {
 			tmpBytes, err := tools.Brotil(bytes)
 			if err == nil {
 				bytes = tmpBytes
-				w.Header().Set("Content-Encoding", "br")
+				ctx.SetHeader("Content-Encoding", "br")
 			}
 		}
 	}
 
-	w.Header().Set("Accept-Encoding", "gzip, br")
-	if _, err := w.Write(bytes); err != nil {
+	if _, err := ctx.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
 }
 
-func (h *Handler) writeResponse(w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx) {
+func (h *Handler) writeResponse(ctx *webctx.RequestCtx) {
 	if ctx.IsSpecial() {
 		return
 	}
 
-	// 记录metric
-	sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
-	go h.metric.SaveMetric(h.config.Name, "200", ctx.Method, ctx.Path, sub.Milliseconds())
+	// metric
+	if h.config.EnableMetrics {
+		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
+		// fix: 关闭协程提升性能
+		h.metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
+	}
 
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	ctx.SetHeader("Content-Type", "application/json; charset=UTF-8")
+	ctx.SetHeader("Accept-Encoding", "gzip, br")
 
 	res := resp.Result{
 		RequestId: golocalv1.GetTraceID(),
-		Data:      ctx.GetResponse(),
+		Data:      ctx.GetData(),
 	}
 
 	bytes, _ := tools.Marshal(res)
-	if acceptGzip(r.Header) {
+	if acceptGzip(ctx) {
 		tmpBytes, err := tools.Gzip(bytes)
 		if err == nil {
 			bytes = tmpBytes
-			w.Header().Set("Content-Encoding", "gzip")
+			ctx.SetHeader("Content-Encoding", "gzip")
 		}
-	} else if acceptBr(r.Header) {
+	} else if acceptBr(ctx) {
 		tmpBytes, err := tools.Brotil(bytes)
 		if err == nil {
 			bytes = tmpBytes
-			w.Header().Set("Content-Encoding", "br")
+			ctx.SetHeader("Content-Encoding", "br")
 		}
 	}
 
-	w.Header().Set("Accept-Encoding", "gzip, br")
-	if _, err := w.Write(bytes); err != nil {
+	if _, err := ctx.Write(bytes); err != nil {
 		h.logger.Error("writeResponse Error: %s", err.Error())
 	}
 }
 
-func (h *Handler) onCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, e e.ApiError) {
+func (h *Handler) onCrash(txt string, ctx *webctx.RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
-		fmt.Printf("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
-		h.writeError(w, r, ctx, e)
+		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
+		h.writeError(ctx, e)
 	}
 }
 
-func (h *Handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *http.Request, ctx *webctx.RequestCtx, interceptorCtx *webctx.Context, defaultErr e.ApiError) {
+func (h *Handler) onDoTargetMethodCrash(txt string, ctx *webctx.RequestCtx, interceptorCtx *webctx.Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
-		h.logger.Error("Got a runtime error %s, %s. %v\n%s", txt, err, r, string(debug.Stack()))
+		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
 
 		// onPanic
 		for _, v := range h.interceptors {
@@ -633,36 +484,8 @@ func (h *Handler) onDoTargetMethodCrash(txt string, w http.ResponseWriter, r *ht
 			}
 		}
 
-		h.writeError(w, r, ctx, defaultErr)
+		h.writeError(ctx, defaultErr)
 	}
-}
-
-func acceptGzip(header http.Header) bool {
-	if header == nil {
-		return false
-	}
-	return strings.Contains(header.Get("Accept-Encoding"), "gzip")
-}
-
-func acceptBr(header http.Header) bool {
-	if header == nil {
-		return false
-	}
-	return strings.Contains(header.Get("Accept-Encoding"), "br")
-}
-
-func isGzip(header http.Header) bool {
-	if header == nil {
-		return false
-	}
-	return strings.Contains(header.Get("Content-Encoding"), "gzip")
-}
-
-func isBr(header http.Header) bool {
-	if header == nil {
-		return false
-	}
-	return strings.Contains(header.Get("Content-Encoding"), "br")
 }
 
 var promHttpHandler = promhttp.Handler()

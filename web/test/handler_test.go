@@ -29,10 +29,10 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/controller"
+	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/stretchr/testify/assert"
 )
 

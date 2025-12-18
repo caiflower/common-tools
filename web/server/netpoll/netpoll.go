@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package netx
+package netpoll
 
 import (
 	"context"
@@ -25,13 +25,13 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/common/config"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/network/netpoll"
-	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/protocol/http1/req"
 	"github.com/caiflower/common-tools/web/router"
+	"github.com/caiflower/common-tools/web/server/config"
 )
 
 var (
@@ -57,13 +57,7 @@ func NewHttpServer(options config.Options) *HttpServer {
 		transporter: netpoll.NewTransporter(&options),
 	}
 	s.requestCtxPool.New = func() interface{} {
-		wctx := &webctx.RequestCtx{
-			XResponse: &protocol.Response{
-				Headers: make(map[string][]string),
-			},
-		}
-		wctx.XResponse.WriteHeader(http.StatusOK)
-		return wctx
+		return &webctx.RequestCtx{}
 	}
 	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
@@ -76,7 +70,7 @@ func (s *HttpServer) Name() string {
 
 func (s *HttpServer) Start() error {
 	s.logger.Info(
-		"\n***************************** netx http server startup ***************************************\n"+
+		"\n***************************** netpoll http server startup ***************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %s *********\n"+
 			"*************************************************************************************************", s.options.Name, s.options.RootPath, s.options.Addr)
 
@@ -91,7 +85,7 @@ func (s *HttpServer) Start() error {
 }
 
 func (s *HttpServer) Close() {
-	s.logger.Info("      **** netx http server shutdown, wait at most 5s ****")
+	s.logger.Info("      **** netpoll http server shutdown, wait at most 5s ****")
 
 	timeout, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancelFunc()
@@ -112,18 +106,20 @@ func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
-		Debug: options.Debug,
+		EnableMetrics: options.EnableMetrics,
 	}
 }
 
-func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
+func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
 	var (
 		cancel         context.CancelFunc
 		zr             network.Reader
 		connRequestNum = uint64(0)
-		req            *http.Request
+		request        *http.Request
 		zw             network.Writer
+		conn           network.Conn
 	)
+	conn = cc.(network.Conn)
 
 	if s.options.HandleTimeout != 0 {
 		c, cancel = context.WithTimeout(c, s.options.HandleTimeout)
@@ -131,13 +127,13 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 	}
 
 	ctx := s.getRequestContext()
-	ctx = ctx.SetConn(conn.(network.Conn)).SetContext(c)
+	ctx = ctx.SetConn(conn).SetContext(c)
 	zr = ctx.GetReader()
 	zw = ctx.GetWriter()
 
 	defer func() {
 		s.requestCtxPool.Put(ctx)
-		_ = ctx.GetConn().Close()
+		_ = conn.Close()
 	}()
 
 	for {
@@ -163,28 +159,38 @@ func (s *HttpServer) OnReq(c context.Context, conn interface{}) (err error) {
 			_ = ctx.GetConn().SetReadTimeout(s.options.ReadTimeout)
 		}
 
-		start := time.Now()
-		req, err = ctx.GetHttpRequest()
+		if !s.options.DisableOptimization {
+			if err = req.ReadHeaderWithLimit(&ctx.HttpRequest.Header, zr, s.options.MaxHeaderBytes); err == nil {
+				// Read body
+				//if s.StreamRequestBody {
+				//	err = req.ReadBodyStream(&ctx.Request, zr, s.MaxRequestBodySize, s.GetOnly, !s.DisablePreParseMultipartForm)
+				//} else {
+				err = req.ReadLimitBody(&ctx.HttpRequest, zr, s.options.MaxRequestBodySize, false, false)
+				if err != nil {
+					return
+				}
 
-		fmt.Println("demo-api", time.Since(start).Nanoseconds())
+				ctx.SetMethod(ctx.HttpRequest.Method())
+				ctx.SetPath(ctx.HttpRequest.Path())
+			}
+		} else {
+			request, err = ctx.GetHttpRequest()
+			ctx = router.InitCtx(ctx, nil, request)
+		}
+
+		s.Handler.Serve(ctx)
 		if err != nil {
 			s.logger.Error("GetHttpRequest failed. Error: %s", err.Error())
 			err = errParseRequest
 			return
 		}
 
-		ctx.Method = req.Method
-		ctx.Params = req.URL.Query()
-		ctx.Path = req.URL.Path
-		ctx.Request = req
-		ctx.Writer = ctx.XResponse
-
-		s.Handler.ServeHTTPWithRequestContext(ctx, ctx.XResponse, req)
 		err = writeResponse(ctx, zw)
 		if err != nil {
 			return
 		}
 
+		_ = zw.Flush()
 		_ = zr.Release()
 		ctx.Reset()
 	}
@@ -195,14 +201,22 @@ func (s *HttpServer) getRequestContext() *webctx.RequestCtx {
 }
 
 func writeResponse(ctx *webctx.RequestCtx, w network.Writer) error {
-	bytes := ctx.XResponse.Bytes()
+	resp := &ctx.HttpResponse
 
-	_, err := w.WriteBinary(bytes)
+	body := resp.Bytes()
+	bodyLen := len(body)
+	resp.Header.SetContentLength(bodyLen)
+
+	header := resp.Header.Header()
+	_, err := w.WriteBinary(header)
 	if err != nil {
 		return err
 	}
 
-	err = w.Flush()
-
+	resp.Header.SetHeaderLength(len(header))
+	// Write body
+	if bodyLen > 0 {
+		_, err = w.WriteBinary(body)
+	}
 	return err
 }

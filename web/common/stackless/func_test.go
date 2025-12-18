@@ -1,5 +1,3 @@
-//go:build amd64 || arm64 || ppc64
-
 /*
  * Copyright 2022 CloudWeGo Authors
  *
@@ -41,71 +39,89 @@
  * Modifications are Copyright 2022 CloudWeGo Authors.
  */
 
-package bytesconv
+package stackless
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"time"
 )
 
-func TestParseUint(t *testing.T) {
-	t.Parallel()
+func TestNewFuncSimple(t *testing.T) {
+	var n uint64
+	f := NewFunc(func(ctx interface{}) {
+		atomic.AddUint64(&n, uint64(ctx.(int)))
+	})
 
-	for _, v := range []struct {
-		s string
-		i int
-	}{
-		{"0", 0},
-		{"123", 123},
-		{"1234567890", 1234567890},
-		{"123456789012345678", 123456789012345678},
-		{"9223372036854775807", 9223372036854775807},
-	} {
-		n, err := ParseUint(S2b(v.s))
+	iterations := 4 * 1024
+	for i := 0; i < iterations; i++ {
+		if !f(2) {
+			t.Fatalf("f mustn't return false")
+		}
+	}
+	if n != uint64(2*iterations) {
+		t.Fatalf("Unexpected n: %d. Expecting %d", n, 2*iterations)
+	}
+}
+
+func TestNewFuncMulti(t *testing.T) {
+	var n1, n2 uint64
+	f1 := NewFunc(func(ctx interface{}) {
+		atomic.AddUint64(&n1, uint64(ctx.(int)))
+	})
+	f2 := NewFunc(func(ctx interface{}) {
+		atomic.AddUint64(&n2, uint64(ctx.(int)))
+	})
+
+	iterations := 4 * 1024
+
+	f1Done := make(chan error, 1)
+	go func() {
+		var err error
+		for i := 0; i < iterations; i++ {
+			if !f1(3) {
+				err = fmt.Errorf("f1 mustn't return false")
+				break
+			}
+		}
+		f1Done <- err
+	}()
+
+	f2Done := make(chan error, 1)
+	go func() {
+		var err error
+		for i := 0; i < iterations; i++ {
+			if !f2(5) {
+				err = fmt.Errorf("f2 mustn't return false")
+				break
+			}
+		}
+		f2Done <- err
+	}()
+
+	select {
+	case err := <-f1Done:
 		if err != nil {
-			t.Errorf("unexpected error: %v. s=%q n=%v", err, v.s, n)
+			t.Fatalf("unexpected error: %s", err)
 		}
-		assert.Equal(t, n, v.i)
+	case <-time.After(time.Second):
+		t.Fatalf("timeout")
 	}
-}
 
-func TestParseUintError(t *testing.T) {
-	t.Parallel()
-
-	for _, v := range []struct {
-		s string
-	}{
-		{""},
-		{"cloudwego123"},
-		{"1234.545"},
-		{"-9223372036854775808"},
-		{"9223372036854775808"},
-		{"18446744073709551615"},
-	} {
-		n, err := ParseUint(S2b(v.s))
-		if err == nil {
-			t.Fatalf("Expecting error when parsing %q. obtained %d", v.s, n)
+	select {
+	case err := <-f2Done:
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err)
 		}
-		if n >= 0 {
-			t.Fatalf("Unexpected n=%d when parsing %q. Expected negative num", n, v.s)
-		}
+	case <-time.After(time.Second):
+		t.Fatalf("timeout")
 	}
-}
 
-func TestAppendUint(t *testing.T) {
-	t.Parallel()
-
-	for _, s := range []struct {
-		n int
-	}{
-		{0},
-		{123},
-		{0x7fffffffffffffff},
-	} {
-		expectedS := fmt.Sprintf("%d", s.n)
-		s := AppendUint(nil, s.n)
-		assert.Equal(t, expectedS, B2s(s))
+	if n1 != uint64(3*iterations) {
+		t.Fatalf("unexpected n1: %d. Expecting %d", n1, 3*iterations)
+	}
+	if n2 != uint64(5*iterations) {
+		t.Fatalf("unexpected n2: %d. Expecting %d", n2, 5*iterations)
 	}
 }

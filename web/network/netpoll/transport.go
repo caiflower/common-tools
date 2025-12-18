@@ -24,13 +24,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/network"
+	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/cloudwego/netpoll"
 )
 
 func init() {
-	// disable netx's log
+	// disable netpoll's log
 	netpoll.SetLoggerOutput(io.Discard)
 }
 
@@ -141,13 +141,13 @@ func (t *transporter) ListenAndServe(onReq network.OnData) (err error) {
 	eventLoop := t.el
 	t.mu.Unlock()
 	if err != nil {
-		panic("create netx event-loop fail")
+		panic("create netpoll event-loop fail")
 	}
 
 	// Start Server
 	err = eventLoop.Serve(ln)
 	if err != nil {
-		panic("netx server exit")
+		panic("netpoll server exit")
 	}
 
 	return nil
