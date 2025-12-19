@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package cluster
+package cluster
 
 import (
 	"context"
@@ -33,10 +33,10 @@ func (c *Cluster) redisClusterStartUp() {
 }
 
 func (c *Cluster) redisFighting() {
-	go c.createEvent(eventNameElectionStart, "")
+	c.createEvent(eventNameElectionStart, "")
 	c.sate = fighting
 	defer func() {
-		go c.createEvent(eventNameElectionFinish, c.GetLeaderName())
+		c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
 
 	key := c.config.RedisDiscovery.DataPath + "/Election"
@@ -67,9 +67,8 @@ func (c *Cluster) redisSyncLeader() {
 				if node != nil {
 					return
 				}
-				c.signLeader(node, 0)
 
-				if c.GetLeaderName() == c.GetMyName() {
+				if c.signLeader(node, 0) && c.GetLeaderName() == c.GetMyName() {
 					// 看门狗续租
 					go c.redisWatchDog()
 				}

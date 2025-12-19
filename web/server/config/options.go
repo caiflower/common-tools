@@ -37,15 +37,16 @@ type Option func(*Options) *Options
 type Options struct {
 	Name                     string        `yaml:"name" default:"default"`
 	Addr                     string        `yaml:"addr" default:":8080"`
-	ReadTimeout              time.Duration `yaml:"readTimeout" default:"20s"`
-	WriteTimeout             time.Duration `yaml:"writeTimeout" default:"35s"`
-	HandleTimeout            time.Duration `yaml:"handleTimeout" default:"60s"`
-	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"60s"`
-	RootPath                 string        `yaml:"rootPath"`
 	HeaderTraceID            string        `yaml:"headerTraceID" default:"X-Request-Id"`
 	ControllerRootPkgName    string        `yaml:"controllerRootPkgName" default:"controller"`
+	RootPath                 string        `yaml:"rootPath"`
+	ReadTimeout              time.Duration `yaml:"readTimeout" default:"20s"`
+	WriteTimeout             time.Duration `yaml:"writeTimeout" default:"35s"`
+	IdleTimeout              time.Duration `yaml:"idleTimeout" default:"60s"`
+	HandleTimeout            time.Duration `yaml:"handleTimeout" default:"60s"`
+	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"180s"`
 	EnablePprof              bool          `yaml:"enablePprof"`
-	Mode                     ServerMode    `yaml:"mode" default:"standard"`
+	Mode                     ServerMode    `yaml:"mode" default:"netpoll"`
 	LimiterEnabled           bool          `yaml:"limiterEnabled"`
 	Qps                      int           `yaml:"qps"`
 	Network                  string        `yaml:"netWork" default:"tcp"`

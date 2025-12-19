@@ -23,6 +23,7 @@ import (
 	"reflect"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/network"
 	netpoll1 "github.com/caiflower/common-tools/web/network/netpoll"
@@ -77,7 +78,7 @@ func (c *RequestCtx) WriteHeader(statusCode int) {
 		return
 	}
 
-	c.HttpResponse.WriteHeader(statusCode)
+	c.HttpResponse.Header.SetStatusCode(statusCode)
 }
 
 func (c *RequestCtx) Write(bytes []byte) (int, error) {
@@ -85,7 +86,7 @@ func (c *RequestCtx) Write(bytes []byte) (int, error) {
 		return c.Writer.Write(bytes)
 	}
 
-	return c.HttpResponse.Write(bytes)
+	return c.HttpResponse.BodyWriter().Write(bytes)
 }
 
 func (c *RequestCtx) SetData(v interface{}) {
@@ -142,7 +143,13 @@ func (c *RequestCtx) GetMethod() string {
 }
 
 func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
-	return c.Writer, c.Request
+	if c.Writer != nil {
+		return c.Writer, c.Request
+	}
+
+	request, _ := adaptor.GetCompatRequest(&c.HttpRequest)
+	response := adaptor.GetCompatResponseWriter(&c.HttpResponse)
+	return response, request
 }
 
 func (c *RequestCtx) UpgradeWebsocket() {

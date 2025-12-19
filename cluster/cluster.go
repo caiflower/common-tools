@@ -177,19 +177,15 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 
 	// 初始化节点信息
 	cluster.loadNodes()
-	enable, _ := strconv.ParseBool(config.Enable)
-
 	// find curNode
 	cluster.findCurNode()
 	cluster.aliveNodes.Store(cluster.GetMyName(), cluster.GetMyNode())
 
 	if cluster.curNode == nil {
 		return nil, errors.New("can not find current node")
-	} else {
-		if enable {
-			cluster.logger.Info("[cluster] curNode address: %s", cluster.curNode.address)
-		}
 	}
+
+	cluster.logger.Info("[cluster] curNode address: %s", cluster.curNode.address)
 
 	// redis beanName
 	if config.Mode == modeRedis && config.RedisDiscovery.BeanName != "" {
@@ -272,7 +268,7 @@ func (c *Cluster) Start() error {
 
 	c.logger.Info("[cluster] startup success. ")
 
-	go c.createEvent(eventNameStartUp, "")
+	c.createEvent(eventNameStartUp, "")
 
 	return nil
 }
@@ -293,7 +289,7 @@ func (c *Cluster) Close() {
 	if c.enableReplicasDiscovery() && env.Kubernetes {
 		for _, v := range c.GetAliveNodeNames() {
 			if v != c.GetMyName() {
-				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas-1, 2*time.Second)); err != nil {
+				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second)); err != nil {
 					logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
 				}
 			}
@@ -308,7 +304,7 @@ func (c *Cluster) Close() {
 
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
-		if node.connection != nil {
+		if node.name != c.GetMyName() && node.connection != nil {
 			go node.connection.Close()
 		}
 		return true
@@ -318,7 +314,7 @@ func (c *Cluster) Close() {
 		go c.server.Close()
 	}
 
-	go c.createEvent(eventNameClose, "")
+	c.createEvent(eventNameClose, "")
 	c.sate = closed
 	c.logger.Info("[cluster] close success. ")
 }
@@ -513,214 +509,6 @@ func (c *Cluster) findCurNode() {
 	}
 }
 
-// getClientHandler client contact
-func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
-	handler := &nio.Handler{}
-
-	handler.OnSessionConnected = func(session *nio.Session) {
-		c.aliveNodes.Store(nodeName, c.GetNodeByName(nodeName))
-	}
-
-	handler.OnSessionClosed = func(session *nio.Session) {
-		c.aliveNodes.Delete(nodeName)
-	}
-
-	handler.OnMessageReceived = func(session *nio.Session, message *nio.Msg) {
-		// 其他协议，不受任期影响
-		if message.Flag() == messageRemoteCallRes {
-			rcMsg := new(remoteCallMessage)
-			err := message.Unmarshal(rcMsg)
-			if err != nil {
-				c.logger.Warn("[cluster] unmarshal remoteCallMessage error: %s", err.Error())
-			}
-
-			c.logger.Debug("[cluster] remote [%s] func return", session.GetRemoteAddr())
-			if f, ok := cache.LocalCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
-				var _err error
-				if rcMsg.Err != nil {
-					bytes, bytesErr := tools.ToByte(rcMsg.Err)
-					if bytesErr != nil {
-						logger.Warn("[cluster] convert remoteCallMessage param 'err' to bytes failed. Error: %s", bytesErr.Error())
-					}
-					_err = errors.New(string(bytes))
-				}
-
-				f.(*FuncSpec).setResult(rcMsg.Result, _err)
-				// remote return, then delete cache
-				cache.LocalCache.Delete(remoteCall + rcMsg.UUID)
-			}
-			return
-		}
-
-		// 集群基本协议
-		nodeMsg := new(Message)
-		if err := message.Unmarshal(nodeMsg); err != nil {
-			c.logger.Warn("[cluster] unmarshal msg error: %s", err.Error())
-		}
-		if nodeMsg.Term < c.GetMyTerm() {
-			// 落后的消息直接忽略
-			return
-		}
-
-		switch message.Flag() {
-		case messageAskLeaderRes:
-			if nodeMsg.Success {
-				c.logger.Debug("[cluster] messageAskLeaderRes nodeName=%s, get leaderNode=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
-
-				if nodeMsg.LeaderNodeName == "" {
-					return
-				}
-
-				c.msgChan <- nodeMsg
-			}
-		case messageAskVoteRes:
-			c.logger.Debug("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for %s", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
-
-			c.msgChan <- nodeMsg
-		case messageBroadcastLeaderRes:
-			if nodeMsg.Success {
-				c.logger.Debug("[cluster] messageBroadcastLeaderRes nodeName=%s, leaderName=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
-			}
-			c.msgChan <- nodeMsg
-		case messageHeartbeatRes:
-			c.msgChan <- nodeMsg
-		default:
-			c.logger.Warn("[cluster] unknown message type: %s", message.Flag())
-		}
-	}
-
-	return handler
-}
-
-// getServerHandler server contact
-func (c *Cluster) getServerHandler() *nio.Handler {
-	handler := &nio.Handler{}
-
-	handler.OnMessageReceived = func(session *nio.Session, message *nio.Msg) {
-		// 其他协议，不受任期影响
-		if message.Flag() == messageRemoteCallReq {
-			rcMsg := new(remoteCallMessage)
-			err := message.Unmarshal(rcMsg)
-			if err != nil {
-				c.logger.Warn("[cluster] unmarshal remoteCallMessage error: %s", err.Error())
-			}
-			f := &FuncSpec{
-				traceId:  rcMsg.TraceID,
-				uuid:     rcMsg.UUID,
-				funcName: rcMsg.FuncName,
-				param:    rcMsg.Param,
-				sync:     rcMsg.Sync,
-			}
-			msg := new(remoteCallMessage)
-			msg.TraceID = f.traceId
-			msg.UUID = f.uuid
-			msg.FuncName = f.funcName
-			msg.Param = f.param
-			msg.Sync = f.sync
-
-			c.logger.Debug("[cluster] '%s' exec remote func", c.GetMyName())
-			c.callLocalFunc(f)
-			msg.Result = f.result
-			msg.Err = f.err
-
-			if err = session.WriteMsg(nio.NewMsg(messageRemoteCallRes, msg)); err != nil {
-				c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
-			}
-			return
-		}
-
-		// 集群基本协议
-		nodeMsg := new(Message)
-		if err := message.Unmarshal(nodeMsg); err != nil {
-			c.logger.Warn("[cluster] unmarshal msg error: %s", err.Error())
-		}
-
-		switch message.Flag() {
-		case messageAskLeaderReq:
-			// 如果当前集群就绪且当前周期大于等于消息的周期
-			msg := new(Message)
-			msg.NodeName = c.GetMyName()
-			msg.Term = nodeMsg.Term
-			msg.Success = false
-
-			if c.IsReady() && nodeMsg.Term <= c.GetMyTerm() {
-				msg.Term = c.GetMyTerm()
-				msg.LeaderNodeName = c.GetLeaderName()
-				msg.Success = true
-			}
-			if _, ok := c.aliveNodes.Load(nodeMsg.NodeName); !ok {
-				// 重新建立集群连接
-				go c.reconnect()
-			}
-
-			if err := session.WriteMsg(nio.NewMsg(messageAskLeaderRes, msg)); err != nil {
-				c.logger.Warn("[cluster] write msg error: %s", err.Error())
-			}
-		case messageAskVoteReq:
-			msg := new(Message)
-			msg.NodeName = c.GetMyName()
-			msg.Term = nodeMsg.Term
-			msg.Success = true
-
-			if !c.IsReady() || nodeMsg.Term > c.GetMyTerm() {
-				c.releaseLeader()
-			}
-			msg.VoteNodeName = c.getVoteNodeName(nodeMsg.Term, nodeMsg.NodeName)
-
-			if err := session.WriteMsg(nio.NewMsg(messageAskVoteRes, msg)); err != nil {
-				c.logger.Warn("[cluster] write msg error: %s", err.Error())
-			}
-		case messageBroadcastLeaderReq:
-			msg := new(Message)
-			msg.NodeName = c.GetMyName()
-			msg.Term = nodeMsg.Term
-			msg.Success = true
-
-			if c.GetMyTerm() > nodeMsg.Term {
-				msg.Term = c.GetMyTerm()
-				msg.Success = false
-			} else {
-				if v, ok := c.aliveNodes.Load(nodeMsg.LeaderNodeName); !ok {
-					msg.Success = false
-				} else {
-					c.curNode.heartbeat = time.Now()
-					c.signLeader(v.(*Node), nodeMsg.Term)
-					msg.LeaderNodeName = nodeMsg.LeaderNodeName
-				}
-			}
-
-			if err := session.WriteMsg(nio.NewMsg(messageBroadcastLeaderRes, msg)); err != nil {
-				c.logger.Warn("[cluster] write msg error: %s", err.Error())
-			}
-		case messageHeartbeatReq:
-			msg := new(Message)
-			msg.NodeName = c.GetMyName()
-			msg.Term = nodeMsg.Term
-			msg.Success = true
-
-			if c.GetMyTerm() > nodeMsg.Term {
-				msg.Term = c.GetMyTerm()
-				msg.Success = false
-			} else if c.GetLeaderName() == nodeMsg.NodeName {
-				if !c.curNode.heartbeat.IsZero() {
-					c.curNode.heartbeat = time.Now()
-				} else {
-					// 说明follower已经开始竞选了
-					msg.Success = false
-				}
-			}
-
-			if err := session.WriteMsg(nio.NewMsg(messageHeartbeatRes, msg)); err != nil {
-				c.logger.Warn("[cluster] write msg error: %s", err.Error())
-			}
-		default:
-			c.logger.Warn("[cluster] unknown message type: %s", message.Flag())
-		}
-	}
-
-	return handler
-}
-
 func (c *Cluster) needReconnect() (need bool) {
 	c.allNode.Range(func(key, value interface{}) bool {
 		if _, ex := c.aliveNodes.Load(key); !ex {
@@ -815,55 +603,54 @@ func (c *Cluster) fighting() {
 			return
 		}
 
+		// 重新加载在线节点
+		c.reconnect()
+
 		count := c.GetAliveNodeCount()
-		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
+		haftAllNodeCount := c.GetAllNodeCount() / 2
+		logger.Info("[cluster] node name: %s, alive node count: %d, half count: %d", c.curNode.name, count, haftAllNodeCount)
+
+		if count > haftAllNodeCount { // 如果否，说明该节点可能已经失联
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
-			if len(messages)+1 < count/2 {
+			if len(messages) < haftAllNodeCount {
 				// 再问一遍
 				continue
 			}
+
 			leaderNode := ""
 			term := 0
-			ansCount := 0
 			for _, message := range messages {
-				if message.Success {
-					if leaderNode == "" {
-						leaderNode = message.LeaderNodeName
-						term = message.Term
-						ansCount++
-					} else {
-						if message.LeaderNodeName != leaderNode || message.Term != term {
-							leaderNode = ""
-							break
-						} else {
-							ansCount++
-						}
-					}
+				// 以 term 大的为主
+				if message.Term >= term {
+					term = message.Term
+					leaderNode = message.LeaderNodeName
 				}
 			}
-			if leaderNode != "" && ansCount+1 > count/2 {
+
+			if leaderNode != "" {
+				var node *Node
 				if v, ok := c.aliveNodes.Load(leaderNode); ok {
-					node := v.(*Node)
-					c.curNode.heartbeat = time.Now()
-					// 标记leader节点
-					c.signLeader(node, term)
+					node, ok = v.(*Node)
 				} else if leaderNode == c.curNode.name {
-					c.signLeader(c.curNode, term)
+					node = c.curNode
+				}
+
+				if c.signLeader(node, term) {
+					return
 				}
 			}
-			if term > c.GetMyTerm() {
-				// 加速周期
+
+			// 加速周期
+			if term >= c.GetMyTerm() {
+				c.logger.Info("[cluster] sign my term to %d from other node.", term)
 				c.term = term
-			}
-			break
-		} else {
-			if sleepTimes%10 == 0 {
-				c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+				break
 			}
 		}
 
-		// 重新加载在线节点
-		c.reconnect()
+		if sleepTimes%10 == 0 {
+			c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+		}
 		sleepTimes++
 		time.Sleep(2 * time.Second)
 	}
@@ -879,64 +666,76 @@ func (c *Cluster) fighting() {
 	nextTerm := c.term + 1
 	c.term = nextTerm
 	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
-	go c.createEvent(eventNameElectionStart, "")
+	c.createEvent(eventNameElectionStart, "")
 	defer func() {
-		go c.createEvent(eventNameElectionFinish, c.GetLeaderName())
+		c.logger.Info("[cluster] get votes finished. alive node count: %d, node[%v]; all node count: %d", c.GetAliveNodeCount(), c.GetAliveNodeNames(), c.GetAllNodeCount())
+		c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
 
 	// 开始获取选票
 	for {
 		if c.IsReady() || c.IsClose() {
+			logger.Info("cluster is ready or close")
 			return
 		}
 
+		c.reconnect()
+
 		count := c.GetAliveNodeCount()
-		if count > c.GetAllNodeCount()/2 { // 如果否，说明该节点可能已经失联
+		haftAllNodeCount := c.GetAllNodeCount() / 2
+		logger.Info("[cluster] node name: %s, alive node count: %d, half count: %d", c.curNode.name, count, haftAllNodeCount)
+
+		if count > haftAllNodeCount {
+			myNodeName := c.GetMyName()
 			c.sate = candidate
-			// 先给自己投一票
-			if !c.voteNode(nextTerm, c.curNode.name) {
-				// 说明已经投票给别人或者自己了，直接进入下一个周期
+
+			// vote myself first
+			if !c.voteNode(nextTerm, myNodeName) {
+				c.logger.Info("[cluster] vote myself failed, term: %d already vote for other", nextTerm)
 				return
 			}
-			// 向其他节点获取投票
-			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskVoteReq, &Message{NodeName: c.curNode.name, Term: nextTerm})
-			if len(messages)+1 < count/2 {
-				// 说明没有同步成功，进入下一个周期
-				return
-			}
-			votesCount := 0
+
+			// get vote from other node
+			votesCount := 1
+			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskVoteReq, &Message{NodeName: myNodeName, Term: nextTerm})
 			for _, message := range messages {
-				if message.VoteNodeName == c.curNode.name {
+				if message.VoteNodeName == myNodeName {
 					votesCount++
 				}
 			}
-			if votesCount+1 > count/2 {
-				// 开始广播自己为leader
-				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: c.curNode.name, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				if len(messages1) < count/2 {
-					// 说明没有同步成功，进入下一个周期
+			c.logger.Info("[cluster] term %d vote myself finished, accept vote number %d", nextTerm, votesCount)
+
+			if votesCount > haftAllNodeCount {
+				// 开始广播自己为 leader
+				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
+				if len(messages1) < haftAllNodeCount {
+					logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
 					return
 				}
-				sign := true
+
+				success := true
 				for _, message := range messages1 {
 					if message.Success == false {
-						sign = false
+						success = false
 					}
 				}
-				if sign {
+
+				if success && c.signLeader(c.curNode, nextTerm) {
 					c.logger.Info("[cluster] sign myself: %s to be leader. ", c.GetMyName())
-					c.signLeader(c.curNode, nextTerm)
+					return
 				}
+
+				c.logger.Info("[cluster] broadcast myself to leader failed, go to next term...")
 			}
-			break
-		} else {
-			if sleepTimes%10 == 0 {
-				c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
-			}
+
+			// fix bug, go to next term
+			return
 		}
 
-		// 重新加载在线节点
-		c.reconnect()
+		if sleepTimes%10 == 0 {
+			c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+		}
+
 		sleepTimes++
 		time.Sleep(2 * time.Second)
 	}
@@ -960,7 +759,7 @@ func (c *Cluster) heartbeat() {
 				leastCnt := (count - 1) / 2 // 去掉自己
 				if len(messages) < leastCnt {
 					c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", len(messages), leastCnt, c.GetMyName())
-					c.releaseLeader()
+					c.releaseWithNodeName(c.GetMyName())
 				} else {
 					success := 0
 					for _, message := range messages {
@@ -970,7 +769,7 @@ func (c *Cluster) heartbeat() {
 					}
 					if success < leastCnt {
 						c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", success, leastCnt, c.GetMyName())
-						c.releaseLeader()
+						c.releaseWithNodeName(c.GetMyName())
 					}
 				}
 			} else if c.IsFollower() {
@@ -993,11 +792,11 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 		if node.name == c.GetMyName() {
 			return true
 		}
-		go func() {
-			if err := node.connection.Write(flag, msg); err != nil {
-				c.logger.Error("[cluster] send message to %s error: %v", node.address, err)
+		go func(n *Node) {
+			if err := n.connection.Write(flag, msg); err != nil {
+				c.logger.Error("[cluster] send message to %s error: %v", n.address, err)
 			}
-		}()
+		}(node)
 		return true
 	})
 
@@ -1027,25 +826,56 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 	}
 }
 
-func (c *Cluster) signLeader(node *Node, term int) {
+func (c *Cluster) signLeader(node *Node, term int) bool {
 	c.leaderLock.Lock()
 	defer c.leaderLock.Unlock()
+
+	if node == nil {
+		return false
+	}
+
 	if c.GetMyTerm() <= term {
-		if node.name == c.curNode.name {
+		c.releaseLeaderNoLock()
+
+		if node.name == c.GetMyName() {
 			c.sate = leader
-			go c.createEvent(eventNameSignMaster, node.name)
-			// 单集群模式自己就是Follower
+			c.createEvent(eventNameSignMaster, node.name)
 			if c.config.Mode == modeSingle {
-				go c.createEvent(eventNameSignFollower, node.name)
+				c.createEvent(eventNameSignFollower, node.name)
 			}
 		} else {
 			c.sate = follower
-			go c.createEvent(eventNameSignFollower, node.name)
+			c.curNode.heartbeat = time.Now()
+			c.createEvent(eventNameSignFollower, node.name)
 		}
+
 		c.lostLeaderTime = time.Time{}
 		c.leaderNode = node
 		c.leaderName = node.name
 		c.term = term
+		return true
+	}
+
+	return false
+}
+
+func (c *Cluster) releaseWithNodeName(name string) {
+	c.leaderLock.Lock()
+	defer c.leaderLock.Unlock()
+
+	if c.sate != closed {
+		c.sate = follower
+	}
+
+	if c.GetLeaderName() == name {
+		c.lostLeaderTime = time.Now()
+		if c.leaderName == c.GetMyName() {
+			c.createEvent(eventNameStopMaster, "")
+		} else {
+			c.createEvent(eventNameReleaseMaster, "")
+		}
+		c.leaderNode = nil
+		c.leaderName = ""
 	}
 }
 
@@ -1055,12 +885,16 @@ func (c *Cluster) releaseLeader() {
 	if c.sate != closed {
 		c.sate = follower
 	}
+	c.releaseLeaderNoLock()
+}
+
+func (c *Cluster) releaseLeaderNoLock() {
 	if c.leaderNode != nil {
 		c.lostLeaderTime = time.Now()
 		if c.leaderName == c.GetMyName() {
-			go c.createEvent(eventNameStopMaster, "")
+			c.createEvent(eventNameStopMaster, "")
 		} else {
-			go c.createEvent(eventNameReleaseMaster, "")
+			c.createEvent(eventNameReleaseMaster, "")
 		}
 	}
 	c.leaderNode = nil
@@ -1084,11 +918,11 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 	c.votesLock.Lock()
 	defer c.votesLock.Unlock()
 
-	if _, ok := c.votesMap[term]; !ok {
+	if voteForNodeName, ok := c.votesMap[term]; !ok {
 		c.votesMap[term] = nodeName
 		return true
 	} else {
-		return false
+		return voteForNodeName == nodeName
 	}
 }
 

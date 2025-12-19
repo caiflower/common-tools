@@ -25,6 +25,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	requstoption "github.com/caiflower/common-tools/web/common/config"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
@@ -57,7 +58,12 @@ func NewHttpServer(options config.Options) *HttpServer {
 		transporter: netpoll.NewTransporter(&options),
 	}
 	s.requestCtxPool.New = func() interface{} {
-		return &webctx.RequestCtx{}
+		ctx := &webctx.RequestCtx{}
+		ctx.HttpRequest.SetOptions(
+			requstoption.WithReadTimeout(options.ReadTimeout),
+			requstoption.WithWriteTimeout(options.WriteTimeout),
+		)
+		return ctx
 	}
 	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
@@ -142,7 +148,7 @@ func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
 		// If this is a keep-alive connection we want to try and read the first bytes
 		// within the idle time.
 		if connRequestNum > 1 {
-			_ = ctx.GetConn().SetReadTimeout(s.options.KeepAliveTimeout)
+			_ = ctx.GetConn().SetReadTimeout(s.options.IdleTimeout)
 
 			_, err = zr.Peek(4)
 			// This is not the first request, and we haven't read a single byte
@@ -203,7 +209,7 @@ func (s *HttpServer) getRequestContext() *webctx.RequestCtx {
 func writeResponse(ctx *webctx.RequestCtx, w network.Writer) error {
 	resp := &ctx.HttpResponse
 
-	body := resp.Bytes()
+	body := resp.Body()
 	bodyLen := len(body)
 	resp.Header.SetContentLength(bodyLen)
 

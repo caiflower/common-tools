@@ -37,12 +37,12 @@ func Default(opts ...config.Option) *Engine {
 
 	// 根据模式创建对应的服务器
 	switch options.Mode {
-	case config.ServerModeNetpoll:
-		engine.Core = engine.createNetxServer()
 	case config.ServerModeStandard:
+		engine.Core = engine.createStandardServer()
+	case config.ServerModeNetpoll:
 		fallthrough
 	default:
-		engine.Core = engine.createStandardServer()
+		engine.Core = engine.createNetpollServer()
 	}
 
 	return engine
@@ -61,7 +61,7 @@ func (e *Engine) createStandardServer() server.Core {
 	return net.NewHttpServer(standardConfig)
 }
 
-func (e *Engine) createNetxServer() server.Core {
+func (e *Engine) createNetpollServer() server.Core {
 	return netpoll.NewHttpServer(*e.opts)
 }
 
