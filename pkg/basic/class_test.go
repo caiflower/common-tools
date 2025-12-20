@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
 	"fmt"
@@ -22,13 +22,6 @@ import (
 	"strconv"
 	"testing"
 )
-
-type MyClass struct {
-}
-
-func TestGetClassName(t *testing.T) {
-
-}
 
 type TestMethodStruct struct {
 	Args string
