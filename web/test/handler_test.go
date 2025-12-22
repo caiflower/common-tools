@@ -31,6 +31,7 @@ import (
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/controller"
+	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/stretchr/testify/assert"
 )
@@ -517,47 +518,59 @@ func TestRESTfulRouting(t *testing.T) {
 		},
 	}
 
-	fn := func(tc testCase, handler *router.Handler) {
+	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
 		// 准备请求体
 		requestBody, err := json.Marshal(tc.requestBody)
 		if err != nil {
 			t.Fatalf("Failed to marshal request body: %v", err)
 		}
 
-		// 创建HTTP请求
-		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Request-Id", "test-restful-request")
+		var code int
+		var res []byte
+		if disableOptimization {
+			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+			req.Header.Set("Content-Type", "application/json")
 
-		// 创建响应记录器
-		w := httptest.NewRecorder()
-
-		// 执行请求
-		handler.ServeHTTP(w, req)
+			// 创建响应记录器
+			w := httptest.NewRecorder()
+			// 执行请求
+			handler.ServeHTTP(w, req)
+			code = w.Code
+			res = w.Body.Bytes()
+		} else {
+			ctx := &webctx.RequestCtx{}
+			ctx.HttpRequest = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+			ctx.SetMethod(ctx.HttpRequest.Method())
+			ctx.SetPath(ctx.HttpRequest.URI().Path())
+			ctx.Paths = make(param.Params, 0, 10)
+			handler.Serve(ctx)
+			code = ctx.HttpResponse.StatusCode()
+			res = ctx.HttpResponse.Body()
+		}
 
 		var response resp.Result
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Logf("Response body: %s", w.Body.String())
+		if err := json.Unmarshal(res, &response); err != nil {
+			t.Logf("Response body: %s", string(res))
 			// 某些错误情况下可能不是JSON格式，这里只记录日志
 		}
-		assert.Equal(t, tc.expectedStatus, w.Code, tc.name)
-		if w.Code == http.StatusOK {
+		assert.Equal(t, tc.expectedStatus, code, tc.name)
+		if code == http.StatusOK {
 			assert.Equal(t, response.Data, tc.expectData)
 			assert.NotNil(t, response.Data, tc.name)
 		} else {
 			assert.NotNil(t, response.Error, tc.name)
-			assert.Equal(t, response.Error.GetCode(), w.Code, tc.name)
+			assert.Equal(t, response.Error.GetCode(), code, tc.name)
 		}
 
 		t.Logf("Request: %s %s", tc.method, tc.path)
-		t.Logf("Response Status: %d", w.Code)
-		t.Logf("Response Body: %s", w.Body.String())
+		t.Logf("Response Status: %d", code)
+		t.Logf("Response Body: %s", string(res))
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fn(tc, handler)
-			fn(tc, handler1)
+			fn(tc, handler, true)
+			fn(tc, handler1, false)
 		})
 	}
 }
