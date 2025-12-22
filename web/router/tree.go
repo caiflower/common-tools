@@ -62,7 +62,7 @@ import (
 	"unicode"
 
 	"github.com/caiflower/common-tools/pkg/basic"
-	"github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	param "github.com/caiflower/common-tools/web/router/param"
 )
 

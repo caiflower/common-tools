@@ -47,7 +47,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 )
 

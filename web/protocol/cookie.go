@@ -47,7 +47,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
-	bytesconv2 "github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/nocopy"
@@ -174,7 +174,7 @@ func (c *Cookie) SetKeyBytes(key []byte) {
 
 // SetValue sets cookie value.
 func (c *Cookie) SetValue(value string) {
-	warnIfInvalid(bytesconv2.S2b(value))
+	warnIfInvalid(bytesconv.S2b(value))
 	c.value = append(c.value[:0], value...)
 }
 
@@ -200,14 +200,14 @@ func (c *Cookie) AppendBytes(dst []byte) []byte {
 		if c.maxAge < 0 {
 			dst = append(dst, '0')
 		} else {
-			dst = bytesconv2.AppendUint(dst, c.maxAge)
+			dst = bytesconv.AppendUint(dst, c.maxAge)
 		}
 	}
 	if !c.expire.IsZero() {
 		dst = append(dst, ';', ' ')
 		dst = append(dst, bytestr.StrCookieExpires...)
 		dst = append(dst, '=')
-		dst = bytesconv2.AppendHTTPDate(dst, c.expire)
+		dst = bytesconv.AppendHTTPDate(dst, c.expire)
 	}
 
 	if len(c.domain) > 0 {
@@ -393,7 +393,7 @@ func (c *Cookie) ParseBytes(src []byte) error {
 			switch kv.key[0] | 0x20 {
 			case 'm':
 				if utils.CaseInsensitiveCompare(bytestr.StrCookieMaxAge, kv.key) {
-					maxAge, err := bytesconv2.ParseUint(kv.value)
+					maxAge, err := bytesconv.ParseUint(kv.value)
 					if err != nil {
 						return err
 					}
@@ -402,7 +402,7 @@ func (c *Cookie) ParseBytes(src []byte) error {
 
 			case 'e': // "expires"
 				if utils.CaseInsensitiveCompare(bytestr.StrCookieExpires, kv.key) {
-					v := bytesconv2.B2s(kv.value)
+					v := bytesconv.B2s(kv.value)
 					// Try the same two formats as net/http
 					// See: https://github.com/golang/go/blob/00379be17e63a5b75b3237819392d2dc3b313a27/src/net/http/cookie.go#L133-L135
 					exptime, err := time.ParseInLocation(time.RFC1123, v, time.UTC)
@@ -586,7 +586,7 @@ func getCookieKey(dst, src []byte) []byte {
 
 func warnIfInvalid(value []byte) bool {
 	for i := range value {
-		if bytesconv2.ValidCookieValueTable[value[i]] == 0 {
+		if bytesconv.ValidCookieValueTable[value[i]] == 0 {
 			logger.Debug("Invalid byte %q in Cookie.Value, "+
 				"it may cause compatibility problems with user agents", value[i])
 			return false

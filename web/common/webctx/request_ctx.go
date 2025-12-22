@@ -23,8 +23,8 @@ import (
 	"reflect"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/adaptor"
-	"github.com/caiflower/common-tools/web/common/bytesconv"
 	"github.com/caiflower/common-tools/web/network"
 	netpoll1 "github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/protocol"
@@ -221,7 +221,7 @@ func (c *RequestCtx) GetContentEncoding() string {
 		return c.Request.Header.Get("Content-Encoding")
 	}
 
-	return bytesconv.B2s(c.HttpRequest.Header.ContentType())
+	return bytesconv.B2s(c.HttpRequest.Header.PeekContentEncoding())
 }
 
 func (c *RequestCtx) GetAcceptEncoding() string {

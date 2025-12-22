@@ -19,16 +19,20 @@ package basic
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/stretchr/testify/assert"
 )
 
 // 测试用的结构体
 type DoRequestReq struct {
-	Input string `verf:"required"`
-	Name  string `json:"name" verf:"optional"`
-	Age   int    `json:"age"`
+	Input   string `verf:"required"`
+	Name    string `json:"name" verf:"optional"`
+	Age     int    `json:"age"`
+	Numbers []int  `json:"numbers"`
 }
 
 type ComplexStruct struct {
@@ -115,25 +119,28 @@ func TestSetArgInfo(t *testing.T) {
 	method := NewMethod(nil, SampleMethodWithComplexStruct)
 
 	// map - 注意字段名要匹配结构体中的字段名
-	params := make(map[string]interface{})
+	params := make(map[string]string)
 	params["Name"] = "testName"   // DoRequestReq.Name 字段
-	params["Age"] = 12            // DoRequestReq.Age 字段
+	params["Age"] = "12"          // DoRequestReq.Age 字段
 	params["Input"] = "testInput" // DoRequestReq.Input 字段
 	params["Token"] = "testToken" // ComplexStruct.Token 字段
+	params["Numbers"] = "123,456,789"
 
 	argInfo := method.GetArgInfo(0)
 	if argInfo == nil {
 		t.Fatal("GetArgInfo(0) returned nil")
 	}
 
-	// 创建ComplexStruct的实例
 	argValue := reflect.New(argInfo.Type).Elem()
 
-	// 使用TagIndex进行O(1)字段查找和赋值
+	builder := NewArgBuilder()
 	for fieldName, value := range params {
-		// 找到字段，使用反射设置值
-		if err := SetFieldValueUsingIndex(argValue, fieldName, value, argInfo); err != nil {
-			t.Errorf("Failed to set field %s: %v", fieldName, err)
+		splits := strings.Split(value, ",")
+		for _, split := range splits {
+			builder.WithOption(WithFieldName(bytesconv.S2b(fieldName)))
+			if err := builder.SetFieldValueUsingIndex(argValue, []byte(split), argInfo); err != nil {
+				t.Errorf("Failed to set field %s: %v", fieldName, err)
+			}
 		}
 	}
 
@@ -150,4 +157,38 @@ func TestSetArgInfo(t *testing.T) {
 	assert.Equal(t, "testInput", complexStruct.Request1.Input, fmt.Sprintf("Expected Input to be 12, got %d'", complexStruct.Request1.Age))
 	assert.Equal(t, "testInput", complexStruct.DoRequestReq.Input, fmt.Sprintf("Expected Input to be 12, got %d'", complexStruct.DoRequestReq.Age))
 	assert.Equal(t, "testToken", complexStruct.Token, fmt.Sprintf("Expected testToken to be testToken, got %s'", complexStruct.Token))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.Request.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.Request.Numbers))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.Request1.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.Request1.Numbers))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.DoRequestReq.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.DoRequestReq.Numbers))
+	//
+	// set with tagName and tagValue
+	argValue = reflect.New(argInfo.Type).Elem()
+
+	jsonBytes := []byte("json")
+	builder = NewArgBuilder()
+	for fieldName, value := range params {
+		splits := strings.Split(value, ",")
+		for _, split := range splits {
+			builder.WithOption(WithTag(jsonBytes, bytesconv.S2b(tools.ToCamel(fieldName))))
+			if err := builder.SetFieldValueUsingIndex(argValue, []byte(split), argInfo); err != nil {
+				t.Errorf("Failed to set field %s: %v", fieldName, err)
+			}
+		}
+	}
+
+	complexStruct = argValue.Interface().(ComplexStruct)
+
+	assert.Equal(t, "testName", complexStruct.Request.Name, fmt.Sprintf("Expected field name 'testName', got '%s'", complexStruct.Request.Name))
+	assert.Equal(t, "testName", complexStruct.Request1.Name, fmt.Sprintf("Expected field name 'testName', got '%s'", complexStruct.Request1.Name))
+	assert.Equal(t, "testName", complexStruct.DoRequestReq.Name, fmt.Sprintf("Expected field name 'testName', got '%s'", complexStruct.DoRequestReq.Name))
+	assert.Equal(t, 12, complexStruct.Request.Age, fmt.Sprintf("Expected age to be 12, got %d'", complexStruct.Request.Age))
+	assert.Equal(t, 12, complexStruct.Request1.Age, fmt.Sprintf("Expected age to be 12, got %d'", complexStruct.Request1.Age))
+	assert.Equal(t, 12, complexStruct.DoRequestReq.Age, fmt.Sprintf("Expected age to be 12, got %d'", complexStruct.DoRequestReq.Age))
+	assert.Equal(t, "", complexStruct.Request.Input, fmt.Sprintf("Expected Input to be 12, got %d'", complexStruct.Request.Age))
+	assert.Equal(t, "", complexStruct.Request1.Input, fmt.Sprintf("Expected Input to be 12, got %d'", complexStruct.Request1.Age))
+	assert.Equal(t, "", complexStruct.DoRequestReq.Input, fmt.Sprintf("Expected Input to be 12, got %d'", complexStruct.DoRequestReq.Age))
+	assert.Equal(t, "", complexStruct.Token, fmt.Sprintf("Expected testToken to be testToken, got %s'", complexStruct.Token))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.Request.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.Request.Numbers))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.Request1.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.Request1.Numbers))
+	assert.Equal(t, []int{123, 456, 789}, complexStruct.DoRequestReq.Numbers, fmt.Sprintf("Expected testToken to be testToken, got %v'", complexStruct.DoRequestReq.Numbers))
 }

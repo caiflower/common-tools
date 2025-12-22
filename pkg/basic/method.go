@@ -114,11 +114,6 @@ func NewMethod(cls *Class, v interface{}) *Method {
 		panic(fmt.Sprintf("NewMethod not support type %v. ", reflect.TypeOf(v).Kind()))
 	}
 
-	// 构建索引映射
-	tagIndex := make(map[string]map[string][]int)
-	fieldNameIndex := make(map[string][]int)
-	buildIndexMaps(argsInfo, tagIndex, fieldNameIndex)
-
 	return &Method{
 		class:    cls,
 		pkgName:  pkgName,
@@ -194,7 +189,7 @@ func extractArgTags(argType reflect.Type) ArgInfo {
 	}
 
 	// 如果参数是结构体，提取结构体字段的标签
-	if argType.Kind() == reflect.Struct {
+	if argType.Kind() == reflect.Struct || argType.Kind() == reflect.Ptr {
 		extractStructFields(argType, argInfo.Fields, argInfo.Tags)
 		// 构建索引
 		buildArgInfoIndexes(&argInfo)
@@ -205,6 +200,10 @@ func extractArgTags(argType reflect.Type) ArgInfo {
 
 // extractStructFields 提取结构体字段的标签信息
 func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, argTags map[string]string) {
+	if structType.Kind() == reflect.Ptr {
+		structType = structType.Elem()
+	}
+
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 		fieldInfo := ArgInfo{
@@ -229,8 +228,10 @@ func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, ar
 					if len(parts) == 2 {
 						key := strings.TrimSpace(parts[0])
 						value := strings.Trim(strings.TrimSpace(parts[1]), `"`)
+						fieldInfo.Tags[key+":"+value] = value
 						fieldInfo.Tags[key] = value
 						argTags[key+":"+value] = value
+						argTags[key] = value
 					}
 				}
 			}
@@ -356,37 +357,4 @@ func (m *Method) GetArgInfo(argIndex int) *ArgInfo {
 // GetArgsInfo 获取所有参数信息
 func (m *Method) GetArgsInfo() []ArgInfo {
 	return m.argsInfo
-}
-
-// buildIndexMaps 构建标签和字段名的索引映射
-func buildIndexMaps(argsInfo []ArgInfo, tagIndex map[string]map[string][]int, fieldNameIndex map[string][]int) {
-	for argIndex, argInfo := range argsInfo {
-		// 构建参数标签索引
-		for tagName, tagValue := range argInfo.Tags {
-			if tagIndex[tagName] == nil {
-				tagIndex[tagName] = make(map[string][]int)
-			}
-			tagIndex[tagName][tagValue] = append(tagIndex[tagName][tagValue], argIndex)
-		}
-
-		// 构建结构体字段标签和字段名索引
-		if argInfo.Type.Kind() == reflect.Struct {
-			structType := argInfo.Type
-			for i := 0; i < structType.NumField(); i++ {
-				field := structType.Field(i)
-				if fieldInfo, exists := argInfo.Fields[i]; exists {
-					// 字段名索引
-					fieldNameIndex[field.Name] = append(fieldNameIndex[field.Name], argIndex)
-
-					// 字段标签索引
-					for tagName, tagValue := range fieldInfo.Tags {
-						if tagIndex[tagName] == nil {
-							tagIndex[tagName] = make(map[string][]int)
-						}
-						tagIndex[tagName][tagValue] = append(tagIndex[tagName][tagValue], argIndex)
-					}
-				}
-			}
-		}
-	}
 }

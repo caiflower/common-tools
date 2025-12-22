@@ -23,11 +23,24 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/reflectx"
 	"github.com/caiflower/common-tools/web/common/webctx"
+)
+
+var (
+	pathByte   = []byte("path")
+	pathStr    = "path"
+	paramByte  = []byte("param")
+	paramStr   = "param"
+	headerByte = []byte("header")
+	headerStr  = "header"
 )
 
 func validArgs(ctx *webctx.RequestCtx) e.ApiError {
@@ -47,6 +60,94 @@ func validArgs(ctx *webctx.RequestCtx) e.ApiError {
 			}},
 	}); err != nil {
 		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
+	}
+
+	return nil
+}
+
+func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
+	var (
+		targetMethod = ctx.TargetMethod
+		contentLen   = ctx.GetContentLength()
+		method       = ctx.GetMethod()
+	)
+
+	if !targetMethod.HasArgs() {
+		return nil
+	}
+
+	arg := targetMethod.GetArgs()[0]
+	switch arg.Kind() {
+	case reflect.Ptr:
+		ctx.Args = append(ctx.Args, reflect.New(arg.Elem()))
+	case reflect.Struct:
+		ctx.Args = append(ctx.Args, reflect.New(arg))
+	default:
+		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
+	}
+
+	argInfo := targetMethod.GetArgInfo(0)
+	if argInfo == nil {
+		return e.NewApiError(e.Internal, "arg info not found", nil)
+	}
+
+	builder := basic.NewArgBuilder()
+
+	// body
+	if contentLen != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
+		bytes := getBody(ctx)
+		encoding := ctx.GetContentEncoding()
+		if strings.Contains(encoding, "gzip") {
+			tmpBytes, err := compress.AppendGunzipBytes(nil, bytes)
+			if err != nil {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
+			}
+
+			bytes = tmpBytes
+		} else if strings.Contains(encoding, "br") {
+			tmpBytes, err := tools.UnBrotil(bytes)
+			if err != nil {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
+			}
+
+			bytes = tmpBytes
+		}
+
+		if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
+			err = json.Unmarshal(bytes, ctx.Args[0].Interface())
+			var typeError *json.UnmarshalTypeError
+			if errors.As(err, &typeError) {
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+			}
+
+			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
+		}
+	}
+
+	structVal := reflect.ValueOf(ctx.Args[0].Interface())
+	if structVal.Kind() == reflect.Ptr {
+		structVal = structVal.Elem()
+	}
+
+	// params
+	if !ctx.IsRestful() || method == http.MethodGet && argInfo.HasTagName(paramStr) {
+		ctx.HttpRequest.URI().QueryArgs().VisitAll(func(key, value []byte) {
+			_ = builder.WithOption(basic.WithTag(paramByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
+		})
+	}
+
+	// paths
+	if ctx.IsRestful() && len(ctx.Paths) > 0 && argInfo.HasTagName(pathStr) {
+		for _, path := range ctx.Paths {
+			_ = builder.WithOption(basic.WithTag(pathByte, bytesconv.S2b(path.Key))).SetFieldValueUsingIndex(structVal, bytesconv.S2b(path.Value), argInfo)
+		}
+	}
+
+	// header
+	if argInfo.HasTagName(headerStr) {
+		ctx.HttpRequest.Header.VisitAll(func(key, value []byte) {
+			_ = builder.WithOption(basic.WithTag(headerByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
+		})
 	}
 
 	return nil
@@ -90,14 +191,15 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 
 	if contentLen != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
 		bytes := getBody(ctx)
-		if isGzip(ctx) {
-			tmpBytes, err := tools.Gunzip(bytes)
+		encoding := ctx.GetContentEncoding()
+		if strings.Contains(encoding, "gzip") {
+			tmpBytes, err := compress.AppendGunzipBytes(nil, bytes)
 			if err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
 			}
 
 			bytes = tmpBytes
-		} else if isBr(ctx) {
+		} else if strings.Contains(encoding, "br") {
 			tmpBytes, err := tools.UnBrotil(bytes)
 			if err != nil {
 				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)

@@ -19,6 +19,9 @@ package basic
 import (
 	"fmt"
 	"reflect"
+	"strconv"
+
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 )
 
 // ArgInfo 参数信息，包含类型和标签
@@ -34,52 +37,203 @@ type ArgInfo struct {
 	fieldIndexMap map[string][]int            // fieldName -> []fieldIndex (支持嵌套字段的索引路径)
 }
 
+func (a *ArgInfo) HasTagName(tagName string) bool {
+	_, ok := a.Tags[tagName]
+	return ok
+}
+
+func (a *ArgInfo) GetTag(tagName, tagValue string) bool {
+	_, ok := a.Tags[tagName+":"+tagValue]
+	return ok
+}
+
+type ArgBuilder struct {
+	opts *ArgOptions
+}
+
+func NewArgBuilder(options ...ArgOption) *ArgBuilder {
+	var opts ArgOptions
+	for _, option := range options {
+		option(&opts)
+	}
+	return &ArgBuilder{
+		opts: &opts,
+	}
+}
+
+type ArgOptions struct {
+	Overwrite bool // only set where value is nil
+	TagName   []byte
+	TagValue  []byte
+	FieldName []byte
+}
+
+type ArgOption func(options *ArgOptions) *ArgOptions
+
+func WithOverwrite() ArgOption {
+	return func(opts *ArgOptions) *ArgOptions {
+		opts.Overwrite = true
+		return opts
+	}
+}
+
+func WithFieldName(fieldName []byte) ArgOption {
+	return func(opts *ArgOptions) *ArgOptions {
+		opts.FieldName = fieldName
+		return opts
+	}
+}
+
+func WithTag(tagName, tagValue []byte) ArgOption {
+	return func(opts *ArgOptions) *ArgOptions {
+		opts.TagName = tagName
+		opts.TagValue = tagValue
+		return opts
+	}
+}
+
+func (b *ArgBuilder) WithOption(opts ...ArgOption) *ArgBuilder {
+	for _, option := range opts {
+		option(b.opts)
+	}
+	return b
+}
+
 // SetFieldValueUsingIndex setValue with argInfo
-func SetFieldValueUsingIndex(structVal reflect.Value, fieldName string, value interface{}, argInfo *ArgInfo) (err error) {
+func (b *ArgBuilder) SetFieldValueUsingIndex(structVal reflect.Value, values []byte, argInfo *ArgInfo) (err error) {
 	if structVal.Kind() != reflect.Struct && structVal.Kind() != reflect.Ptr {
 		return fmt.Errorf("value is not a struct or pointer")
+	}
+
+	var idxs []int
+	if indexPath, exists := argInfo.fieldIndexMap[bytesconv.B2s(b.opts.FieldName)]; exists {
+		idxs = indexPath
+	}
+
+	if indexPath, exists := argInfo.tagIndex[bytesconv.B2s(b.opts.TagName)][bytesconv.B2s(b.opts.TagValue)]; exists {
+		if idxs == nil {
+			idxs = indexPath
+		} else {
+			distinct := make(map[int]struct{})
+			for _, idx := range idxs {
+				distinct[idx] = struct{}{}
+			}
+			for _, idx := range indexPath {
+				if _, ok := distinct[idx]; !ok {
+					idxs = append(idxs, idx)
+				}
+			}
+		}
 	}
 
 	if structVal.Kind() == reflect.Ptr {
 		structVal = structVal.Elem()
 	}
 
-	if indexPath, exists := argInfo.fieldIndexMap[fieldName]; exists {
-		for _, index := range indexPath {
-			nextValue := structVal.Field(index)
-			if !nextValue.CanSet() {
+	for _, index := range idxs {
+		nextValue := structVal.Field(index)
+		if !nextValue.CanSet() {
+			continue
+		}
+
+		t := nextValue.Type()
+		if nextValue.Kind() == reflect.Struct {
+			if nextValue.IsZero() {
+				newStruct := reflect.New(t).Elem()
+				nextValue.Set(newStruct)
+			}
+			err = b.SetFieldValueUsingIndex(nextValue, values, argInfo.Fields[index])
+		} else if nextValue.Kind() == reflect.Ptr {
+			if nextValue.IsZero() {
+				newStruct := reflect.New(t.Elem())
+				nextValue.Set(newStruct)
+			}
+			err = b.SetFieldValueUsingIndex(nextValue, values, argInfo.Fields[index])
+		} else if nextValue.CanSet() {
+			isSlice := nextValue.Kind() == reflect.Slice
+			if !nextValue.IsZero() && !b.opts.Overwrite && !isSlice {
 				continue
 			}
 
-			t := nextValue.Type()
-			if nextValue.Kind() == reflect.Struct {
+			var val *reflect.Value
+			val, err = convertStringsToType(values, nextValue.Type())
+			if err != nil {
+				continue
+			}
+
+			if isSlice {
 				if nextValue.IsZero() {
-					newStruct := reflect.New(t).Elem()
-					nextValue.Set(newStruct)
+					slice := reflect.MakeSlice(nextValue.Type(), 1, 8)
+					slice.Index(0).Set(*val)
+					nextValue.Set(slice)
+				} else {
+					l := nextValue.Len()
+					if l+1 >= nextValue.Cap() {
+						newSlice := reflect.MakeSlice(nextValue.Type(), l+1, nextValue.Cap()*2)
+						for i := 0; i < l; i++ {
+							newSlice.Index(i).Set(nextValue.Index(i))
+						}
+						newSlice.Index(l).Set(*val)
+						nextValue.Set(newSlice)
+					}
+					nextValue.SetLen(l + 1)
+					nextValue.Index(l).Set(*val)
 				}
-				err = SetFieldValueUsingIndex(nextValue, fieldName, value, argInfo.Fields[index])
-				continue
-			} else if nextValue.Kind() == reflect.Ptr {
-				if nextValue.IsZero() {
-					newStruct := reflect.New(t.Elem())
-					nextValue.Set(newStruct)
-				}
-				err = SetFieldValueUsingIndex(nextValue, fieldName, value, argInfo.Fields[index])
-				continue
+			} else {
+				nextValue.Set(*val)
 			}
-
-			if nextValue.CanSet() {
-				val := reflect.ValueOf(value)
-				if val.Type().ConvertibleTo(t) {
-					nextValue.Set(val.Convert(t))
-					return nil
-				}
-				err = fmt.Errorf("field %s: type %v cannot be converted to %v", fieldName, val.Type(), t)
-			}
-
-			err = fmt.Errorf("field %s cannot be set", fieldName)
 		}
 	}
 
 	return
+}
+
+func convertStringsToType(values []byte, t reflect.Type) (*reflect.Value, error) {
+	if t.Kind() == reflect.Ptr {
+		val, err := convertStringsToType(values, t.Elem())
+		if err != nil {
+			return nil, err
+		}
+		rv := reflect.New(t.Elem())
+		rv.Elem().Set(reflect.ValueOf(val).Convert(t.Elem()))
+		return &rv, nil
+	}
+
+	str := bytesconv.B2s(values)
+	var rv reflect.Value
+	switch t.Kind() {
+	case reflect.String:
+		rv = reflect.ValueOf(str)
+	case reflect.Bool:
+		v, err := strconv.ParseBool(str)
+		if err != nil {
+			return nil, err
+		}
+		rv = reflect.ValueOf(v)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		rv = reflect.ValueOf(v).Convert(t)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v, err := strconv.ParseUint(str, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		rv = reflect.ValueOf(v).Convert(t)
+	case reflect.Float32, reflect.Float64:
+		v, err := strconv.ParseFloat(str, 64)
+		if err != nil {
+			return nil, err
+		}
+		rv = reflect.ValueOf(v).Convert(t)
+	case reflect.Slice:
+		elemType := t.Elem()
+		return convertStringsToType(values, elemType)
+	default:
+		return nil, fmt.Errorf("unsupported kind %v", t.Kind())
+	}
+
+	return &rv, nil
 }

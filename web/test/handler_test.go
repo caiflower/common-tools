@@ -19,17 +19,16 @@ package webtest
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/common/resp"
+	"github.com/caiflower/common-tools/web/common/webctx"
+	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/controller"
 	"github.com/caiflower/common-tools/web/server/config"
@@ -114,7 +113,7 @@ type ProductRequest struct {
 }
 
 type ProductRequestV1 struct {
-	ProductID int `json:"product_id" verf:"required" between:"1,10000"`
+	ProductID int `json:"product_id" verf:"required" between:"1,10000" path:"productID"`
 }
 
 // GetProduct 获取产品信息
@@ -149,71 +148,62 @@ func (pc *ProductController) CreateProductPanic() *UserResponse {
 	panic("panic")
 }
 
-var once sync.Once
-var engine *web.Engine
-var handler *router.Handler
-
 // setupTestServer 设置测试服务器
-func setupTestServer(t *testing.T) (*web.Engine, *router.Handler) {
-	once.Do(func() {
-		// 创建测试引擎
-		engine = web.Default(
-			config.WithAddr(":8888"),
-			config.WithName("test-server"),
-			config.WithRootPath("/api/v1"),
-			config.WithControllerRootPkgName("webctx"),
-		)
+func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
+	// 创建测试引擎
+	engine := web.Default(
+		config.WithAddr(":8888"),
+		config.WithName("test-server"),
+		config.WithRootPath("/api/v1"),
+		config.WithControllerRootPkgName("webctx"),
+	)
 
-		if engine == nil {
-			t.Fatal("Failed to create engine")
-		}
+	// 初始化处理器
+	handlerCfg := router.HandlerCfg{
+		Name:                  "test-server",
+		RootPath:              "/api/v1",
+		HeaderTraceID:         "X-Request-Id",
+		ControllerRootPkgName: "webctx",
+		EnablePprof:           false,
+		DisableOptimization:   disableOptimization,
+	}
 
-		// 初始化处理器
-		handlerCfg := router.HandlerCfg{
-			Name:                  "test-server",
-			RootPath:              "/api/v1",
-			HeaderTraceID:         "X-Request-Id",
-			ControllerRootPkgName: "webctx",
-			EnablePprof:           false,
-		}
+	handler := router.NewHandler(handlerCfg, logger.DefaultLogger())
 
-		handler = router.NewHandler(handlerCfg, logger.DefaultLogger())
+	// 添加控制器
+	if handler != nil {
+		handler.AddController(&UserController{})
+		productController := handler.AddController(&ProductController{})
 
-		// 添加控制器
-		if handler != nil {
-			handler.AddController(&UserController{})
-			productController := handler.AddController(&ProductController{})
+		group := controller.NewRestFul().Version("v1").Group("/products")
 
-			group := controller.NewRestFul().Version("v1").Group("/products")
+		restfulController := group.
+			Path("/:productID").
+			Method("GET").
+			Controller(productController.GetPaths()[0]).
+			Action("GetProduct")
 
-			restfulController := group.
-				Path("/:productID").
-				Method("GET").
-				Controller(productController.GetPaths()[0]).
-				Action("GetProduct")
+		handler.Register(restfulController)
 
-			handler.Register(restfulController)
+		restfulController2 := group.
+			Method("POST").
+			TargetMethod(productController.GetTargetMethod("CreateProduct"))
 
-			restfulController2 := group.
-				Method("POST").
-				TargetMethod(productController.GetTargetMethod("CreateProduct"))
+		handler.Register(restfulController2)
 
-			handler.Register(restfulController2)
-
-			restfulController3 := group.
-				Method("POST").
-				Path("panic").
-				TargetMethod(productController.GetTargetMethod("CreateProductPanic"))
-			handler.Register(restfulController3)
-		}
-	})
+		restfulController3 := group.
+			Method("POST").
+			Path("panic").
+			TargetMethod(productController.GetTargetMethod("CreateProductPanic"))
+		handler.Register(restfulController3)
+	}
 
 	return engine, handler
 }
 
 // TestServerBasicFunctionality 测试服务器基本功能
 func TestServerBasicFunctionality(t *testing.T) {
-	engine, handler = setupTestServer(t)
+	engine, handler := setupTestServer(true)
 
 	if engine.Core == nil {
 		t.Fatal("Engine.Core should not be nil")
@@ -227,13 +217,13 @@ func TestServerBasicFunctionality(t *testing.T) {
 
 // TestHTTPRequestWithValidation 测试HTTP请求和参数校验
 func TestHTTPRequestWithValidation(t *testing.T) {
-	engine, handler = setupTestServer(t)
+	_, handler := setupTestServer(true)
+	_, handler1 := setupTestServer(false)
 	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
-	requestId := "test-request-id"
-	testCases := []struct {
+	type testCase struct {
 		name             string
 		path             string
 		method           string
@@ -242,7 +232,9 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 		expectSuccess    bool
 		expectErrMessage string
 		expectData       interface{}
-	}{
+	}
+	requestId := "test-request-id"
+	testCases := []testCase{
 		{
 			name:   "Valid user request",
 			path:   "/api/v1/web/webtest/UserController?Action=GetUser",
@@ -370,63 +362,85 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// 准备请求体
-			requestBody, err := json.Marshal(tc.requestBody)
-			if err != nil {
-				t.Fatalf("Failed to marshal request body: %v", err)
-			}
+	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+		// 准备请求体
+		requestBody, err := json.Marshal(tc.requestBody)
+		if err != nil {
+			t.Fatalf("Failed to marshal request body: %v", err)
+		}
 
-			// 创建HTTP请求
+		// 创建HTTP请求
+
+		var code int
+		var res []byte
+		if disableOptimization {
 			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Request-Id", requestId)
 
 			// 创建响应记录器
 			w := httptest.NewRecorder()
-
 			// 执行请求
 			handler.ServeHTTP(w, req)
+			code = w.Code
+			res = w.Body.Bytes()
+		} else {
+			ctx := &webctx.RequestCtx{}
+			ctx.HttpRequest = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+			ctx.HttpRequest.Header.Add("X-Request-Id", requestId)
+			ctx.SetPath(ctx.HttpRequest.URI().Path())
+			handler.Serve(ctx)
+			code = ctx.HttpResponse.StatusCode()
+			res = ctx.HttpResponse.Body()
+		}
 
-			assert.Equal(t, 200, w.Code, "want 200 status code")
+		assert.Equal(t, 200, code, "want 200 status code")
 
-			// 解析响应
-			var response resp.Result
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-				t.Logf("Response body: %s", w.Body.String())
-				// 某些错误情况下可能不是JSON格式，这里只记录日志
+		// 解析响应
+		var response resp.Result
+		if err := json.Unmarshal(res, &response); err != nil {
+			t.Logf("Response body: %s", string(res))
+			// 某些错误情况下可能不是JSON格式，这里只记录日志
+		} else {
+			if tc.expectedStatus == 200 {
+				assert.Nil(t, response.Error)
+				assert.Equal(t, response.Data, tc.expectData)
+				assert.NotNil(t, response.RequestId, "want request id not nil")
 			} else {
-				if tc.expectedStatus == 200 {
-					assert.Nil(t, response.Error)
-					assert.Equal(t, response.Data, tc.expectData)
-					assert.NotNil(t, response.RequestId, "want request id not nil")
-				} else {
-					assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
-					assert.Equal(t, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
-				}
+				assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+				assert.Equal(t, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 			}
-			assert.Equal(t, response.RequestId, requestId, "request id should be equal")
+		}
+		assert.Equal(t, response.RequestId, requestId, "request id should be equal")
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fn(tc, handler, true)
+			fn(tc, handler1, false)
 		})
 	}
 }
 
 // TestRESTfulRouting 测试RESTful路由
 func TestRESTfulRouting(t *testing.T) {
-	engine, handler = setupTestServer(t)
+	_, handler := setupTestServer(true)
+	_, handler1 := setupTestServer(false)
 
 	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
-	testCases := []struct {
+	type testCase struct {
 		name           string
 		path           string
 		method         string
 		requestBody    interface{}
 		expectData     interface{}
 		expectedStatus int
-	}{
+	}
+
+	testCases := []testCase{
 		{
 			name:   "GET product by ID",
 			path:   "/v1/products/123",
@@ -503,99 +517,71 @@ func TestRESTfulRouting(t *testing.T) {
 		},
 	}
 
+	fn := func(tc testCase, handler *router.Handler) {
+		// 准备请求体
+		requestBody, err := json.Marshal(tc.requestBody)
+		if err != nil {
+			t.Fatalf("Failed to marshal request body: %v", err)
+		}
+
+		// 创建HTTP请求
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Request-Id", "test-restful-request")
+
+		// 创建响应记录器
+		w := httptest.NewRecorder()
+
+		// 执行请求
+		handler.ServeHTTP(w, req)
+
+		var response resp.Result
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Logf("Response body: %s", w.Body.String())
+			// 某些错误情况下可能不是JSON格式，这里只记录日志
+		}
+		assert.Equal(t, tc.expectedStatus, w.Code, tc.name)
+		if w.Code == http.StatusOK {
+			assert.Equal(t, response.Data, tc.expectData)
+			assert.NotNil(t, response.Data, tc.name)
+		} else {
+			assert.NotNil(t, response.Error, tc.name)
+			assert.Equal(t, response.Error.GetCode(), w.Code, tc.name)
+		}
+
+		t.Logf("Request: %s %s", tc.method, tc.path)
+		t.Logf("Response Status: %d", w.Code)
+		t.Logf("Response Body: %s", w.Body.String())
+	}
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// 准备请求体
-			requestBody, err := json.Marshal(tc.requestBody)
-			if err != nil {
-				t.Fatalf("Failed to marshal request body: %v", err)
-			}
-
-			// 创建HTTP请求
-			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Request-Id", "test-restful-request")
-
-			// 创建响应记录器
-			w := httptest.NewRecorder()
-
-			// 执行请求
-			handler.ServeHTTP(w, req)
-
-			var response resp.Result
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-				t.Logf("Response body: %s", w.Body.String())
-				// 某些错误情况下可能不是JSON格式，这里只记录日志
-			}
-			assert.Equal(t, tc.expectedStatus, w.Code, tc.name)
-			if w.Code == http.StatusOK {
-				assert.Equal(t, response.Data, tc.expectData)
-				assert.NotNil(t, response.Data, tc.name)
-			} else {
-				assert.NotNil(t, response.Error, tc.name)
-				assert.Equal(t, response.Error.GetCode(), w.Code, tc.name)
-			}
-
-			t.Logf("Request: %s %s", tc.method, tc.path)
-			t.Logf("Response Status: %d", w.Code)
-			t.Logf("Response Body: %s", w.Body.String())
+			fn(tc, handler)
+			fn(tc, handler1)
 		})
 	}
 }
 
-// TestServerPerformance 测试服务器性能
-func TestServerPerformance(t *testing.T) {
-	engine, handler = setupTestServer(t)
-
-	if handler == nil {
-		t.Skip("CommonHandler not initialized")
-	}
-
-	// 并发测试
-	requests := 100
-
-	start := time.Now()
-
-	for i := 0; i < requests; i++ {
-		go func(index int) {
-			requestBody := UserRequest{
-				ID:     index + 1,
-				Name:   fmt.Sprintf("User%d", index),
-				Email:  fmt.Sprintf("user%d@example.com", index),
-				Age:    25 + (index % 50),
-				Status: "active",
-			}
-
-			body, _ := json.Marshal(requestBody)
-			req := httptest.NewRequest("POST", "/api/v1/web/webtest/UserController?Action=GetUser", bytes.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
-		}(i)
-	}
-
-	duration := time.Since(start)
-	t.Logf("Processed %d requests in %v", requests, duration)
-	t.Logf("Average request time: %v", duration/time.Duration(requests))
-}
-
-// TestErrorHandling 测试错误处理
 func TestErrorHandling(t *testing.T) {
-	engine, handler = setupTestServer(t)
+	_, handler := setupTestServer(true)
+	_, handler1 := setupTestServer(false)
 
 	if handler == nil {
 		t.Skip("CommonHandler not initialized")
 	}
+	if handler1 == nil {
+		t.Skip("CommonHandler not initialized")
+	}
 
-	testCases := []struct {
+	type testCase struct {
 		name           string
 		path           string
 		method         string
 		requestBody    string
 		description    string
 		expectedStatus int
-	}{
+	}
+	testCases := []testCase{
 		{
 			name:           "Invalid JSON",
 			path:           "/api/v1/web/webtest/UserController?Action=GetUser",
@@ -622,22 +608,201 @@ func TestErrorHandling(t *testing.T) {
 		},
 	}
 
+	fn := func(tc testCase, handler http.Handler) {
+		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader([]byte(tc.requestBody)))
+		req.Header.Set("Content-Type", "application/json")
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		var response resp.Result
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Logf("Response body: %s", w.Body.String())
+		} else {
+			assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+		}
+
+		t.Logf("%s - Status: %d, Body: %s", tc.description, w.Code, w.Body.String())
+	}
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader([]byte(tc.requestBody)))
-			req.Header.Set("Content-Type", "application/json")
-
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
-
-			var response resp.Result
-			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-				t.Logf("Response body: %s", w.Body.String())
-			} else {
-				assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
-			}
-
-			t.Logf("%s - Status: %d, Body: %s", tc.description, w.Code, w.Body.String())
+			fn(tc, handler1)
+			fn(tc, handler)
 		})
+	}
+}
+
+func BenchmarkHandler(b *testing.B) {
+	_, handler := setupTestServer(true)
+	if handler == nil {
+		b.Skip("CommonHandler not initialized")
+	}
+
+	type testCase struct {
+		name             string
+		path             string
+		method           string
+		requestBody      interface{}
+		expectedStatus   int
+		expectSuccess    bool
+		expectErrMessage string
+		expectData       interface{}
+	}
+	requestId := "test-request-id"
+	casetest := testCase{
+		name:   "Valid user request",
+		path:   "/api/v1/web/webtest/UserController?Action=GetUser",
+		method: "POST",
+		requestBody: UserRequest{
+			ID:     1,
+			Name:   "John Doe",
+			Email:  "1239811789@qq.com",
+			Age:    25,
+			Status: "active",
+		},
+		expectedStatus: http.StatusOK,
+		expectSuccess:  true,
+		expectData: map[string]interface{}{
+			"success": true,
+			"message": "User retrieved successfully",
+			"data": map[string]interface{}{
+				"id":        float64(1),
+				"name":      "John Doe",
+				"email":     "1239811789@qq.com",
+				"age":       float64(25),
+				"status":    "active",
+				"requestId": requestId,
+			},
+		},
+	}
+
+	// 准备请求体
+	requestBody, err := json.Marshal(casetest.requestBody)
+	if err != nil {
+		b.Fatalf("Failed to marshal request body: %v", err)
+	}
+
+	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+		// 创建HTTP请求
+		var code int
+		var res []byte
+
+		req := httptest.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Request-Id", requestId)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		code = w.Code
+		res = w.Body.Bytes()
+
+		assert.Equal(b, 200, code, "want 200 status code")
+
+		// 解析响应
+		var response resp.Result
+		if err := json.Unmarshal(res, &response); err != nil {
+			b.Logf("Response body: %s", string(res))
+			// 某些错误情况下可能不是JSON格式，这里只记录日志
+		} else {
+			if tc.expectedStatus == 200 {
+				assert.Nil(b, response.Error)
+				assert.Equal(b, response.Data, tc.expectData)
+				assert.NotNil(b, response.RequestId, "want request id not nil")
+			} else {
+				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
+			}
+		}
+		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+	}
+
+	for i := 0; i < b.N; i++ {
+		fn(casetest, handler, true)
+	}
+}
+
+func BenchmarkHandlerOptimization(b *testing.B) {
+	_, handler := setupTestServer(false)
+	if handler == nil {
+		b.Skip("CommonHandler not initialized")
+	}
+
+	type testCase struct {
+		name             string
+		path             string
+		method           string
+		requestBody      interface{}
+		expectedStatus   int
+		expectSuccess    bool
+		expectErrMessage string
+		expectData       interface{}
+	}
+	requestId := "test-request-id"
+	casetest := testCase{
+		name:   "Valid user request",
+		path:   "/api/v1/web/webtest/UserController?Action=GetUser",
+		method: "POST",
+		requestBody: UserRequest{
+			ID:     1,
+			Name:   "John Doe",
+			Email:  "1239811789@qq.com",
+			Age:    25,
+			Status: "active",
+		},
+		expectedStatus: http.StatusOK,
+		expectSuccess:  true,
+		expectData: map[string]interface{}{
+			"success": true,
+			"message": "User retrieved successfully",
+			"data": map[string]interface{}{
+				"id":        float64(1),
+				"name":      "John Doe",
+				"email":     "1239811789@qq.com",
+				"age":       float64(25),
+				"status":    "active",
+				"requestId": requestId,
+			},
+		},
+	}
+
+	// 准备请求体
+	requestBody, err := json.Marshal(casetest.requestBody)
+	if err != nil {
+		b.Fatalf("Failed to marshal request body: %v", err)
+	}
+	ctx := &webctx.RequestCtx{}
+	ctx.HttpRequest = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
+	ctx.HttpRequest.Header.Add("X-Request-Id", requestId)
+	ctx.SetPath(ctx.HttpRequest.URI().Path())
+
+	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+		ctx.HttpResponse.Reset()
+		ctx.Args = nil
+		handler.Serve(ctx)
+		code := ctx.HttpResponse.StatusCode()
+		res := ctx.HttpResponse.Body()
+
+		assert.Equal(b, 200, code, "want 200 status code")
+
+		// 解析响应
+		var response resp.Result
+		if err := json.Unmarshal(res, &response); err != nil {
+			b.Logf("Response body: %s", string(res))
+			// 某些错误情况下可能不是JSON格式，这里只记录日志
+		} else {
+			if tc.expectedStatus == 200 {
+				assert.Nil(b, response.Error)
+				assert.Equal(b, response.Data, tc.expectData)
+				assert.NotNil(b, response.RequestId, "want request id not nil")
+			} else {
+				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
+			}
+		}
+		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+	}
+
+	for i := 0; i < b.N; i++ {
+		fn(casetest, handler, false)
 	}
 }

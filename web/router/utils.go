@@ -15,25 +15,3 @@
  */
 
 package router
-
-import (
-	"strings"
-
-	"github.com/caiflower/common-tools/web/common/webctx"
-)
-
-func acceptGzip(ctx *webctx.RequestCtx) bool {
-	return strings.Contains(ctx.GetAcceptEncoding(), "gzip")
-}
-
-func acceptBr(ctx *webctx.RequestCtx) bool {
-	return strings.Contains(ctx.GetAcceptEncoding(), "br")
-}
-
-func isGzip(ctx *webctx.RequestCtx) bool {
-	return strings.Contains(ctx.GetContentEncoding(), "gzip")
-}
-
-func isBr(ctx *webctx.RequestCtx) bool {
-	return strings.Contains(ctx.GetContentEncoding(), "br")
-}

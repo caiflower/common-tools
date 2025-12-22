@@ -54,7 +54,7 @@ type Options struct {
 	ListenConfig             *net.ListenConfig
 	OnAccept                 func(conn net.Conn) context.Context
 	OnConnect                func(ctx context.Context, conn network.Conn) context.Context
-	DisableOptimization      bool `yaml:"optimization"`
+	DisableOptimization      bool `yaml:"disableOptimization"`
 	MaxHeaderBytes           int  `yaml:"maxHeaderBytes" default:"1048576"`
 	MaxRequestBodySize       int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
 	EnableMetrics            bool `yaml:"enableMetrics"`

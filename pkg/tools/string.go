@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
 	"regexp"
@@ -78,6 +78,58 @@ func ToCamel(str string) (camel string) {
 	}
 
 	return
+}
+
+// ToCamelByte converts snake_case to camelCase with high performance using bytes
+func ToCamelByte(src []byte) []byte {
+	l := len(src)
+	if l == 0 {
+		return []byte{}
+	}
+
+	dst := make([]byte, 0, l)
+	upperNext := false
+
+	disableNormal := true
+	if len(src) <= 15 { // if src len less than 15, then try to disableNormal
+		for _, c := range src {
+			if c == '_' {
+				disableNormal = false
+				break
+			}
+		}
+	} else {
+		disableNormal = false
+	}
+
+	if !disableNormal {
+		for _, c := range src {
+			if c == '_' {
+				upperNext = true
+				continue
+			}
+
+			if upperNext {
+				if c >= 'a' && c <= 'z' {
+					c -= 32 // 'a' - 'A'
+				}
+				upperNext = false
+			}
+
+			dst = append(dst, c)
+		}
+	} else {
+		dst = src
+	}
+
+	if len(dst) > 0 {
+		c := dst[0]
+		if c >= 'A' && c <= 'Z' {
+			dst[0] = c + 32 // 'a' - 'A'
+		}
+	}
+
+	return dst
 }
 
 func ToString(value interface{}) string {

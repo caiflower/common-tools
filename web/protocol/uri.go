@@ -46,7 +46,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/common/nocopy"
 )

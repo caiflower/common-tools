@@ -35,7 +35,8 @@ import (
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/common/metric"
@@ -65,6 +66,7 @@ type HandlerCfg struct {
 	EnablePprof           bool          `yaml:"enablePprof"`
 	WebLimiter            LimiterConfig `yaml:"webLimiter"`
 	EnableMetrics         bool          `yaml:"enableMetrics"`
+	DisableOptimization   bool          `yaml:"disableOptimization"`
 }
 
 type LimiterConfig struct {
@@ -287,12 +289,22 @@ func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 
 	// set args
 	webContext := ctx.ConvertToWebCtx()
-	if err := setArgs(ctx, webContext); err != nil {
-		if err.IsInternalError() {
-			h.logger.Warn("setArgs failed. Error: %v", err)
+	if !h.config.DisableOptimization {
+		if err := setArgsOptimized(ctx, webContext); err != nil {
+			if err.IsInternalError() {
+				h.logger.Warn("setArgsOptimized failed. Error: %v", err)
+			}
+			h.writeError(ctx, err)
+			return
 		}
-		h.writeError(ctx, err)
-		return
+	} else {
+		if err := setArgs(ctx, webContext); err != nil {
+			if err.IsInternalError() {
+				h.logger.Warn("setArgs failed. Error: %v", err)
+			}
+			h.writeError(ctx, err)
+			return
+		}
 	}
 
 	// valid args
@@ -403,14 +415,12 @@ func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
 	}
 
 	bytes, _ := tools.Marshal(res)
+	str := ctx.GetAcceptEncoding()
 	if !restful {
-		if acceptGzip(ctx) {
-			tmpBytes, err := tools.Gzip(bytes)
-			if err == nil {
-				bytes = tmpBytes
-				ctx.SetHeader("Content-Encoding", "gzip")
-			}
-		} else if acceptBr(ctx) {
+		if strings.Contains(str, "gzip") {
+			bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
+			ctx.SetHeader("Content-Encoding", "gzip")
+		} else if strings.Contains(str, "br") {
 			tmpBytes, err := tools.Brotil(bytes)
 			if err == nil {
 				bytes = tmpBytes
@@ -445,13 +455,11 @@ func (h *Handler) writeResponse(ctx *webctx.RequestCtx) {
 	}
 
 	bytes, _ := tools.Marshal(res)
-	if acceptGzip(ctx) {
-		tmpBytes, err := tools.Gzip(bytes)
-		if err == nil {
-			bytes = tmpBytes
-			ctx.SetHeader("Content-Encoding", "gzip")
-		}
-	} else if acceptBr(ctx) {
+	str := ctx.GetAcceptEncoding()
+	if strings.Contains(str, "gzip") {
+		bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
+		ctx.SetHeader("Content-Encoding", "gzip")
+	} else if strings.Contains(str, "br") {
 		tmpBytes, err := tools.Brotil(bytes)
 		if err == nil {
 			bytes = tmpBytes

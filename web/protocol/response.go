@@ -48,7 +48,7 @@ import (
 	"sync"
 
 	"github.com/caiflower/common-tools/pkg/bytebufferpool"
-	"github.com/caiflower/common-tools/web/common/bytesconv"
+	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/nocopy"
 	"github.com/caiflower/common-tools/web/common/utils"
