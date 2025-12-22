@@ -32,6 +32,7 @@ import (
 	"github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/protocol/http1/req"
 	"github.com/caiflower/common-tools/web/router"
+	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/caiflower/common-tools/web/server/config"
 )
 
@@ -58,7 +59,9 @@ func NewHttpServer(options config.Options) *HttpServer {
 		transporter: netpoll.NewTransporter(&options),
 	}
 	s.requestCtxPool.New = func() interface{} {
-		ctx := &webctx.RequestCtx{}
+		ctx := &webctx.RequestCtx{
+			Paths: make(param.Params, 0, 10),
+		}
 		ctx.HttpRequest.SetOptions(
 			requstoption.WithReadTimeout(options.ReadTimeout),
 			requstoption.WithWriteTimeout(options.WriteTimeout),

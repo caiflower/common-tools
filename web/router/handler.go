@@ -90,7 +90,7 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 
 	commonHandler.ctxPool.New = func() interface{} {
 		return &webctx.RequestCtx{
-			Paths: make(param.Params, 0, 1),
+			Paths: make(param.Params, 0, 10),
 		}
 	}
 
