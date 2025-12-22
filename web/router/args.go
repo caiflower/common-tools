@@ -130,7 +130,7 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 	}
 
 	// params
-	if !ctx.IsRestful() || method == http.MethodGet && argInfo.HasTagName(paramStr) {
+	if (!ctx.IsRestful() || method == http.MethodGet) && argInfo.HasTagName(paramStr) {
 		ctx.HttpRequest.URI().QueryArgs().VisitAll(func(key, value []byte) {
 			_ = builder.WithOption(basic.WithTag(paramByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
 		})
@@ -220,7 +220,7 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 	}
 
 	params := ctx.GetParams()
-	if (len(params) > 1 && !ctx.IsRestful()) && (len(params) > 2 || method == http.MethodGet) {
+	if (len(params) > 1 && !ctx.IsRestful()) || len(params) > 2 {
 		fnObjs = append(fnObjs, tools.FnObj{
 			Fn:   reflectx.SetParam,
 			Data: params,
