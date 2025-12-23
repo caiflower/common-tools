@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package v1
+package v1
 
 import (
 	"strconv"
@@ -45,6 +45,8 @@ func TestPut(t *testing.T) {
 	}
 }
 
+// OLD: BenchmarkFib-11    	 1000000	      1210 ns/op
+// CURRENT: BenchmarkFib-11    	 2455628	       616.7 ns/op
 func BenchmarkFib(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		go func(i int) {

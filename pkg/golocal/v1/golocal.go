@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// +build go1.4
-
 package v1
 
 import (
@@ -30,17 +28,21 @@ const (
 	GoContext = "Go-Context"
 )
 
-var localMap sync.Map
+const shardCount = 128
+
+var localMaps [shardCount]sync.Map
 
 func getGoID() int64 {
 	return gls.GoID()
 }
 
 func getMapByGoID(goID int64) *sync.Map {
-	value, _ := localMap.Load(goID)
+	shardIndex := goID & (shardCount - 1)
+	shard := &localMaps[shardIndex]
+	value, _ := shard.Load(goID)
 	if value == nil {
 		_tmp := &sync.Map{}
-		localMap.Store(goID, _tmp)
+		shard.Store(goID, _tmp)
 		return _tmp
 	}
 	return value.(*sync.Map)
@@ -51,7 +53,9 @@ func GetLocalMap() *sync.Map {
 }
 
 func PutLocalMap(_map *sync.Map) {
-	localMap.Store(getGoID(), _map)
+	id := getGoID()
+	shardIndex := id & (shardCount - 1)
+	localMaps[shardIndex].Store(id, _map)
 }
 
 func PutTraceID(value string) {
@@ -82,9 +86,8 @@ func Get(key string) interface{} {
 
 func Clean() {
 	id := getGoID()
-	if v := getMapByGoID(id); v != nil {
-		localMap.Delete(id)
-	}
+	shardIndex := id & (shardCount - 1)
+	localMaps[shardIndex].Delete(id)
 }
 
 func PutContext(ctx context.Context) {
