@@ -136,6 +136,7 @@ type Handler struct {
 
 	// RequestContext pool
 	ctxPool sync.Pool
+	running bool
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +159,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Serve(ctx *webctx.RequestCtx) {
 	defer golocalv1.Clean()
 
+	ctx.SetMethod(ctx.Request.Method())
+	ctx.SetPath(ctx.Request.Path())
 	h.serverCommon(ctx)
 
 	// dispatch
@@ -179,7 +182,7 @@ func (h *Handler) serverCommon(ctx *webctx.RequestCtx) {
 
 	// TODO writer request is nil
 	if h.beforeDispatchCallbackFunc != nil {
-		if h.beforeDispatchCallbackFunc(ctx.Writer, ctx.Request) {
+		if h.beforeDispatchCallbackFunc(ctx.Writer, ctx.HttpRequest) {
 			return
 		}
 	}
@@ -265,10 +268,9 @@ func (h *Handler) getRequestContext() *webctx.RequestCtx {
 }
 
 func InitCtx(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) *webctx.RequestCtx {
-	ctx.Request = r
+	ctx.HttpRequest = r
 	ctx.SetMethod(bytesconv.S2b(r.Method))
 	ctx.SetPath(bytesconv.S2b(r.URL.Path))
-	ctx.Request = r
 	ctx.Writer = w
 	return ctx
 }
@@ -390,7 +392,7 @@ func doTargetMethod(ctx *webctx.RequestCtx) (err e.ApiError) {
 }
 
 func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
-	if ctx.IsSpecial() {
+	if ctx.IsAbort() {
 		return
 	}
 
@@ -435,7 +437,7 @@ func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
 }
 
 func (h *Handler) writeResponse(ctx *webctx.RequestCtx) {
-	if ctx.IsSpecial() {
+	if ctx.IsAbort() {
 		return
 	}
 
@@ -536,4 +538,16 @@ func (h *Handler) specialRequest(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func (h *Handler) IsRunning() bool {
+	return h.running
+}
+
+func (h *Handler) SetRunning(running bool) {
+	h.running = running
+}
+
+func (h *Handler) GetCtxPool() *sync.Pool {
+	return &h.ctxPool
 }

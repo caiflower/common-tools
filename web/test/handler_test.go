@@ -387,12 +387,12 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			res = w.Body.Bytes()
 		} else {
 			ctx := &webctx.RequestCtx{}
-			ctx.HttpRequest = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
-			ctx.HttpRequest.Header.Add("X-Request-Id", requestId)
-			ctx.SetPath(ctx.HttpRequest.URI().Path())
+			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+			ctx.Request.Header.Add("X-Request-Id", requestId)
+			ctx.SetPath(ctx.Request.URI().Path())
 			handler.Serve(ctx)
-			code = ctx.HttpResponse.StatusCode()
-			res = ctx.HttpResponse.Body()
+			code = ctx.Response.StatusCode()
+			res = ctx.Response.Body()
 		}
 
 		assert.Equal(t, 200, code, "want 200 status code")
@@ -539,13 +539,13 @@ func TestRESTfulRouting(t *testing.T) {
 			res = w.Body.Bytes()
 		} else {
 			ctx := &webctx.RequestCtx{}
-			ctx.HttpRequest = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
-			ctx.SetMethod(ctx.HttpRequest.Method())
-			ctx.SetPath(ctx.HttpRequest.URI().Path())
+			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
+			ctx.SetMethod(ctx.Request.Method())
+			ctx.SetPath(ctx.Request.URI().Path())
 			ctx.Paths = make(param.Params, 0, 10)
 			handler.Serve(ctx)
-			code = ctx.HttpResponse.StatusCode()
-			res = ctx.HttpResponse.Body()
+			code = ctx.Response.StatusCode()
+			res = ctx.Response.Body()
 		}
 
 		var response resp.Result
@@ -784,16 +784,16 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 		b.Fatalf("Failed to marshal request body: %v", err)
 	}
 	ctx := &webctx.RequestCtx{}
-	ctx.HttpRequest = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
-	ctx.HttpRequest.Header.Add("X-Request-Id", requestId)
-	ctx.SetPath(ctx.HttpRequest.URI().Path())
+	ctx.Request = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
+	ctx.Request.Header.Add("X-Request-Id", requestId)
+	ctx.SetPath(ctx.Request.URI().Path())
 
 	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
-		ctx.HttpResponse.Reset()
+		ctx.Response.Reset()
 		ctx.Args = nil
 		handler.Serve(ctx)
-		code := ctx.HttpResponse.StatusCode()
-		res := ctx.HttpResponse.Body()
+		code := ctx.Response.StatusCode()
+		res := ctx.Response.Body()
 
 		assert.Equal(b, 200, code, "want 200 status code")
 

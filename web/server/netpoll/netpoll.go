@@ -17,52 +17,52 @@
 package netpoll
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/common/bytestr"
 	requstoption "github.com/caiflower/common-tools/web/common/config"
-	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/network/netpoll"
-	"github.com/caiflower/common-tools/web/protocol/http1/req"
+	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/protocol/http1"
+	"github.com/caiflower/common-tools/web/protocol/http2"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/caiflower/common-tools/web/server/config"
 )
 
-var (
-	errIdleTimeout  = errs.New(errs.ErrIdleTimeout, errs.ErrorTypePrivate, nil)
-	errParseRequest = errs.NewPrivate("parseRequest failed")
-)
-
 type HttpServer struct {
 	*router.Handler
 
-	options        *config.Options
-	logger         logger.ILog
-	transporter    network.Transporter
-	requestCtxPool sync.Pool
+	config.Options
+	logger          logger.ILog
+	transporter     network.Transporter
+	requestCtxPool  sync.Pool
+	startLock       sync.Mutex
+	protocolServers map[string]protocol.Server
 }
 
 func NewHttpServer(options config.Options) *HttpServer {
 	_ = tools.DoTagFunc(&options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	s := &HttpServer{
-		options:     &options,
-		logger:      logger.DefaultLogger(),
-		transporter: netpoll.NewTransporter(&options),
+		Options:         options,
+		logger:          logger.DefaultLogger(),
+		transporter:     netpoll.NewTransporter(&options),
+		protocolServers: make(map[string]protocol.Server),
 	}
 	s.requestCtxPool.New = func() interface{} {
 		ctx := &webctx.RequestCtx{
 			Paths: make(param.Params, 0, 10),
 		}
-		ctx.HttpRequest.SetOptions(
+		ctx.Request.SetOptions(
 			requstoption.WithReadTimeout(options.ReadTimeout),
 			requstoption.WithWriteTimeout(options.WriteTimeout),
 		)
@@ -70,19 +70,49 @@ func NewHttpServer(options config.Options) *HttpServer {
 	}
 	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
+	s.protocolServers["http1"] = &http1.Server{
+		Core:    s,
+		Options: options,
+	}
+	if s.H2C {
+		s.RegisterHttp2(config.Http2Options{
+			Options: options,
+		})
+	}
+
 	return s
 }
 
+func (s *HttpServer) RegisterHttp2(options config.Http2Options) {
+	s.protocolServers["http2"] = &http2.Server{
+		BaseEngine: http2.BaseEngine{
+			Core:         s,
+			Http2Options: options,
+		},
+	}
+}
+
 func (s *HttpServer) Name() string {
-	return fmt.Sprintf("NETPOLL_HTTP_SERVER:%s", s.options.Name)
+	return fmt.Sprintf("NETPOLL_HTTP_SERVER:%s", s.Options.Name)
 }
 
 func (s *HttpServer) Start() error {
 	s.logger.Info(
 		"\n***************************** netpoll http server startup ***************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %s *********\n"+
-			"*************************************************************************************************", s.options.Name, s.options.RootPath, s.options.Addr)
+			"*************************************************************************************************", s.Name, s.RootPath, s.Addr)
+	if s.IsRunning() {
+		return nil
+	}
 
+	s.startLock.Lock()
+	defer s.startLock.Unlock()
+	if s.IsRunning() {
+		return nil
+	}
+
+	s.Handler.SortInterceptors()
+	s.SetRunning(true)
 	var err error
 	go func() {
 		if err = s.transporter.ListenAndServe(s.OnReq); err != nil {
@@ -96,6 +126,7 @@ func (s *HttpServer) Start() error {
 func (s *HttpServer) Close() {
 	s.logger.Info("      **** netpoll http server shutdown, wait at most 5s ****")
 
+	s.SetRunning(false)
 	timeout, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancelFunc()
 	if err := s.transporter.Shutdown(timeout); err != nil {
@@ -104,7 +135,7 @@ func (s *HttpServer) Close() {
 }
 
 func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
-	options := s.options
+	options := s.Options
 	return router.HandlerCfg{
 		Name:                  options.Name,
 		RootPath:              options.RootPath,
@@ -121,112 +152,31 @@ func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
 }
 
 func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
-	var (
-		cancel         context.CancelFunc
-		zr             network.Reader
-		connRequestNum = uint64(0)
-		request        *http.Request
-		zw             network.Writer
-		conn           network.Conn
-	)
-	conn = cc.(network.Conn)
-
-	if s.options.HandleTimeout != 0 {
-		c, cancel = context.WithTimeout(c, s.options.HandleTimeout)
-		defer cancel()
+	conn := cc.(network.Conn)
+	// H2C path
+	if s.H2C {
+		// protocol sniffer
+		buf, _ := conn.Peek(len(bytestr.StrClientPreface))
+		if bytes.Equal(buf, bytestr.StrClientPreface) && s.protocolServers["http2"] != nil {
+			return s.protocolServers["http2"].Serve(c, conn)
+		}
+		s.logger.Warn("HTTP2 server is not loaded, request is going to fallback to HTTP1 server")
 	}
 
-	ctx := s.getRequestContext()
-	ctx = ctx.SetConn(conn).SetContext(c)
-	zr = ctx.GetReader()
-	zw = ctx.GetWriter()
+	// HTTP1 path
+	err = s.protocolServers["http1"].Serve(c, conn)
 
-	defer func() {
-		s.requestCtxPool.Put(ctx)
-		_ = conn.Close()
-	}()
-
-	for {
-		connRequestNum++
-
-		// If this is a keep-alive connection we want to try and read the first bytes
-		// within the idle time.
-		if connRequestNum > 1 {
-			_ = ctx.GetConn().SetReadTimeout(s.options.IdleTimeout)
-
-			_, err = zr.Peek(4)
-			// This is not the first request, and we haven't read a single byte
-			// of a new request yet. This means it's just a keep-alive connection
-			// closing down either because the remote closed it or because
-			// or a read timeout on our side. Either way just close the connection
-			// and don't return any error response.
-			if err != nil {
-				err = errIdleTimeout
-				return
-			}
-
-			// Reset the real read timeout for the coming request
-			_ = ctx.GetConn().SetReadTimeout(s.options.ReadTimeout)
-		}
-
-		if !s.options.DisableOptimization {
-			if err = req.ReadHeaderWithLimit(&ctx.HttpRequest.Header, zr, s.options.MaxHeaderBytes); err == nil {
-				// Read body
-				//if s.StreamRequestBody {
-				//	err = req.ReadBodyStream(&ctx.Request, zr, s.MaxRequestBodySize, s.GetOnly, !s.DisablePreParseMultipartForm)
-				//} else {
-				err = req.ReadLimitBody(&ctx.HttpRequest, zr, s.options.MaxRequestBodySize, false, false)
-				if err != nil {
-					return
-				}
-
-				ctx.SetMethod(ctx.HttpRequest.Method())
-				ctx.SetPath(ctx.HttpRequest.Path())
-			}
-		} else {
-			request, err = ctx.GetHttpRequest()
-			ctx = router.InitCtx(ctx, nil, request)
-		}
-
-		s.Handler.Serve(ctx)
-		if err != nil {
-			s.logger.Error("GetHttpRequest failed. Error: %s", err.Error())
-			err = errParseRequest
-			return
-		}
-
-		err = writeResponse(ctx, zw)
-		if err != nil {
-			return
-		}
-
-		_ = zw.Flush()
-		_ = zr.Release()
-		ctx.Reset()
-	}
+	return
 }
 
 func (s *HttpServer) getRequestContext() *webctx.RequestCtx {
 	return s.requestCtxPool.Get().(*webctx.RequestCtx)
 }
 
-func writeResponse(ctx *webctx.RequestCtx, w network.Writer) error {
-	resp := &ctx.HttpResponse
+func (s *HttpServer) GetCtxPool() *sync.Pool {
+	return &s.requestCtxPool
+}
 
-	body := resp.Body()
-	bodyLen := len(body)
-	resp.Header.SetContentLength(bodyLen)
-
-	header := resp.Header.Header()
-	_, err := w.WriteBinary(header)
-	if err != nil {
-		return err
-	}
-
-	resp.Header.SetHeaderLength(len(header))
-	// Write body
-	if bodyLen > 0 {
-		_, err = w.WriteBinary(body)
-	}
-	return err
+func (s *HttpServer) GetLogger() logger.ILog {
+	return s.logger
 }

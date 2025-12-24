@@ -33,6 +33,7 @@ const (
 )
 
 type Option func(*Options) *Options
+type Http2Option func(*Http2Options) *Http2Options
 
 type Options struct {
 	Name                     string        `yaml:"name" default:"default"`
@@ -58,9 +59,12 @@ type Options struct {
 	MaxHeaderBytes           int  `yaml:"maxHeaderBytes" default:"1048576"`
 	MaxRequestBodySize       int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
 	EnableMetrics            bool `yaml:"enableMetrics"`
+	DisableKeepalive         bool `yaml:"disableKeepalive"`
+	EnableTrace              bool `yaml:"enableTrace"`
+	H2C                      bool `yaml:"h2c"`
 }
 
-func NewOptions(opts []Option) *Options {
+func NewOptions(opts ...Option) *Options {
 	options := &Options{}
 	_ = tools.DoTagFunc(options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
@@ -179,6 +183,99 @@ func WithListenConfig(listenConfig *net.ListenConfig) Option {
 func WithDisableOptimization(opt bool) Option {
 	return func(opts *Options) *Options {
 		opts.DisableOptimization = opt
+		return opts
+	}
+}
+
+func WithDisableKeepalive(opt bool) Option {
+	return func(opts *Options) *Options {
+		opts.DisableKeepalive = opt
+		return opts
+	}
+}
+
+func WithH2C(opt bool) Option {
+	return func(opts *Options) *Options {
+		opts.H2C = opt
+		return opts
+	}
+}
+
+type Http2Options struct {
+	Options
+	// MaxUploadBufferPerConnection is the size of the initial flow
+	// control window for each connections. The HTTP/2 spec does not
+	// allow this to be smaller than 65535 or larger than 2^32-1.
+	// If the value is outside this range, a default value will be
+	// used instead.
+	MaxUploadBufferPerConnection int32
+
+	// MaxUploadBufferPerStream is the size of the initial flow control
+	// window for each stream. The HTTP/2 spec does not allow this to
+	// be larger than 2^32-1. If the value is zero or larger than the
+	// maximum, a default value will be used instead.
+	MaxUploadBufferPerStream int32
+
+	// MaxReadFrameSize optionally specifies the largest frame
+	// this server is willing to read. A valid value is between
+	// 16k and 16M, inclusive. If zero or otherwise invalid, a
+	// default value is used.
+	MaxReadFrameSize uint32
+
+	// MaxConcurrentStreams optionally specifies the number of
+	// concurrent streams that each client may have open at a
+	// time. This is unrelated to the number of http.Handler goroutines
+	// which may be active globally, which is MaxHandlers.
+	// If zero, MaxConcurrentStreams defaults to at least 100, per
+	// the HTTP/2 spec's recommendations.
+	MaxConcurrentStreams uint32
+
+	// PermitProhibitedCipherSuites, if true, permits the use of
+	// cipher suites prohibited by the HTTP/2 spec.
+	PermitProhibitedCipherSuites bool
+}
+
+func NewHttp2Options(http1 Options, opts ...Http2Option) *Http2Options {
+	options := &Http2Options{Options: http1}
+	_ = tools.DoTagFunc(options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+
+	for _, opt := range opts {
+		options = opt(options)
+	}
+	return options
+}
+
+func WithMaxUploadBufferPerConnection(maxUploadBufferPerConnection int32) Http2Option {
+	return func(opts *Http2Options) *Http2Options {
+		opts.MaxUploadBufferPerConnection = maxUploadBufferPerConnection
+		return opts
+	}
+}
+
+func WithMaxUploadBufferPerStream(maxUploadBufferPerStream int32) Http2Option {
+	return func(opts *Http2Options) *Http2Options {
+		opts.MaxUploadBufferPerStream = maxUploadBufferPerStream
+		return opts
+	}
+}
+
+func WithMaxReadFrameSize(maxReadFrameSize uint32) Http2Option {
+	return func(opts *Http2Options) *Http2Options {
+		opts.MaxReadFrameSize = maxReadFrameSize
+		return opts
+	}
+}
+
+func WithMaxConcurrentStreams(maxConcurrentStreams uint32) Http2Option {
+	return func(opts *Http2Options) *Http2Options {
+		opts.MaxConcurrentStreams = maxConcurrentStreams
+		return opts
+	}
+}
+
+func WithPermitProhibitedCipherSuites(permitProhibitedCipherSuites bool) Http2Option {
+	return func(opts *Http2Options) *Http2Options {
+		opts.PermitProhibitedCipherSuites = permitProhibitedCipherSuites
 		return opts
 	}
 }

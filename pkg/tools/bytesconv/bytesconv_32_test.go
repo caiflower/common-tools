@@ -46,8 +46,6 @@ package bytesconv
 import (
 	"fmt"
 	"testing"
-
-	"github.com/cloudwego/hertz/pkg/common/test/assert"
 )
 
 func TestReadHexInt(t *testing.T) {

@@ -69,6 +69,7 @@ const (
 
 	// Message body information
 	HeaderContentEncoding = "Content-Encoding"
+	HeaderEncodingLower   = "content-encoding"
 	HeaderContentLanguage = "Content-Language"
 	HeaderContentLength   = "Content-Length"
 	HeaderContentLocation = "Content-Location"

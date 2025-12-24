@@ -43,8 +43,6 @@
 
 package protocol
 
-import "github.com/cloudwego/hertz/pkg/common/hlog"
-
 func addLeadingSlash(dst, src []byte) []byte {
 	// zero length and "C:/" case
 	isDisk := len(src) > 2 && src[1] == ':'

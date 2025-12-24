@@ -131,7 +131,7 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 
 	// params
 	if (!ctx.IsRestful() || method == http.MethodGet) && argInfo.HasTagName(paramStr) {
-		ctx.HttpRequest.URI().QueryArgs().VisitAll(func(key, value []byte) {
+		ctx.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
 			_ = builder.WithOption(basic.WithTag(paramByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
 		})
 	}
@@ -145,7 +145,7 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 
 	// header
 	if argInfo.HasTagName(headerStr) {
-		ctx.HttpRequest.Header.VisitAll(func(key, value []byte) {
+		ctx.Request.Header.VisitAll(func(key, value []byte) {
 			_ = builder.WithOption(basic.WithTag(headerByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
 		})
 	}
@@ -236,10 +236,10 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 	}
 
 	// set header
-	if ctx.Request != nil {
+	if ctx.HttpRequest != nil {
 		fnObjs = append(fnObjs, tools.FnObj{
 			Fn:   reflectx.SetHeader,
-			Data: ctx.Request.Header,
+			Data: ctx.HttpRequest.Header,
 		})
 	}
 
@@ -256,10 +256,10 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 }
 
 func getBody(ctx *webctx.RequestCtx) (body []byte) {
-	if ctx.Request != nil {
-		body, _ = io.ReadAll(ctx.Request.Body)
+	if ctx.HttpRequest != nil {
+		body, _ = io.ReadAll(ctx.HttpRequest.Body)
 	} else {
-		body = ctx.HttpRequest.Body()
+		body = ctx.Request.Body()
 	}
 	return
 }

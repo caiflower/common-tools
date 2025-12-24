@@ -30,7 +30,7 @@ type Engine struct {
 }
 
 func Default(opts ...config.Option) *Engine {
-	options := config.NewOptions(opts)
+	options := config.NewOptions(opts...)
 	engine := &Engine{
 		opts: options,
 	}

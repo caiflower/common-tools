@@ -25,6 +25,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/adaptor"
+	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/network"
 	netpoll1 "github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/protocol"
@@ -36,13 +37,13 @@ type RequestCtx struct {
 	ctx context.Context
 
 	// net
-	Request *http.Request
-	Writer  http.ResponseWriter
+	HttpRequest *http.Request
+	Writer      http.ResponseWriter
 
 	// netpoll
-	HttpResponse protocol.Response
-	HttpRequest  protocol.Request
-	conn         network.Conn
+	Response protocol.Response
+	Request  protocol.Request
+	conn     network.Conn
 
 	isFinish bool
 	Action   string
@@ -56,7 +57,9 @@ type RequestCtx struct {
 
 	Args         []reflect.Value
 	TargetMethod *basic.Method
-	Special      string
+	Special      int8
+	// enableTrace defines whether enable trace.
+	enableTrace bool
 }
 
 func (c *RequestCtx) ConvertToWebCtx() *Context {
@@ -69,7 +72,7 @@ func (c *RequestCtx) SetHeader(key, value string) {
 		return
 	}
 
-	c.HttpResponse.Header.Set(key, value)
+	c.Response.Header.Set(key, value)
 }
 
 func (c *RequestCtx) WriteHeader(statusCode int) {
@@ -78,7 +81,7 @@ func (c *RequestCtx) WriteHeader(statusCode int) {
 		return
 	}
 
-	c.HttpResponse.Header.SetStatusCode(statusCode)
+	c.Response.Header.SetStatusCode(statusCode)
 }
 
 func (c *RequestCtx) Write(bytes []byte) (int, error) {
@@ -86,7 +89,7 @@ func (c *RequestCtx) Write(bytes []byte) (int, error) {
 		return c.Writer.Write(bytes)
 	}
 
-	return c.HttpResponse.BodyWriter().Write(bytes)
+	return c.Response.BodyWriter().Write(bytes)
 }
 
 func (c *RequestCtx) SetData(v interface{}) {
@@ -111,12 +114,12 @@ func (c *RequestCtx) GetPath() string {
 }
 
 func (c *RequestCtx) GetParams() map[string][]string {
-	if c.Request != nil {
-		return c.Request.URL.Query()
+	if c.HttpRequest != nil {
+		return c.HttpRequest.URL.Query()
 	}
 
 	var params = make(map[string][]string)
-	c.HttpRequest.URI().QueryArgs().VisitAll(func(key, value []byte) {
+	c.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
 		params[bytesconv.B2s(key)] = append(params[bytesconv.B2s(key)], bytesconv.B2s(value))
 	})
 
@@ -124,10 +127,10 @@ func (c *RequestCtx) GetParams() map[string][]string {
 }
 
 func (c *RequestCtx) SetAction() string {
-	if c.Request != nil {
-		return c.Request.URL.Query().Get("Action")
+	if c.HttpRequest != nil {
+		return c.HttpRequest.URL.Query().Get("Action")
 	}
-	return bytesconv.B2s(c.HttpRequest.URI().QueryArgs().Peek("Action"))
+	return bytesconv.B2s(c.Request.URI().QueryArgs().Peek("Action"))
 }
 
 func (c *RequestCtx) GetAction() string {
@@ -142,22 +145,26 @@ func (c *RequestCtx) GetMethod() string {
 	return bytesconv.B2s(c.method)
 }
 
+func (c *RequestCtx) Method() []byte {
+	return c.method
+}
+
 func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
 	if c.Writer != nil {
-		return c.Writer, c.Request
+		return c.Writer, c.HttpRequest
 	}
 
-	request, _ := adaptor.GetCompatRequest(&c.HttpRequest)
-	response := adaptor.GetCompatResponseWriter(&c.HttpResponse)
+	request, _ := adaptor.GetCompatRequest(&c.Request)
+	response := adaptor.GetCompatResponseWriter(&c.Response)
 	return response, request
 }
 
 func (c *RequestCtx) UpgradeWebsocket() {
-	c.Special = "websocket"
+	c.Special = 1
 }
 
-func (c *RequestCtx) IsSpecial() bool {
-	return c.Special != ""
+func (c *RequestCtx) IsAbort() bool {
+	return c.Special != 0
 }
 
 func (c *RequestCtx) IsRestful() bool {
@@ -167,13 +174,14 @@ func (c *RequestCtx) IsRestful() bool {
 func (c *RequestCtx) Reset() {
 	c.TargetMethod = nil
 	c.Args = c.Args[:0]
-	c.Special = ""
+	c.Special = 0
 	c.Paths = c.Paths[:0]
 	c.isFinish = false
 	c.Writer = nil
-	c.Request = nil
-	c.HttpResponse.Reset()
-	c.HttpRequest.Reset()
+	c.HttpRequest = nil
+	c.Response.Reset()
+	c.Request.Reset()
+	c.enableTrace = false
 }
 
 func (c *RequestCtx) GetConn() network.Conn {
@@ -217,32 +225,66 @@ func (c *RequestCtx) GetHttpRequest() (req *http.Request, err error) {
 }
 
 func (c *RequestCtx) GetContentEncoding() string {
-	if c.Request != nil {
+	if c.HttpRequest != nil {
 		return c.Request.Header.Get("Content-Encoding")
 	}
 
-	return bytesconv.B2s(c.HttpRequest.Header.PeekContentEncoding())
+	return bytesconv.B2s(c.Request.Header.PeekContentEncoding())
 }
 
 func (c *RequestCtx) GetAcceptEncoding() string {
-	if c.Request != nil {
-		return c.Request.Header.Get("Accept-Encoding")
+	if c.HttpRequest != nil {
+		return c.HttpRequest.Header.Get("Accept-Encoding")
 	}
 
-	return c.HttpRequest.Header.Get("Accept-Encoding")
+	return c.Request.Header.Get("Accept-Encoding")
 }
 
 func (c *RequestCtx) GetContentLength() int64 {
-	if c.Request != nil {
-		return c.Request.ContentLength
+	if c.HttpRequest != nil {
+		return c.HttpRequest.ContentLength
 	}
 
-	return int64(c.HttpRequest.Header.ContentLength())
+	return int64(c.Request.Header.ContentLength())
 }
 
 func (c *RequestCtx) HeaderGet(key string) string {
-	if c.Request != nil {
-		return c.Request.Header.Get(key)
+	if c.HttpRequest != nil {
+		return c.HttpRequest.Header.Get(key)
 	}
-	return c.HttpRequest.Header.Get(key)
+	return c.Request.Header.Get(key)
+}
+
+func (c *RequestCtx) URI() *protocol.URI {
+	return c.Request.URI()
+}
+
+// Host returns requested host.
+//
+// The host is valid until returning from RequestHandler.
+func (c *RequestCtx) Host() []byte {
+	if c.HttpRequest != nil {
+		return bytesconv.S2b(c.HttpRequest.Host)
+	}
+	return c.URI().Host()
+}
+
+func (c *RequestCtx) IsEnableTrace() bool {
+	return false
+}
+
+func (c *RequestCtx) AbortWithMsg(msg string, statusCode int) {
+	c.Response.Reset()
+	c.WriteHeader(statusCode)
+	c.Response.Header.SetContentTypeBytes(bytestr.DefaultContentType)
+	c.Response.SetBodyString(msg)
+	c.Abort()
+}
+
+func (c *RequestCtx) Abort() {
+	c.Special = -1
+}
+
+func (c *RequestCtx) SetEnableTrace(b bool) {
+	c.enableTrace = b
 }

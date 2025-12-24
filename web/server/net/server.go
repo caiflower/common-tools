@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -34,7 +35,8 @@ type HttpServer struct {
 	logger logger.ILog
 	server *http.Server
 	*router.Handler
-	cfg NormalConfig
+	cfg       NormalConfig
+	startLock sync.Mutex
 }
 
 type NormalConfig struct {
@@ -75,6 +77,16 @@ func (s *HttpServer) Start() error {
 		},
 	}
 
+	if s.IsRunning() {
+		return nil
+	}
+
+	s.startLock.Lock()
+	defer s.startLock.Unlock()
+	if s.IsRunning() {
+		return nil
+	}
+
 	s.Handler.SortInterceptors()
 
 	s.logger.Info(
@@ -106,4 +118,8 @@ func (s *HttpServer) Close() {
 		s.logger.Info(" **** http server gracefully shutdown ****")
 	}
 	s.server = nil
+}
+
+func (s *HttpServer) GetLogger() logger.ILog {
+	return s.logger
 }
