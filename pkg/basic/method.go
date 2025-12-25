@@ -26,14 +26,15 @@ import (
 )
 
 type Method struct {
-	pkgName  string         //包名
-	name     string         //方法名称
-	path     string         //方法路径
-	class    *Class         //所属类，当方法不是某类中的方法时，则所属类是空的，只有类实现的方法，此参数才有值并有意义
-	funC     interface{}    //目标函数
-	args     []reflect.Type //入参类型
-	rets     []reflect.Type //出参类型
-	argsInfo []ArgInfo      //参数详细信息，包含标签
+	pkgName   string         //包名
+	name      string         //方法名称
+	path      string         //方法路径
+	class     *Class         //所属类，当方法不是某类中的方法时，则所属类是空的，只有类实现的方法，此参数才有值并有意义
+	funC      interface{}    //目标函数
+	args      []reflect.Type //入参类型
+	rets      []reflect.Type //出参类型
+	argsInfo  []ArgInfo      //参数详细信息，包含标签
+	funcValue reflect.Value
 }
 
 func NewMethod(cls *Class, v interface{}) *Method {
@@ -115,14 +116,15 @@ func NewMethod(cls *Class, v interface{}) *Method {
 	}
 
 	return &Method{
-		class:    cls,
-		pkgName:  pkgName,
-		name:     name,
-		path:     path,
-		args:     args,
-		rets:     rets,
-		funC:     funC,
-		argsInfo: argsInfo,
+		class:     cls,
+		pkgName:   pkgName,
+		name:      name,
+		path:      path,
+		args:      args,
+		rets:      rets,
+		funC:      funC,
+		argsInfo:  argsInfo,
+		funcValue: reflect.ValueOf(funC),
 	}
 }
 
@@ -172,9 +174,9 @@ func (m *Method) HasRets() bool {
 // Invoke 反射调用方法
 func (m *Method) Invoke(args []reflect.Value) []reflect.Value {
 	if m.HasArgs() == false {
-		return reflect.ValueOf(m.funC).Call(nil)
+		return m.funcValue.Call(nil)
 	}
-	return reflect.ValueOf(m.funC).Call(args)
+	return m.funcValue.Call(args)
 }
 
 // extractArgTags 提取参数的标签信息
