@@ -114,7 +114,8 @@ type ProductRequest struct {
 }
 
 type ProductRequestV1 struct {
-	ProductID int `json:"product_id" verf:"required" between:"1,10000" path:"productID"`
+	ProductID   int    `json:"product_id" verf:"required" between:"1,10000" path:"productID"`
+	ProductName string `query:"productName"`
 }
 
 // GetProduct 获取产品信息
@@ -124,7 +125,7 @@ func (pc *ProductController) GetProduct(req *ProductRequestV1) *UserResponse {
 		Message: "Product retrieved successfully",
 		Data: map[string]interface{}{
 			"product_id":   req.ProductID,
-			"product_name": "Test Product",
+			"product_name": req.ProductName,
 			"price":        99.99,
 			"category":     "Electronics",
 		},
@@ -444,14 +445,14 @@ func TestRESTfulRouting(t *testing.T) {
 	testCases := []testCase{
 		{
 			name:   "GET product by ID",
-			path:   "/v1/products/123",
+			path:   "/v1/products/123?productName=testProductName",
 			method: "GET",
 			expectData: map[string]interface{}{
 				"success": true,
 				"message": "Product retrieved successfully",
 				"data": map[string]interface{}{
 					"product_id":   float64(123),
-					"product_name": "Test Product",
+					"product_name": "testProductName",
 					"price":        float64(99.99),
 					"category":     "Electronics",
 				},

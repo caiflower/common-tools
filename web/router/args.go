@@ -37,8 +37,8 @@ import (
 var (
 	pathByte   = []byte("path")
 	pathStr    = "path"
-	paramByte  = []byte("param")
-	paramStr   = "param"
+	paramByte  = []byte("query")
+	paramStr   = "query"
 	headerByte = []byte("header")
 	headerStr  = "header"
 )
@@ -220,9 +220,9 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 	}
 
 	params := ctx.GetParams()
-	if (len(params) > 1 && !ctx.IsRestful()) || len(params) > 2 {
+	if len(params) >= 1 && ctx.IsRestful() || len(params) >= 2 {
 		fnObjs = append(fnObjs, tools.FnObj{
-			Fn:   reflectx.SetParam,
+			Fn:   reflectx.SetQuery,
 			Data: params,
 		})
 	}

@@ -176,9 +176,9 @@ func NewTransporter(options *config.Options) network.Transporter {
 		keepAliveTimeout:         options.KeepAliveTimeout,
 		readTimeout:              options.ReadTimeout,
 		senseClientDisconnection: options.SenseClientDisconnection,
-		//tls:                      options.TLS,
-		//listenConfig:             options.ListenConfig,
-		OnAccept:  options.OnAccept,
-		OnConnect: options.OnConnect,
+		tls:                      options.TLS,
+		listenConfig:             options.ListenConfig,
+		OnAccept:                 options.OnAccept,
+		OnConnect:                options.OnConnect,
 	}
 }

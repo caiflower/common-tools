@@ -70,7 +70,7 @@ import (
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/caiflower/common-tools/web/protocol/http2/app"
-	"github.com/caiflower/common-tools/web/server"
+	"github.com/caiflower/common-tools/web/protocol/suit"
 	"github.com/caiflower/common-tools/web/server/config"
 	"golang.org/x/net/http2/hpack"
 )
@@ -106,8 +106,8 @@ var (
 )
 
 type BaseEngine struct {
-	Core server.Core
-	config.Http2Options
+	Core suit.Core
+	config.Options
 }
 
 // Server is an HTTP/2 server.
@@ -1664,7 +1664,7 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 	// similar to how the http1 server works. Here it's
 	// technically more like the http1 Server's ReadHeaderTimeout
 	// (in Go 1.8), though. That's a more sane option anyway.
-	if sc.engine.Http2Options.ReadTimeout != 0 {
+	if sc.engine.ReadTimeout != 0 {
 		sc.conn.SetReadDeadline(time.Time{})
 	}
 
@@ -1706,7 +1706,7 @@ func (sc *serverConn) newStream(id, pusherID uint32, state streamState) *stream 
 
 	// Start trace
 	cc := sc.baseCtx
-	if sc.engine.Http2Options.EnableTrace {
+	if sc.engine.EnableTrace {
 		reqCtx.SetEnableTrace(true)
 		// TODO trace???
 		//cc = sc.engine.Core.GetTracer().DoStart(sc.baseCtx, reqCtx)

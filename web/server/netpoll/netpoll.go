@@ -19,7 +19,9 @@ package netpoll
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -27,12 +29,15 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	requstoption "github.com/caiflower/common-tools/web/common/config"
+	"github.com/caiflower/common-tools/web/common/utils"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/network/netpoll"
+	"github.com/caiflower/common-tools/web/network/standard"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/protocol/http1"
 	"github.com/caiflower/common-tools/web/protocol/http2"
+	"github.com/caiflower/common-tools/web/protocol/suit"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/caiflower/common-tools/web/server/config"
@@ -55,7 +60,6 @@ func NewHttpServer(options config.Options) *HttpServer {
 	s := &HttpServer{
 		Options:         options,
 		logger:          logger.DefaultLogger(),
-		transporter:     netpoll.NewTransporter(&options),
 		protocolServers: make(map[string]protocol.Server),
 	}
 	s.requestCtxPool.New = func() interface{} {
@@ -70,26 +74,40 @@ func NewHttpServer(options config.Options) *HttpServer {
 	}
 	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
-	s.protocolServers["http1"] = &http1.Server{
+	// http1
+	s.protocolServers[suit.HTTP1] = &http1.Server{
 		Core:    s,
 		Options: options,
 	}
+
 	if s.H2C {
-		s.RegisterHttp2(config.Http2Options{
-			Options: options,
+		s.AddProtocol(suit.HTTP2, &http2.Server{
+			BaseEngine: http2.BaseEngine{
+				Options: options,
+				Core:    s,
+			},
 		})
+	}
+
+	if s.TLS != nil {
+		if !s.H2C {
+			s.AddProtocol(suit.HTTP2, &http2.Server{
+				BaseEngine: http2.BaseEngine{
+					Options: options,
+					Core:    s,
+				},
+			})
+		}
+		s.transporter = standard.NewTransporter(&options)
+	} else {
+		s.transporter = netpoll.NewTransporter(&options)
 	}
 
 	return s
 }
 
-func (s *HttpServer) RegisterHttp2(options config.Http2Options) {
-	s.protocolServers["http2"] = &http2.Server{
-		BaseEngine: http2.BaseEngine{
-			Core:         s,
-			Http2Options: options,
-		},
-	}
+func (s *HttpServer) AddProtocol(protocol string, core protocol.Server) {
+	s.protocolServers[protocol] = core
 }
 
 func (s *HttpServer) Name() string {
@@ -157,15 +175,49 @@ func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
 	if s.H2C {
 		// protocol sniffer
 		buf, _ := conn.Peek(len(bytestr.StrClientPreface))
-		if bytes.Equal(buf, bytestr.StrClientPreface) && s.protocolServers["http2"] != nil {
-			return s.protocolServers["http2"].Serve(c, conn)
+		if bytes.Equal(buf, bytestr.StrClientPreface) && s.protocolServers[suit.HTTP2] != nil {
+			return s.protocolServers[suit.HTTP2].Serve(c, conn)
 		}
 		s.logger.Warn("HTTP2 server is not loaded, request is going to fallback to HTTP1 server")
 	}
 
-	// HTTP1 path
-	err = s.protocolServers["http1"].Serve(c, conn)
+	if s.ALPN && s.TLS != nil {
+		proto, err1 := s.getNextProto(conn)
+		if err1 != nil {
+			// The client closes the connection when handshake. So just ignore it.
+			if err1 == io.EOF {
+				return nil
+			}
+			if re, ok := err1.(tls.RecordHeaderError); ok && re.Conn != nil && utils.TLSRecordHeaderLooksLikeHTTP(re.RecordHeader) {
+				_, _ = io.WriteString(re.Conn, "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n")
+				_ = re.Conn.Close()
+				return re
+			}
+			return err1
+		}
+		if server, ok := s.protocolServers[proto]; ok {
+			return server.Serve(c, conn)
+		}
+	}
 
+	// HTTP1 path
+	err = s.protocolServers[suit.HTTP1].Serve(c, conn)
+
+	return
+}
+
+func (s *HttpServer) getNextProto(conn network.Conn) (proto string, err error) {
+	if tlsConn, ok := conn.(network.ConnTLSer); ok {
+		if s.ReadTimeout > 0 {
+			if err := conn.SetReadTimeout(s.ReadTimeout); err != nil {
+				s.logger.Error("BUG: error in SetReadDeadline=%s: error=%s", s.ReadTimeout, err)
+			}
+		}
+		err = tlsConn.Handshake()
+		if err == nil {
+			proto = tlsConn.ConnectionState().NegotiatedProtocol
+		}
+	}
 	return
 }
 

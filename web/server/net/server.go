@@ -26,6 +26,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 )
 
@@ -122,4 +123,8 @@ func (s *HttpServer) Close() {
 
 func (s *HttpServer) GetLogger() logger.ILog {
 	return s.logger
+}
+
+func (s *HttpServer) AddProtocol(protocol string, core protocol.Server) {
+	panic("not support")
 }

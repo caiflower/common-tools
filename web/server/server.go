@@ -17,11 +17,8 @@
 package server
 
 import (
-	"sync"
-
-	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web/common/interceptor"
-	"github.com/caiflower/common-tools/web/common/webctx"
+	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 	controller2 "github.com/caiflower/common-tools/web/router/controller"
 )
@@ -36,8 +33,6 @@ type Core interface {
 
 	AddInterceptor(i interceptor.Interceptor, order int)
 	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
-	IsRunning() bool
-	GetCtxPool() *sync.Pool
-	Serve(ctx *webctx.RequestCtx)
-	GetLogger() logger.ILog
+
+	AddProtocol(protocol string, core protocol.Server)
 }

@@ -2,14 +2,12 @@ package http1
 
 import (
 	"context"
-	"net/http"
 
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/protocol/http1/req"
-	"github.com/caiflower/common-tools/web/router"
-	"github.com/caiflower/common-tools/web/server"
+	"github.com/caiflower/common-tools/web/protocol/suit"
 	"github.com/caiflower/common-tools/web/server/config"
 )
 
@@ -19,7 +17,7 @@ var (
 )
 
 type Server struct {
-	server.Core
+	suit.Core
 	config.Options
 }
 
@@ -28,7 +26,6 @@ func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 		cancel         context.CancelFunc
 		zr             network.Reader
 		connRequestNum = uint64(0)
-		request        *http.Request
 		zw             network.Writer
 	)
 
@@ -70,20 +67,15 @@ func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 			_ = ctx.GetConn().SetReadTimeout(s.ReadTimeout)
 		}
 
-		if !s.DisableOptimization {
-			if err = req.ReadHeaderWithLimit(&ctx.Request.Header, zr, s.MaxHeaderBytes); err == nil {
-				// Read body
-				//if s.StreamRequestBody {
-				//	err = req.ReadBodyStream(&ctx.Request, zr, s.MaxRequestBodySize, s.GetOnly, !s.DisablePreParseMultipartForm)
-				//} else {
-				err = req.ReadLimitBody(&ctx.Request, zr, s.MaxRequestBodySize, false, false)
-				if err != nil {
-					return
-				}
+		if err = req.ReadHeaderWithLimit(&ctx.Request.Header, zr, s.MaxHeaderBytes); err == nil {
+			// Read body
+			//if s.StreamRequestBody {
+			//	err = req.ReadBodyStream(&ctx.Request, zr, s.MaxRequestBodySize, s.GetOnly, !s.DisablePreParseMultipartForm)
+			//} else {
+			err = req.ReadLimitBody(&ctx.Request, zr, s.MaxRequestBodySize, false, false)
+			if err != nil {
+				return
 			}
-		} else {
-			request, err = ctx.GetHttpRequest()
-			ctx = router.InitCtx(ctx, nil, request)
 		}
 
 		s.Core.Serve(ctx)

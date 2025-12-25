@@ -17,7 +17,6 @@
 package webctx
 
 import (
-	"bufio"
 	"context"
 	"net/http"
 	"reflect"
@@ -27,10 +26,8 @@ import (
 	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/network"
-	netpoll1 "github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router/param"
-	"github.com/cloudwego/netpoll"
 )
 
 type RequestCtx struct {
@@ -208,20 +205,6 @@ func (c *RequestCtx) GetReader() network.Reader {
 
 func (c *RequestCtx) GetWriter() network.Writer {
 	return c.conn
-}
-
-func (c *RequestCtx) GetHttpRequest() (req *http.Request, err error) {
-	conn := c.conn.(*netpoll1.Conn)
-	reader := netpoll.NewIOReader(conn.Conn.(netpoll.Connection).Reader())
-	bufReader := bufio.NewReaderSize(reader, 128)
-
-	req, err = http.ReadRequest(bufReader)
-	if err != nil {
-		return
-	}
-
-	req = req.WithContext(c.ctx)
-	return
 }
 
 func (c *RequestCtx) GetContentEncoding() string {

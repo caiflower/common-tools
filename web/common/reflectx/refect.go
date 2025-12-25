@@ -113,7 +113,7 @@ func SetPath(structField reflect.StructField, vValue reflect.Value, data interfa
 	return
 }
 
-func SetParam(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+func SetQuery(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
 	if !vValue.CanSet() {
 		return
 	}
@@ -121,8 +121,8 @@ func SetParam(structField reflect.StructField, vValue reflect.Value, data interf
 	var params []string
 	m := data.(map[string][]string)
 	structTag := structField.Tag
-	if containTag(structTag, "param") {
-		params = m[structTag.Get("param")]
+	if containTag(structTag, "query") {
+		params = m[structTag.Get("query")]
 	} else {
 		name := structField.Name
 		// 首字母变小
@@ -162,7 +162,7 @@ func SetParam(structField reflect.StructField, vValue reflect.Value, data interf
 				case reflect.String:
 					slice.Index(i).SetString(param)
 				default:
-					if structTag.Get("param") != "" {
+					if structTag.Get("query") != "" {
 						return fmt.Errorf("unsupported tag param:'%s'", structField.Name)
 					}
 				}
@@ -185,7 +185,7 @@ func SetParam(structField reflect.StructField, vValue reflect.Value, data interf
 			default:
 			}
 		default:
-			if structTag.Get("param") != "" {
+			if structTag.Get("query") != "" {
 				return fmt.Errorf("unsupported tag param:'%s'", structField.Name)
 			}
 		}

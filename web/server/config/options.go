@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"time"
 
@@ -33,7 +34,6 @@ const (
 )
 
 type Option func(*Options) *Options
-type Http2Option func(*Http2Options) *Http2Options
 
 type Options struct {
 	Name                     string        `yaml:"name" default:"default"`
@@ -62,6 +62,9 @@ type Options struct {
 	DisableKeepalive         bool `yaml:"disableKeepalive"`
 	EnableTrace              bool `yaml:"enableTrace"`
 	H2C                      bool `yaml:"h2c"`
+	ALPN                     bool `yaml:"alpn"`
+	TLS                      *tls.Config
+	Http2Options
 }
 
 func NewOptions(opts ...Option) *Options {
@@ -201,8 +204,15 @@ func WithH2C(opt bool) Option {
 	}
 }
 
+func WithALPN(opt bool, tls *tls.Config) Option {
+	return func(opts *Options) *Options {
+		opts.ALPN = opt
+		opts.TLS = tls
+		return opts
+	}
+}
+
 type Http2Options struct {
-	Options
 	// MaxUploadBufferPerConnection is the size of the initial flow
 	// control window for each connections. The HTTP/2 spec does not
 	// allow this to be smaller than 65535 or larger than 2^32-1.
@@ -235,46 +245,36 @@ type Http2Options struct {
 	PermitProhibitedCipherSuites bool
 }
 
-func NewHttp2Options(http1 Options, opts ...Http2Option) *Http2Options {
-	options := &Http2Options{Options: http1}
-	_ = tools.DoTagFunc(options, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
-
-	for _, opt := range opts {
-		options = opt(options)
-	}
-	return options
-}
-
-func WithMaxUploadBufferPerConnection(maxUploadBufferPerConnection int32) Http2Option {
-	return func(opts *Http2Options) *Http2Options {
+func WithMaxUploadBufferPerConnection(maxUploadBufferPerConnection int32) Option {
+	return func(opts *Options) *Options {
 		opts.MaxUploadBufferPerConnection = maxUploadBufferPerConnection
 		return opts
 	}
 }
 
-func WithMaxUploadBufferPerStream(maxUploadBufferPerStream int32) Http2Option {
-	return func(opts *Http2Options) *Http2Options {
+func WithMaxUploadBufferPerStream(maxUploadBufferPerStream int32) Option {
+	return func(opts *Options) *Options {
 		opts.MaxUploadBufferPerStream = maxUploadBufferPerStream
 		return opts
 	}
 }
 
-func WithMaxReadFrameSize(maxReadFrameSize uint32) Http2Option {
-	return func(opts *Http2Options) *Http2Options {
+func WithMaxReadFrameSize(maxReadFrameSize uint32) Option {
+	return func(opts *Options) *Options {
 		opts.MaxReadFrameSize = maxReadFrameSize
 		return opts
 	}
 }
 
-func WithMaxConcurrentStreams(maxConcurrentStreams uint32) Http2Option {
-	return func(opts *Http2Options) *Http2Options {
+func WithMaxConcurrentStreams(maxConcurrentStreams uint32) Option {
+	return func(opts *Options) *Options {
 		opts.MaxConcurrentStreams = maxConcurrentStreams
 		return opts
 	}
 }
 
-func WithPermitProhibitedCipherSuites(permitProhibitedCipherSuites bool) Http2Option {
-	return func(opts *Http2Options) *Http2Options {
+func WithPermitProhibitedCipherSuites(permitProhibitedCipherSuites bool) Option {
+	return func(opts *Options) *Options {
 		opts.PermitProhibitedCipherSuites = permitProhibitedCipherSuites
 		return opts
 	}
