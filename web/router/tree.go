@@ -61,12 +61,12 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/router/method"
 	param "github.com/caiflower/common-tools/web/router/param"
 )
 
-type HandlersChain []*basic.Method
+type HandlersChain []method.Method
 
 type router struct {
 	method string

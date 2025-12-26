@@ -43,15 +43,10 @@ var (
 	headerStr  = "header"
 )
 
-func validArgs(ctx *webctx.RequestCtx) e.ApiError {
-	method := ctx.TargetMethod
-	if !method.HasArgs() {
-		return nil
-	}
-
-	elem := reflect.TypeOf(ctx.Args[0].Interface()).Elem()
+func validArgs(arg interface{}) e.ApiError {
+	elem := reflect.TypeOf(arg).Elem()
 	pkgPath := elem.PkgPath()
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), []tools.FnObj{
+	if err := tools.DoTagFunc(arg, []tools.FnObj{
 		{
 			Fn: reflectx.CheckParam,
 			Data: reflectx.ValidObject{
@@ -65,28 +60,11 @@ func validArgs(ctx *webctx.RequestCtx) e.ApiError {
 	return nil
 }
 
-func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
+func setArgsOptimized(ctx *webctx.RequestCtx, arg interface{}, argInfo *basic.ArgInfo) e.ApiError {
 	var (
-		targetMethod = ctx.TargetMethod
-		contentLen   = ctx.GetContentLength()
-		method       = ctx.GetMethod()
+		method = ctx.GetMethod()
 	)
 
-	if !targetMethod.HasArgs() {
-		return nil
-	}
-
-	arg := targetMethod.GetArgs()[0]
-	switch arg.Kind() {
-	case reflect.Ptr:
-		ctx.Args = append(ctx.Args, reflect.New(arg.Elem()))
-	case reflect.Struct:
-		ctx.Args = append(ctx.Args, reflect.New(arg))
-	default:
-		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
-	}
-
-	argInfo := targetMethod.GetArgInfo(0)
 	if argInfo == nil {
 		return e.NewApiError(e.Internal, "arg info not found", nil)
 	}
@@ -94,7 +72,7 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 	builder := basic.NewArgBuilder()
 
 	// body
-	if contentLen != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
+	if ctx.GetContentLength() != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
 		bytes := getBody(ctx)
 		encoding := ctx.GetContentEncoding()
 		if strings.Contains(encoding, "gzip") {
@@ -113,18 +91,18 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 			bytes = tmpBytes
 		}
 
-		if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
-			err = json.Unmarshal(bytes, ctx.Args[0].Interface())
+		if err := tools.Unmarshal(bytes, arg); err != nil {
+			err = json.Unmarshal(bytes, arg)
 			var typeError *json.UnmarshalTypeError
 			if errors.As(err, &typeError) {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(arg).Elem().Name()+"."+typeError.Field, typeError.Value), err)
 			}
 
 			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
 		}
 	}
 
-	structVal := reflect.ValueOf(ctx.Args[0].Interface())
+	structVal := reflect.ValueOf(arg)
 	if structVal.Kind() == reflect.Ptr {
 		structVal = structVal.Elem()
 	}
@@ -153,29 +131,14 @@ func setArgsOptimized(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiE
 	return nil
 }
 
-func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
+func setArgs(ctx *webctx.RequestCtx, arg interface{}, webContext *webctx.Context) e.ApiError {
 	var (
-		targetMethod = ctx.TargetMethod
-		contentLen   = ctx.GetContentLength()
-		method       = ctx.GetMethod()
+		contentLen = ctx.GetContentLength()
+		method     = ctx.GetMethod()
 	)
 
-	if !targetMethod.HasArgs() {
-		return nil
-	}
-
-	arg := targetMethod.GetArgs()[0]
-	switch arg.Kind() {
-	case reflect.Ptr:
-		ctx.Args = append(ctx.Args, reflect.New(arg.Elem()))
-	case reflect.Struct:
-		ctx.Args = append(ctx.Args, reflect.New(arg))
-	default:
-		return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()), nil)
-	}
-
 	// set context
-	indirect := reflect.Indirect(reflect.ValueOf(ctx.Args[0].Interface()))
+	indirect := reflect.Indirect(reflect.ValueOf(arg))
 	for i := 0; i < indirect.NumField(); i++ {
 		field := indirect.Field(i)
 		if field.Type().AssignableTo(assignableWebContextElem) {
@@ -208,11 +171,11 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 			bytes = tmpBytes
 		}
 
-		if err := tools.Unmarshal(bytes, ctx.Args[0].Interface()); err != nil {
-			err = json.Unmarshal(bytes, ctx.Args[0].Interface())
+		if err := tools.Unmarshal(bytes, arg); err != nil {
+			err = json.Unmarshal(bytes, arg)
 			var typeError *json.UnmarshalTypeError
 			if errors.As(err, &typeError) {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(ctx.Args[0].Interface()).Elem().Name()+"."+typeError.Field, typeError.Value), err)
+				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(arg).Elem().Name()+"."+typeError.Field, typeError.Value), err)
 			}
 
 			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
@@ -248,7 +211,7 @@ func setArgs(ctx *webctx.RequestCtx, webContext *webctx.Context) e.ApiError {
 	//	Fn: tools.SetDefaultValueIfNil,
 	//})
 
-	if err := tools.DoTagFunc(ctx.Args[0].Interface(), fnObjs); err != nil {
+	if err := tools.DoTagFunc(arg, fnObjs); err != nil {
 		return e.NewInternalError(err)
 	}
 

@@ -73,7 +73,7 @@ func (uc *UserController) GetUser(req *UserRequest) *UserResponse {
 }
 
 // CreateUser 创建用户 - 测试参数校验
-func (uc *UserController) CreateUser(req *UserRequest) *UserResponse {
+func (uc *UserController) CreateUser(req UserRequest) *UserResponse {
 	return &UserResponse{
 		Success: true,
 		Message: "User created successfully",
@@ -198,6 +198,13 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 			Path("panic").
 			TargetMethod(productController.GetTargetMethod("CreateProductPanic"))
 		handler.Register(restfulController3)
+
+		helloController := handler.RegisterGRPCService(&IService_ServiceDesc, &HelloImpl{})
+		restfulController4 := controller.NewRestFul().Version("v1").
+			Method("GET").
+			Path("search").
+			RegisterGrpcMethod(helloController.GetGrpcMethodDesc("Search"))
+		handler.Register(restfulController4)
 	}
 
 	return engine, handler
@@ -362,6 +369,51 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			expectSuccess:    false,
 			expectErrMessage: `UserRequest.Status is not in [active inactive pending]`,
 		},
+		{
+			name:   "gprc controller",
+			path:   "/api/v1/web/webtest/helloimpl?Action=Search",
+			method: "POST",
+			requestBody: SearchRequest{
+				Query:      "1",
+				PageNumber: 2,
+				Hobby:      []string{"english", "math"},
+			},
+			expectedStatus: http.StatusOK,
+			expectSuccess:  true,
+			expectData: map[string]interface{}{
+				"code":    float64(1),
+				"message": "math",
+			},
+		},
+		{
+			name:   "gprc controller",
+			path:   "/api/v1/web/webtest/helloimpl?Action=Search",
+			method: "POST",
+			requestBody: SearchRequest{
+				Query:      "2",
+				PageNumber: 1,
+				Hobby:      []string{"english", "math"},
+			},
+			expectedStatus: http.StatusOK,
+			expectSuccess:  true,
+			expectData: map[string]interface{}{
+				"code":    float64(1),
+				"message": "english,math",
+			},
+		},
+		{
+			name:   "gprc controller",
+			path:   "/api/v1/web/webtest/helloimpl?Action=Search",
+			method: "POST",
+			requestBody: SearchRequest{
+				Query:      "3",
+				PageNumber: 2,
+				Hobby:      []string{"english", "math"},
+			},
+			expectedStatus:   http.StatusBadRequest,
+			expectSuccess:    false,
+			expectErrMessage: "query 3 is not impl",
+		},
 	}
 
 	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
@@ -430,6 +482,9 @@ func TestRESTfulRouting(t *testing.T) {
 	_, handler1 := setupTestServer(false)
 
 	if handler == nil {
+		t.Skip("CommonHandler not initialized")
+	}
+	if handler1 == nil {
 		t.Skip("CommonHandler not initialized")
 	}
 
@@ -516,6 +571,16 @@ func TestRESTfulRouting(t *testing.T) {
 			path:           "/v1/products/panic",
 			method:         "POST",
 			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "restful gprc controller",
+			path:           "/v1/search?query=1&hobby=english&hobby=math&page_number=1",
+			method:         "GET",
+			expectedStatus: http.StatusOK,
+			expectData: map[string]interface{}{
+				"code":    float64(1),
+				"message": "english",
+			},
 		},
 	}
 
@@ -791,7 +856,6 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 
 	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
 		ctx.Response.Reset()
-		ctx.Args = nil
 		handler.Serve(ctx)
 		code := ctx.Response.StatusCode()
 		res := ctx.Response.Body()

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -34,6 +35,11 @@ type RestfulController struct {
 	controllerName string
 	action         string
 	targetMethod   *basic.Method
+
+	// grpc
+	grpcMethodDesc *grpc.MethodDesc
+	// srv
+	srv interface{}
 }
 
 func NewRestFul() *RestfulController {
@@ -90,6 +96,24 @@ func (c *RestfulController) TargetMethod(method *basic.Method) *RestfulControlle
 	}
 	copyC.targetMethod = method
 	return copyC
+}
+
+func (c *RestfulController) RegisterGrpcMethod(method *grpc.MethodDesc, srv interface{}, m *basic.Method) *RestfulController {
+	copyC := c.copyC()
+	if method == nil {
+		panic("TargetGrpcMethod the method is nil")
+	}
+	if srv == nil {
+		panic("RegisterGrpcMethod the service is nil")
+	}
+	copyC.grpcMethodDesc = method
+	copyC.srv = srv
+	copyC.targetMethod = m
+	return copyC
+}
+
+func (c *RestfulController) GetGrpcMethodDesc() (bool, *grpc.MethodDesc, interface{}) {
+	return c.grpcMethodDesc != nil, c.grpcMethodDesc, c.srv
 }
 
 func (c *RestfulController) GetVersion() string {

@@ -1,0 +1,35 @@
+syntax = "proto3"; // 默认走的是 proto2,所以需要强制指定，pb3比pb2语法上简单
+
+package proto; //当前文件的package
+
+option go_package="../api/pb;webtest";// go的包路径(切记一定要写全，和go的import有关系，如果写 dto，那么别人引入你就是 dto了，显然是引入不到的，一定要写全)
+
+message SearchRequest {
+  // 每个字段都有四块组成: 字段规则，类型，名称，编号
+  // @gotags: query:"query"
+  string query = 1;
+  // @gotags: query:"page_number"
+  int32 page_number = 2;
+  // @gotags: query:"result_per_page"
+  int32 result_per_page = 3;
+  // @gotags: query:"hobby"
+  repeated string hobby = 4;
+}
+
+message SearchRequest2 {
+  // 每个字段都有四块组成: 字段规则，类型，名称，编号
+  string query = 1;
+  int32 page_number = 2;
+  int32 result_per_page = 3;
+  repeated string hobby = 4;
+}
+
+message SearchResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+service IService {
+  rpc Search(SearchRequest) returns (SearchResponse) {}
+  rpc Search2(SearchRequest) returns (SearchResponse) {}
+}

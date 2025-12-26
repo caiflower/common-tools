@@ -28,6 +28,7 @@ type ApiError interface {
 	GetMessage() string
 	GetCause() error
 	IsInternalError() bool
+	Error() string
 }
 
 type Error = apiError
@@ -69,13 +70,22 @@ type ErrorCode struct {
 }
 
 var (
-	NotFound        = &ErrorCode{Code: http.StatusNotFound, Type: "NotFound"}
-	NotAcceptable   = &ErrorCode{Code: http.StatusNotAcceptable, Type: "NotAcceptable"}
-	Unknown         = &ErrorCode{Code: http.StatusInternalServerError, Type: "Unknown"}
-	Internal        = &ErrorCode{Code: http.StatusInternalServerError, Type: "InternalError"}
-	TooManyRequests = &ErrorCode{Code: http.StatusTooManyRequests, Type: "TooManyRequests"}
-
-	InvalidArgument = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
+	NotFound           = &ErrorCode{Code: http.StatusNotFound, Type: "NotFound"}
+	NotAcceptable      = &ErrorCode{Code: http.StatusNotAcceptable, Type: "NotAcceptable"}
+	Unknown            = &ErrorCode{Code: http.StatusInternalServerError, Type: "Unknown"}
+	Internal           = &ErrorCode{Code: http.StatusInternalServerError, Type: "InternalError"}
+	TooManyRequests    = &ErrorCode{Code: http.StatusTooManyRequests, Type: "TooManyRequests"}
+	Unauthorized       = &ErrorCode{Code: http.StatusUnauthorized, Type: "Unauthorized"}
+	Forbidden          = &ErrorCode{Code: http.StatusForbidden, Type: "Forbidden"}
+	Timeout            = &ErrorCode{Code: http.StatusRequestTimeout, Type: "Timeout"}
+	Unavailable        = &ErrorCode{Code: http.StatusServiceUnavailable, Type: "Unavailable"}
+	Aborted            = &ErrorCode{Code: http.StatusInternalServerError, Type: "Aborted"}
+	DataLoss           = &ErrorCode{Code: http.StatusInternalServerError, Type: "DataLoss"}
+	Unimplemented      = &ErrorCode{Code: http.StatusNotImplemented, Type: "Unimplemented"}
+	FailedPrecondition = &ErrorCode{Code: http.StatusPreconditionFailed, Type: "FailedPrecondition"}
+	Conflict           = &ErrorCode{Code: http.StatusBadRequest, Type: "Conflict"}
+	OutOfRange         = &ErrorCode{Code: http.StatusBadRequest, Type: "OutOfRange"}
+	InvalidArgument    = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
 )
 
 func NewApiError(errCode *ErrorCode, msg string, err error) *Error {

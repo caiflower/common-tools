@@ -17,6 +17,7 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/pprof"
@@ -29,7 +30,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/limiter"
@@ -43,8 +43,11 @@ import (
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/router/controller"
+	"github.com/caiflower/common-tools/web/router/method"
 	"github.com/caiflower/common-tools/web/router/param"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -225,24 +228,27 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 	return c
 }
 
-func (h *Handler) Register(controller *controller.RestfulController) {
-	method := controller.GetMethod()
-	version := controller.GetVersion()
-	action := controller.GetAction()
-	controllerName := controller.GetControllerName()
-	originPath := controller.GetOriginPath()
+func (h *Handler) Register(ctl *controller.RestfulController) {
+	var (
+		m                           = ctl.GetMethod()
+		version                     = ctl.GetVersion()
+		action                      = ctl.GetAction()
+		controllerName              = ctl.GetControllerName()
+		originPath                  = ctl.GetOriginPath()
+		isGrpc, grpcMethodDesc, srv = ctl.GetGrpcMethodDesc()
+		methodDesc                  *method.Method
+	)
 
-	path := fmt.Sprintf("/%s%s%s", version, controller.GetGroup(), originPath)
+	path := fmt.Sprintf("/%s%s%s", version, ctl.GetGroup(), originPath)
 	if _, ok := h.restfulPaths[path]; ok {
-		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exist. ", method, version, originPath))
+		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exist. ", m, version, originPath))
 	}
 
-	targetMethod := controller.GetTargetMethod()
+	targetMethod := ctl.GetTargetMethod()
 	if targetMethod == nil && controllerName != "" {
 		c := h.controllers[controllerName]
 		if c != nil {
-			cls := c.GetCls()
-			targetMethod = cls.GetMethod(cls.GetPkgName() + "." + action)
+			targetMethod = c.GetTargetMethod(action)
 		}
 	}
 
@@ -250,15 +256,21 @@ func (h *Handler) Register(controller *controller.RestfulController) {
 		panic(fmt.Sprintf("Register restfulApi failed. path[%s] Not found controller[%s] action[%s]. ", path, controllerName, action))
 	}
 
-	methodRouter := h.trees.get(method)
+	if !isGrpc {
+		methodDesc = method.NewDefaultTypeMethod(targetMethod)
+	} else {
+		methodDesc = method.NewGrpcTypeMethod(grpcMethodDesc, srv, targetMethod)
+	}
+
+	methodRouter := h.trees.get(m)
 	if methodRouter == nil {
-		methodRouter = &router{method: method, root: &node{}}
+		methodRouter = &router{method: m, root: &node{}}
 		h.trees = append(h.trees, methodRouter)
 	}
 
-	methodRouter.addRoute(path, []*basic.Method{targetMethod})
+	methodRouter.addRoute(path, []method.Method{*methodDesc})
 
-	logger.Info("Register path %v, Method: %v", path, method)
+	logger.Info("Register path %v, Method: %v", path, m)
 }
 
 func (h *Handler) getRequestContext() *webctx.RequestCtx {
@@ -283,43 +295,67 @@ func (h *Handler) putRequestContext(ctx *webctx.RequestCtx) {
 func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 	defer h.onCrash("dispatch", ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
+	var (
+		m          *method.Method
+		find       bool
+		inputValue reflect.Value
+	)
+
 	// method
-	if !h.setTargetMethod(ctx) {
+	if m, find = h.getTargetMethod(ctx); !find {
 		h.writeError(ctx, e.NewApiError(e.NotFound, "no such api.", nil))
 		return
 	}
 
-	// set args
 	webContext := ctx.ConvertToWebCtx()
-	if !h.config.DisableOptimization {
-		if err := setArgsOptimized(ctx, webContext); err != nil {
-			if err.IsInternalError() {
-				h.logger.Warn("setArgsOptimized failed. Error: %v", err)
-			}
-			h.writeError(ctx, err)
-			return
-		}
-	} else {
-		if err := setArgs(ctx, webContext); err != nil {
-			if err.IsInternalError() {
-				h.logger.Warn("setArgs failed. Error: %v", err)
-			}
-			h.writeError(ctx, err)
-			return
-		}
-	}
+	if m.GetType() == method.DefaultTypeOfMethod && m.HasArgs() {
+		var (
+			targetM = m.GetTargetMethod()
+			arg     = targetM.GetArgs()[0]
+		)
 
-	// valid args
-	if err := validArgs(ctx); err != nil {
-		h.writeError(ctx, err)
-		return
+		switch arg.Kind() {
+		case reflect.Ptr:
+			inputValue = reflect.New(arg.Elem())
+		case reflect.Struct:
+			inputValue = reflect.New(arg)
+		default:
+			h.writeError(ctx, e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
+			return
+		}
+		inputArg := inputValue.Interface()
+
+		// set args
+		if !h.config.DisableOptimization {
+			if err := setArgsOptimized(ctx, inputArg, targetM.GetArgInfo(0)); err != nil {
+				if err.IsInternalError() {
+					h.logger.Warn("setArgsOptimized failed. Error: %v", err)
+				}
+				h.writeError(ctx, err)
+				return
+			}
+		} else {
+			if err := setArgs(ctx, inputArg, webContext); err != nil {
+				if err.IsInternalError() {
+					h.logger.Warn("setArgs failed. Error: %v", err)
+				}
+				h.writeError(ctx, err)
+				return
+			}
+		}
+
+		// valid args
+		if err := validArgs(inputArg); err != nil {
+			h.writeError(ctx, err)
+			return
+		}
 	}
 
 	defer h.onDoTargetMethodCrash("doTargetMethod", ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// doTargetMethod
 	targetMethod := func() e.ApiError {
-		return doTargetMethod(ctx)
+		return h.doTargetMethod(ctx, m, inputValue)
 	}
 
 	// aop
@@ -332,21 +368,17 @@ func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 	h.writeResponse(ctx)
 }
 
-func (h *Handler) setTargetMethod(ctx *webctx.RequestCtx) bool {
-	ctx.Action = ctx.SetAction()
-	if ctx.Action != "" {
-		ctx.Restful = false
-	} else {
-		ctx.Restful = true
-	}
+func (h *Handler) getTargetMethod(ctx *webctx.RequestCtx) (*method.Method, bool) {
+	ctx.ComputeAction()
+
+	var m *method.Method
 
 	path := ctx.GetPath()
 	if !ctx.IsRestful() {
-		// action风格
+		// action 风格
 		c := h.controllers[path]
 		if c != nil {
-			cls := c.GetCls()
-			ctx.TargetMethod = cls.GetMethod(cls.GetPkgName() + "." + ctx.Action)
+			m = c.GetMethodDesc(ctx.GetAction())
 		}
 	} else {
 		// restful
@@ -354,37 +386,70 @@ func (h *Handler) setTargetMethod(ctx *webctx.RequestCtx) bool {
 		if tree != nil {
 			res := tree.find(path, &ctx.Paths, false)
 			if res.handlers != nil {
-				ctx.TargetMethod = res.handlers[0]
-				ctx.Action = ctx.TargetMethod.GetName()
+				m = &res.handlers[0]
+				ctx.SetAction(m.GetAction())
 			}
 		}
 	}
 
-	return ctx.TargetMethod != nil
+	return m, m != nil
 }
 
-func doTargetMethod(ctx *webctx.RequestCtx) (err e.ApiError) {
-	if ctx.TargetMethod.HasArgs() {
-		if ctx.TargetMethod.GetArgs()[0].Kind() == reflect.Struct {
-			ctx.Args[0] = ctx.Args[0].Elem()
-		}
-	}
+func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *method.Method, inputValue reflect.Value) e.ApiError {
+	t, targetMethod, grpcMethodDesc, grpcSrv := targetMethodDesc.GetInfo()
 
-	results := ctx.TargetMethod.Invoke(ctx.Args)
-	rets := ctx.TargetMethod.GetRets()
-	for i, ret := range rets {
-		if ret.AssignableTo(assignableApiErrorElem) {
-			_err := results[i].Interface()
-			if _err != nil {
-				return _err.(e.ApiError)
+	switch t {
+	case method.GrpcTypeOfMethod:
+		bindAndValid := func(arg interface{}) (err error) {
+			if !h.config.DisableOptimization {
+				err = setArgsOptimized(ctx, arg, targetMethod.GetArgInfo(1))
+			} else {
+				err = setArgs(ctx, arg, nil)
 			}
-		} else if ret.AssignableTo(assignableErrorElem) {
-			_err := results[i].Interface().(error)
-			if _err != nil {
-				return e.NewApiError(e.Unknown, _err.Error(), _err)
+			if err != nil {
+				return err
 			}
-		} else {
-			ctx.SetData(results[i].Interface())
+
+			err = validArgs(arg)
+			return
+		}
+
+		data, err := grpcMethodDesc.Handler(grpcSrv, ctx, bindAndValid, nil)
+		if err != nil {
+			var apiError e.ApiError
+			switch {
+			case errors.As(err, &apiError):
+				return err.(e.ApiError)
+			default:
+				st, ok := status.FromError(err)
+				if ok {
+					apiErr := ConvertGrpcCodeToErrorCode(st)
+					if apiErr != nil {
+						return apiErr
+					}
+				} else {
+					return e.NewInternalError(err)
+				}
+			}
+		}
+		ctx.SetData(data)
+	default:
+		results := targetMethod.Invoke([]reflect.Value{inputValue})
+		rets := targetMethod.GetRets()
+		for i, ret := range rets {
+			if ret.AssignableTo(assignableApiErrorElem) {
+				_err := results[i].Interface()
+				if _err != nil {
+					return _err.(e.ApiError)
+				}
+			} else if ret.AssignableTo(assignableErrorElem) {
+				_err := results[i].Interface().(error)
+				if _err != nil {
+					return e.NewApiError(e.Unknown, _err.Error(), _err)
+				}
+			} else {
+				ctx.SetData(results[i].Interface())
+			}
 		}
 	}
 
@@ -550,4 +615,10 @@ func (h *Handler) SetRunning(running bool) {
 
 func (h *Handler) GetCtxPool() *sync.Pool {
 	return &h.ctxPool
+}
+
+func (h *Handler) RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller {
+	ctl := h.AddController(srv)
+	ctl.SetGrpcService(serviceDesc, srv)
+	return ctl
 }

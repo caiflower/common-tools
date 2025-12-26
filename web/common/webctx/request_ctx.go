@@ -19,9 +19,7 @@ package webctx
 import (
 	"context"
 	"net/http"
-	"reflect"
 
-	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytestr"
@@ -31,7 +29,7 @@ import (
 )
 
 type RequestCtx struct {
-	ctx context.Context
+	context.Context
 
 	// net
 	HttpRequest *http.Request
@@ -43,18 +41,16 @@ type RequestCtx struct {
 	conn     network.Conn
 
 	isFinish bool
-	Action   string
 	data     interface{}
 
 	method  []byte
-	Restful bool
+	action  string
+	restful bool
 
 	path  []byte
 	Paths param.Params
 
-	Args         []reflect.Value
-	TargetMethod *basic.Method
-	Special      int8
+	special int8
 	// enableTrace defines whether enable trace.
 	enableTrace bool
 }
@@ -123,15 +119,22 @@ func (c *RequestCtx) GetParams() map[string][]string {
 	return params
 }
 
-func (c *RequestCtx) SetAction() string {
+func (c *RequestCtx) ComputeAction() {
 	if c.HttpRequest != nil {
-		return c.HttpRequest.URL.Query().Get("Action")
+		c.action = c.HttpRequest.URL.Query().Get("Action")
+	} else {
+		c.action = bytesconv.B2s(c.Request.URI().QueryArgs().Peek("Action"))
 	}
-	return bytesconv.B2s(c.Request.URI().QueryArgs().Peek("Action"))
+
+	c.restful = c.action == ""
+}
+
+func (c *RequestCtx) SetAction(action string) {
+	c.action = action
 }
 
 func (c *RequestCtx) GetAction() string {
-	return c.Action
+	return c.action
 }
 
 func (c *RequestCtx) SetMethod(method []byte) {
@@ -157,21 +160,19 @@ func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.R
 }
 
 func (c *RequestCtx) UpgradeWebsocket() {
-	c.Special = 1
+	c.special = 1
 }
 
 func (c *RequestCtx) IsAbort() bool {
-	return c.Special != 0
+	return c.special != 0
 }
 
 func (c *RequestCtx) IsRestful() bool {
-	return c.Restful
+	return c.restful
 }
 
 func (c *RequestCtx) Reset() {
-	c.TargetMethod = nil
-	c.Args = c.Args[:0]
-	c.Special = 0
+	c.special = 0
 	c.Paths = c.Paths[:0]
 	c.isFinish = false
 	c.Writer = nil
@@ -191,12 +192,12 @@ func (c *RequestCtx) SetConn(conn network.Conn) *RequestCtx {
 }
 
 func (c *RequestCtx) SetContext(ctx context.Context) *RequestCtx {
-	c.ctx = ctx
+	c.Context = ctx
 	return c
 }
 
 func (c *RequestCtx) GetContext() context.Context {
-	return c.ctx
+	return c.Context
 }
 
 func (c *RequestCtx) GetReader() network.Reader {
@@ -265,7 +266,7 @@ func (c *RequestCtx) AbortWithMsg(msg string, statusCode int) {
 }
 
 func (c *RequestCtx) Abort() {
-	c.Special = -1
+	c.special = -1
 }
 
 func (c *RequestCtx) SetEnableTrace(b bool) {

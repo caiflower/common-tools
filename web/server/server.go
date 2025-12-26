@@ -20,7 +20,8 @@ import (
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
-	controller2 "github.com/caiflower/common-tools/web/router/controller"
+	"github.com/caiflower/common-tools/web/router/controller"
+	"google.golang.org/grpc"
 )
 
 type Core interface {
@@ -28,8 +29,9 @@ type Core interface {
 	Start() error
 	Close()
 
-	AddController(v interface{}) *controller2.Controller
-	Register(controller *controller2.RestfulController)
+	AddController(v interface{}) *controller.Controller
+	RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller
+	Register(ctl *controller.RestfulController)
 
 	AddInterceptor(i interceptor.Interceptor, order int)
 	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)

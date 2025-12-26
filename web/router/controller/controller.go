@@ -24,11 +24,15 @@ import (
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/common/reflectx"
+	"github.com/caiflower/common-tools/web/router/method"
+	"google.golang.org/grpc"
 )
 
 type Controller struct {
 	paths []string
-	cls   *basic.Class
+	*basic.Class
+	grpcServiceDesc *grpc.ServiceDesc
+	srv             interface{}
 }
 
 func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Controller, error) {
@@ -81,15 +85,17 @@ func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Cont
 			}
 		}
 
-		for _, method := range cls.GetAllMethod() {
-			if method.HasArgs() {
-				arg := method.GetArgs()[0]
+		for _, m := range cls.GetAllMethod() {
+			if m.HasArgs() {
+				arg := m.GetArgs()[0]
 				var argValue reflect.Value
 				switch arg.Kind() {
 				case reflect.Ptr:
 					argValue = reflect.New(arg.Elem())
 				case reflect.Struct:
 					argValue = reflect.New(arg)
+				case reflect.Interface:
+					continue
 				default:
 					panic(fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()))
 				}
@@ -103,14 +109,14 @@ func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Cont
 			}
 		}
 
-		return &Controller{paths: paths, cls: cls}, nil
+		return &Controller{paths: paths, Class: cls}, nil
 	default:
 		return nil, fmt.Errorf("invalid type %s", kind)
 	}
 }
 
 func (c *Controller) GetCls() *basic.Class {
-	return c.cls
+	return c.Class
 }
 
 func (c *Controller) GetPaths() []string {
@@ -118,5 +124,53 @@ func (c *Controller) GetPaths() []string {
 }
 
 func (c *Controller) GetTargetMethod(action string) *basic.Method {
-	return c.cls.GetMethod(c.cls.GetPkgName() + "." + action)
+	return c.GetMethod(c.GetPkgName() + "." + action)
+}
+
+func (c *Controller) SetGrpcService(srvDesc *grpc.ServiceDesc, srv interface{}) {
+	c.grpcServiceDesc = srvDesc
+	c.srv = srv
+}
+
+func (c *Controller) GetGrpcService() (*grpc.ServiceDesc, interface{}) {
+	return c.grpcServiceDesc, c.srv
+}
+
+func (c *Controller) GetGrpcMethodDesc(methodName string) (*grpc.MethodDesc, interface{}, *basic.Method) {
+	if c.grpcServiceDesc == nil {
+		return nil, nil, nil
+	}
+
+	for _, v := range c.grpcServiceDesc.Methods {
+		if v.MethodName == methodName {
+			return &v, c.srv, c.GetTargetMethod(methodName)
+		}
+	}
+
+	return nil, nil, nil
+}
+
+func (c *Controller) GetMethodDesc(action string) *method.Method {
+	targetMethod := c.GetMethod(c.GetPkgName() + "." + action)
+	if c.grpcServiceDesc == nil {
+		if targetMethod == nil {
+			return nil
+		}
+
+		return method.NewDefaultTypeMethod(targetMethod)
+	}
+
+	var m *grpc.MethodDesc
+	for _, v := range c.grpcServiceDesc.Methods {
+		if v.MethodName == action {
+			m = &v
+			break
+		}
+	}
+
+	if m == nil {
+		return nil
+	}
+
+	return method.NewGrpcTypeMethod(m, c.srv, targetMethod)
 }

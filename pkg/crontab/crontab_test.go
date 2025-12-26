@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package crontab
+package crontab
 
 import (
 	"fmt"
@@ -36,7 +36,7 @@ type test struct {
 
 func TestAddCronJob(t *testing.T) {
 	te := &test{}
-	Start()
+	te.Run()
 
 	id, err := AddCronJob("* * * * * *", te)
 	if err != nil {
