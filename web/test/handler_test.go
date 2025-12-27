@@ -884,3 +884,72 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 		fn(casetest, handler, false)
 	}
 }
+
+func BenchmarkGrpcMod(b *testing.B) {
+	_, handler := setupTestServer(false)
+	if handler == nil {
+		b.Skip("CommonHandler not initialized")
+	}
+
+	type testCase struct {
+		name             string
+		path             string
+		method           string
+		requestBody      interface{}
+		expectedStatus   int
+		expectSuccess    bool
+		expectErrMessage string
+		expectData       interface{}
+	}
+	requestId := "test-request-id"
+	casetest := testCase{
+		name:           "restful gprc controller",
+		path:           "/v1/search?query=1&hobby=english&hobby=math&page_number=1",
+		method:         "GET",
+		expectedStatus: http.StatusOK,
+		expectData: map[string]interface{}{
+			"code":    float64(1),
+			"message": "english",
+		},
+	}
+
+	// 准备请求体
+	requestBody, err := json.Marshal(casetest.requestBody)
+	if err != nil {
+		b.Fatalf("Failed to marshal request body: %v", err)
+	}
+	ctx := &webctx.RequestCtx{}
+	ctx.Request = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
+	ctx.Request.Header.Add("X-Request-Id", requestId)
+	ctx.SetPath(ctx.Request.URI().Path())
+
+	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+		ctx.Response.Reset()
+		handler.Serve(ctx)
+		code := ctx.Response.StatusCode()
+		res := ctx.Response.Body()
+
+		assert.Equal(b, 200, code, "want 200 status code")
+
+		// 解析响应
+		var response resp.Result
+		if err := json.Unmarshal(res, &response); err != nil {
+			b.Logf("Response body: %s", string(res))
+			// 某些错误情况下可能不是JSON格式，这里只记录日志
+		} else {
+			if tc.expectedStatus == 200 {
+				assert.Nil(b, response.Error)
+				assert.Equal(b, response.Data, tc.expectData)
+				assert.NotNil(b, response.RequestId, "want request id not nil")
+			} else {
+				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
+				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
+			}
+		}
+		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+	}
+
+	for i := 0; i < b.N; i++ {
+		fn(casetest, handler, false)
+	}
+}

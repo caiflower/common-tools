@@ -118,7 +118,7 @@ func (s *HttpServer) Start() error {
 	s.logger.Info(
 		"\n***************************** netpoll http server startup ***************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %s *********\n"+
-			"*************************************************************************************************", s.Name, s.RootPath, s.Addr)
+			"*************************************************************************************************", s.Options.Name, s.RootPath, s.Addr)
 	if s.IsRunning() {
 		return nil
 	}
