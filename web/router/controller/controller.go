@@ -123,8 +123,8 @@ func (c *Controller) GetPaths() []string {
 	return c.paths
 }
 
-func (c *Controller) GetTargetMethod(action string) *basic.Method {
-	return c.GetMethod(c.GetPkgName() + "." + action)
+func (c *Controller) GetMethod(action string) *basic.Method {
+	return c.Class.GetMethod(c.GetPkgName() + "." + action)
 }
 
 func (c *Controller) SetGrpcService(srvDesc *grpc.ServiceDesc, srv interface{}) {
@@ -143,7 +143,7 @@ func (c *Controller) GetGrpcMethodDesc(methodName string) (*grpc.MethodDesc, int
 
 	for _, v := range c.grpcServiceDesc.Methods {
 		if v.MethodName == methodName {
-			return &v, c.srv, c.GetTargetMethod(methodName)
+			return &v, c.srv, c.GetMethod(methodName)
 		}
 	}
 
@@ -151,7 +151,7 @@ func (c *Controller) GetGrpcMethodDesc(methodName string) (*grpc.MethodDesc, int
 }
 
 func (c *Controller) GetMethodDesc(action string) *method.Method {
-	targetMethod := c.GetMethod(c.GetPkgName() + "." + action)
+	targetMethod := c.GetMethod(action)
 	if c.grpcServiceDesc == nil {
 		if targetMethod == nil {
 			return nil

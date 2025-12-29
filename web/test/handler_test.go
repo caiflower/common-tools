@@ -162,12 +162,13 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 
 	// 初始化处理器
 	handlerCfg := router.HandlerCfg{
-		Name:                  "test-server",
-		RootPath:              "/api/v1",
-		HeaderTraceID:         "X-Request-Id",
-		ControllerRootPkgName: "webctx",
-		EnablePprof:           false,
-		DisableOptimization:   disableOptimization,
+		Name:                   "test-server",
+		RootPath:               "/api/v1",
+		HeaderTraceID:          "X-Request-Id",
+		ControllerRootPkgName:  "webctx",
+		EnablePprof:            false,
+		DisableOptimization:    disableOptimization,
+		EnableActionController: true,
 	}
 
 	handler := router.NewHandler(handlerCfg, logger.DefaultLogger())
@@ -177,30 +178,29 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 		handler.AddController(&UserController{})
 		productController := handler.AddController(&ProductController{})
 
-		group := controller.NewRestFul().Version("v1").Group("/products")
+		group := controller.NewRestFul().Group("/v1/products")
 
 		restfulController := group.
 			Path("/:productID").
 			Method("GET").
-			Controller(productController.GetPaths()[0]).
-			Action("GetProduct")
+			RegisterMethod(productController.GetMethod("GetProduct"))
 
 		handler.Register(restfulController)
 
 		restfulController2 := group.
 			Method("POST").
-			TargetMethod(productController.GetTargetMethod("CreateProduct"))
+			RegisterMethod(productController.GetMethod("CreateProduct"))
 
 		handler.Register(restfulController2)
 
 		restfulController3 := group.
 			Method("POST").
 			Path("panic").
-			TargetMethod(productController.GetTargetMethod("CreateProductPanic"))
+			RegisterMethod(productController.GetMethod("CreateProductPanic"))
 		handler.Register(restfulController3)
 
 		helloController := handler.RegisterGRPCService(&IService_ServiceDesc, &HelloImpl{})
-		restfulController4 := controller.NewRestFul().Version("v1").
+		restfulController4 := controller.NewRestFul().Group("/v1").
 			Method("GET").
 			Path("search").
 			RegisterGrpcMethod(helloController.GetGrpcMethodDesc("Search"))

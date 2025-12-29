@@ -62,14 +62,15 @@ var (
 )
 
 type HandlerCfg struct {
-	Name                  string        `yaml:"name" default:"default"`
-	RootPath              string        `yaml:"rootPath"` // 可以为空
-	HeaderTraceID         string        `yaml:"headerTraceID" default:"X-Request-Id"`
-	ControllerRootPkgName string        `yaml:"controllerRootPkgName" default:"controller"`
-	EnablePprof           bool          `yaml:"enablePprof"`
-	WebLimiter            LimiterConfig `yaml:"webLimiter"`
-	EnableMetrics         bool          `yaml:"enableMetrics"`
-	DisableOptimization   bool          `yaml:"disableOptimization"`
+	Name                   string        `yaml:"name" default:"default"`
+	RootPath               string        `yaml:"rootPath"` // 可以为空
+	HeaderTraceID          string        `yaml:"headerTraceID" default:"X-Request-Id"`
+	ControllerRootPkgName  string        `yaml:"controllerRootPkgName" default:"controller"`
+	EnablePprof            bool          `yaml:"enablePprof"`
+	WebLimiter             LimiterConfig `yaml:"webLimiter"`
+	EnableMetrics          bool          `yaml:"enableMetrics"`
+	DisableOptimization    bool          `yaml:"disableOptimization"`
+	EnableActionController bool          `yaml:"enableActionController"`
 }
 
 type LimiterConfig struct {
@@ -149,9 +150,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = InitCtx(ctx, w, r)
 	defer h.putRequestContext(ctx)
 
-	h.serverCommon(ctx)
+	if h.specialRequest(ctx) {
+		return
+	}
 
-	if h.specialRequest(w, r) {
+	if h.serverCommon(ctx) {
 		return
 	}
 
@@ -164,13 +167,20 @@ func (h *Handler) Serve(ctx *webctx.RequestCtx) {
 
 	ctx.SetMethod(ctx.Request.Method())
 	ctx.SetPath(ctx.Request.Path())
-	h.serverCommon(ctx)
+
+	if h.specialRequest(ctx) {
+		return
+	}
+
+	if h.serverCommon(ctx) {
+		return
+	}
 
 	// dispatch
 	h.Dispatch(ctx)
 }
 
-func (h *Handler) serverCommon(ctx *webctx.RequestCtx) {
+func (h *Handler) serverCommon(ctx *webctx.RequestCtx) bool {
 	var traceID string
 	traceID = ctx.HeaderGet(h.config.HeaderTraceID)
 	if traceID == "" {
@@ -183,14 +193,11 @@ func (h *Handler) serverCommon(ctx *webctx.RequestCtx) {
 	}
 	golocalv1.PutContext(ctx.GetContext())
 
-	// TODO writer request is nil
 	if h.beforeDispatchCallbackFunc != nil {
-		if h.beforeDispatchCallbackFunc(ctx.Writer, ctx.HttpRequest) {
-			return
-		}
+		return h.beforeDispatchCallbackFunc(ctx.GetResponseWriterAndRequest())
 	}
 
-	return
+	return false
 }
 
 func (h *Handler) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
@@ -215,10 +222,12 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 		return nil
 	}
 
-	paths := c.GetPaths()
-	for _, path := range paths {
-		logger.Info("Register action path %s?Action=MethodName", path)
-		h.controllers[path] = c
+	if h.config.EnableActionController {
+		paths := c.GetPaths()
+		for _, path := range paths {
+			logger.Info("Register action path %s?Action=MethodName", path)
+			h.controllers[path] = c
+		}
 	}
 
 	if !bean.HasBean(bean.GetBeanNameFromValue(v)) {
@@ -231,29 +240,23 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 func (h *Handler) Register(ctl *controller.RestfulController) {
 	var (
 		m                           = ctl.GetMethod()
-		version                     = ctl.GetVersion()
-		action                      = ctl.GetAction()
-		controllerName              = ctl.GetControllerName()
 		originPath                  = ctl.GetOriginPath()
 		isGrpc, grpcMethodDesc, srv = ctl.GetGrpcMethodDesc()
 		methodDesc                  *method.Method
 	)
 
-	path := fmt.Sprintf("/%s%s%s", version, ctl.GetGroup(), originPath)
+	if m == "" {
+		panic("Register restfulApi failed. Method cannot be empty.")
+	}
+
+	path := fmt.Sprintf("%s%s", ctl.GetGroup(), originPath)
 	if _, ok := h.restfulPaths[path]; ok {
-		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] version[%s] path[%s] already exist. ", m, version, originPath))
+		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] path[%s] already exist. ", m, originPath))
 	}
 
 	targetMethod := ctl.GetTargetMethod()
-	if targetMethod == nil && controllerName != "" {
-		c := h.controllers[controllerName]
-		if c != nil {
-			targetMethod = c.GetTargetMethod(action)
-		}
-	}
-
 	if targetMethod == nil {
-		panic(fmt.Sprintf("Register restfulApi failed. path[%s] Not found controller[%s] action[%s]. ", path, controllerName, action))
+		panic(fmt.Sprintf("Register restfulApi failed. method[%s] path[%s] not found targetMethod. ", m, originPath))
 	}
 
 	if !isGrpc {
@@ -374,7 +377,7 @@ func (h *Handler) getTargetMethod(ctx *webctx.RequestCtx) (*method.Method, bool)
 	var m *method.Method
 
 	path := ctx.GetPath()
-	if !ctx.IsRestful() {
+	if !ctx.IsRestful() && h.config.EnableActionController {
 		// action 风格
 		c := h.controllers[path]
 		if c != nil {
@@ -565,19 +568,19 @@ func (h *Handler) onDoTargetMethodCrash(txt string, ctx *webctx.RequestCtx, inte
 
 var promHttpHandler = promhttp.Handler()
 
-func (h *Handler) specialRequest(w http.ResponseWriter, r *http.Request) bool {
-	switch r.URL.Path {
+func (h *Handler) specialRequest(ctx *webctx.RequestCtx) bool {
+	path := ctx.GetPath()
+
+	switch path {
 	case "/metrics":
+		w, r := ctx.GetResponseWriterAndRequest()
 		promHttpHandler.ServeHTTP(w, r)
-		return true
-	case "/debugxxx":
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte("ok"))
 		return true
 	}
 	if h.config.EnablePprof {
-		if strings.HasPrefix(r.URL.Path, "/debug/pprof/") {
-			handleName := strings.Replace(r.URL.Path, "/debug/pprof/", "", 1)
+		if strings.HasPrefix(path, "/debug/pprof/") {
+			handleName := strings.Replace(path, "/debug/pprof/", "", 1)
+			w, r := ctx.GetResponseWriterAndRequest()
 			switch handleName {
 			case "":
 				pprof.Index(w, r)

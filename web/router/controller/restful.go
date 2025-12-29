@@ -23,18 +23,11 @@ import (
 	"google.golang.org/grpc"
 )
 
-const (
-	pathParamReg = `\/\{[a-zA-Z][a-zA-Z0-9_]*[a-zA-Z]\}`
-)
-
 type RestfulController struct {
-	method         string
-	version        string
-	group          string
-	originPath     string
-	controllerName string
-	action         string
-	targetMethod   *basic.Method
+	method       string
+	group        string
+	originPath   string
+	targetMethod *basic.Method
 
 	// grpc
 	grpcMethodDesc *grpc.MethodDesc
@@ -54,19 +47,6 @@ func (c *RestfulController) Group(group string) *RestfulController {
 	return c
 }
 
-func (c *RestfulController) Version(version string) *RestfulController {
-	if strings.HasPrefix(version, "/") {
-		version = version[1:]
-	}
-	c.version = version
-	return c
-}
-
-func (c *RestfulController) Controller(controllerName string) *RestfulController {
-	c.controllerName = controllerName
-	return c
-}
-
 func (c *RestfulController) Path(path string) *RestfulController {
 	copyC := c.copyC()
 	if !strings.HasPrefix(path, "/") {
@@ -83,13 +63,7 @@ func (c *RestfulController) Method(method string) *RestfulController {
 	return copyC
 }
 
-func (c *RestfulController) Action(action string) *RestfulController {
-	copyC := c.copyC()
-	copyC.action = action
-	return copyC
-}
-
-func (c *RestfulController) TargetMethod(method *basic.Method) *RestfulController {
+func (c *RestfulController) RegisterMethod(method *basic.Method) *RestfulController {
 	copyC := c.copyC()
 	if method == nil {
 		panic("TargetMethod the method is nil")
@@ -116,24 +90,12 @@ func (c *RestfulController) GetGrpcMethodDesc() (bool, *grpc.MethodDesc, interfa
 	return c.grpcMethodDesc != nil, c.grpcMethodDesc, c.srv
 }
 
-func (c *RestfulController) GetVersion() string {
-	return c.version
-}
-
 func (c *RestfulController) GetMethod() string {
 	return c.method
 }
 
-func (c *RestfulController) GetAction() string {
-	return c.action
-}
-
 func (c *RestfulController) GetTargetMethod() *basic.Method {
 	return c.targetMethod
-}
-
-func (c *RestfulController) GetControllerName() string {
-	return c.controllerName
 }
 
 func (c *RestfulController) GetOriginPath() string {
@@ -146,12 +108,9 @@ func (c *RestfulController) GetGroup() string {
 
 func (c *RestfulController) copyC() *RestfulController {
 	return &RestfulController{
-		method:         c.method,
-		version:        c.version,
-		controllerName: c.controllerName,
-		action:         c.action,
-		targetMethod:   c.targetMethod,
-		originPath:     c.originPath,
-		group:          c.group,
+		method:       c.method,
+		targetMethod: c.targetMethod,
+		originPath:   c.originPath,
+		group:        c.group,
 	}
 }

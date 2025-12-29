@@ -56,6 +56,7 @@ type Options struct {
 	OnAccept                 func(conn net.Conn) context.Context
 	OnConnect                func(ctx context.Context, conn network.Conn) context.Context
 	DisableOptimization      bool `yaml:"disableOptimization"`
+	EnableActionController   bool `yaml:"enableActionController"`
 	MaxHeaderBytes           int  `yaml:"maxHeaderBytes" default:"1048576"`
 	MaxRequestBodySize       int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
 	EnableMetrics            bool `yaml:"enableMetrics"`
@@ -208,6 +209,13 @@ func WithALPN(opt bool, tls *tls.Config) Option {
 	return func(opts *Options) *Options {
 		opts.ALPN = opt
 		opts.TLS = tls
+		return opts
+	}
+}
+
+func WithEnableActionController(opt bool) Option {
+	return func(opts *Options) *Options {
+		opts.EnableActionController = opt
 		return opts
 	}
 }
