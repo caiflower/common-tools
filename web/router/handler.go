@@ -446,9 +446,10 @@ func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *metho
 					return _err.(e.ApiError)
 				}
 			} else if ret.AssignableTo(assignableErrorElem) {
-				_err := results[i].Interface().(error)
+				_err := results[i].Interface()
 				if _err != nil {
-					return e.NewApiError(e.Unknown, _err.Error(), _err)
+					_err1 := _err.(error)
+					return e.NewApiError(e.Unknown, _err1.Error(), _err1)
 				}
 			} else {
 				ctx.SetData(results[i].Interface())
@@ -464,6 +465,7 @@ func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
 		return
 	}
 
+	h.logger.Error("handle request failed. %s", err.Error())
 	// metric
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))

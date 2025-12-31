@@ -17,9 +17,8 @@
 package e
 
 import (
+	"fmt"
 	"net/http"
-
-	"github.com/caiflower/common-tools/pkg/tools"
 )
 
 type ApiError interface {
@@ -57,7 +56,7 @@ func (e *apiError) GetCause() error {
 }
 
 func (e *apiError) Error() string {
-	return tools.ToJson(e.Cause)
+	return fmt.Sprintf("code: %d, type: %s, message: %s, cause: %v", e.Code, e.Type, e.Message, e.Cause)
 }
 
 func (e *apiError) IsInternalError() bool {

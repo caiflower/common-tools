@@ -44,7 +44,7 @@ const (
 	ErrorLevel = "ERROR"
 	FatalLevel = "FATAL"
 
-	_timeFormat = "2006-01-02 15:04:05"
+	_timeFormat = "2006-01-02 15:04:05.000000"
 
 	RollingPolicyTime        = "time"
 	RollingPolicySize        = "size"
