@@ -18,8 +18,10 @@ package logger
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +29,15 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 
 	"github.com/caiflower/common-tools/pkg/syncx"
+)
+
+var (
+	prefixCheckOnce  sync.Once
+	workdirPrefix    string
+	workdirPrefixLen int
+	gopathPrefix     string
+	gopathPrefixLen  int
+	runMode          string
 )
 
 const (
@@ -284,18 +295,47 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 	if lh.level > getLevel(level) {
 		return
 	}
+	defer e.OnError("logger crash")
 
 	_, file, line, _ := runtime.Caller(2)
-	short := file
-	for i := len(file) - 1; i > 0; i-- {
-		if file[i] == '/' {
-			short = file[i+1:]
-			break
+
+	relativePath := file
+	if idx := strings.LastIndex(file, "/common-tools/"); idx != -1 {
+		relativePath = file[idx+1:]
+	} else {
+		switch runMode {
+		case "GOPATH":
+			relativePath = file[gopathPrefixLen:]
+		case "WORKSPACE":
+			relativePath = file[workdirPrefixLen:]
+		default:
+			prefixCheckOnce.Do(func() {
+				goPath := os.Getenv("GOPATH")
+				if goPath != "" {
+					gopathPrefix = goPath + "/src/"
+					gopathPrefixLen = len(gopathPrefix)
+				}
+
+				var err error
+				workDir, err := os.Getwd()
+				if err != nil {
+					workDir = ""
+				}
+				if workDir != "" {
+					workdirPrefix = workDir + "/"
+					workdirPrefixLen = len(workdirPrefix)
+				}
+			})
+			if len(file) >= gopathPrefixLen && file[:gopathPrefixLen] == gopathPrefix {
+				relativePath = file[gopathPrefixLen:]
+				runMode = "GOPATH"
+			}
+			if len(file) >= workdirPrefixLen && file[:workdirPrefixLen] == workdirPrefix {
+				relativePath = file[workdirPrefixLen:]
+				runMode = "WORKSPACE"
+			}
 		}
 	}
-	file = short
-
-	defer e.OnError("logger crash")
 
 	if lh.running {
 		lh.dataQueue <- data{
@@ -303,7 +343,7 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 			level:     level,
 			content:   fmt.Sprintf(text, v...),
 			traceID:   golocalv1.GetTraceID(),
-			position:  fmt.Sprintf("%s:%d", file, line),
+			position:  fmt.Sprintf("%s:%d", relativePath, line),
 		}
 	}
 }
