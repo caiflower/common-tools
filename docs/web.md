@@ -39,29 +39,27 @@ Transfer/sec:      8.78MB
 
 ### 1. 初始化HTTP服务器
 
-```go
-import "github.com/caiflower/common-tools/web/v1"
+使用 `web.Default` 方法并通过 Option 模式进行配置初始化。
 
-// 定义配置
-config := webv1.Config{
-    Name:                  "myapp",
-    Port:                  8080,
-    ReadTimeout:           20,
-    WriteTimeout:          35,
-    HandleTimeout:         ptrToUint(60),
-    RootPath:              "",
-    HeaderTraceID:         "X-Request-Id",
-    ControllerRootPkgName: "controller",
-    EnablePprof:           false,
-    WebLimiter: webv1.WebLimiter{
-        Enable: false,
-        Qos:    1000,
-    },
-}
+```go
+import (
+    "github.com/caiflower/common-tools/web"
+    "github.com/caiflower/common-tools/web/server/config"
+)
 
 // 初始化服务器
-server := webv1.InitDefaultHttpServer(config)
-server.StartUp()
+server := web.Default(
+    config.WithName("myapp"),
+    config.WithAddr(":8080"),
+    config.WithReadTimeout(20 * time.Second),
+    config.WithWriteTimeout(35 * time.Second),
+    config.WithRootPath("/api"),
+    config.WithControllerRootPkgName("controller"),
+    config.WithEnablePprof(false),
+    config.WithQps(true, 1000), // 开启限流，QPS=1000
+)
+
+server.Start()
 ```
 
 ### 2. 定义Controller
@@ -71,12 +69,16 @@ server.StartUp()
 ```go
 package controller
 
+import (
+    "github.com/caiflower/common-tools/web/common/e"
+)
+
 type UserController struct {
 }
 
 // 定义请求参数结构体
 type GetUserReq struct {
-    ID int `json:"id" verf:""`
+    ID int `json:"id" verf:"required"`
 }
 
 // 定义响应结构体
@@ -91,7 +93,7 @@ func (c *UserController) GetUser(req *GetUserReq) (*User, error) {
 }
 
 // 处理错误返回 ApiError
-func (c *UserController) DeleteUser(req *GetUserReq) (interface{}, webv1.ApiError) {
+func (c *UserController) DeleteUser(req *GetUserReq) (interface{}, e.ApiError) {
     if req.ID <= 0 {
         return nil, e.NewApiError(e.InvalidArgument, "Invalid ID", nil)
     }
@@ -101,7 +103,7 @@ func (c *UserController) DeleteUser(req *GetUserReq) (interface{}, webv1.ApiErro
 
 **Action风格请求**：
 ```
-POST /UserController?Action=GetUser
+POST /api/UserController?Action=GetUser
 Content-Type: application/json
 
 {
@@ -118,8 +120,12 @@ type ProductController struct {
 }
 
 type CreateProductReq struct {
-    Name  string `json:"name" verf:""`
-    Price float64 `json:"price" verf:""`
+    Name  string  `json:"name" verf:"required"`
+    Price float64 `json:"price" verf:"required"`
+}
+
+type GetProductReq struct {
+    ID string `path:"productId" verf:"required"`
 }
 
 type Product struct {
@@ -148,41 +154,41 @@ func (c *ProductController) GetProductByID(req *GetProductReq) (*Product, error)
 ### 3. 注册Controller
 
 ```go
-// Action风格：自动注册
-controller := &UserController{}
-webv1.AddController(controller)
+// 注册 Controller 到服务器
+// 这会自动注册 Action 风格的路由，并返回 *controller.Controller 实例供 RESTful 注册使用
+userController := server.AddController(&UserController{})
+productController := server.AddController(&ProductController{})
 ```
 
 ### 4. 注册RESTful路由
 
+RESTful 路由需要显式注册，通过 `controller.NewRestFul()` 构建路由规则，并绑定到具体的 Controller 方法上。
+
 ```go
 import (
-    "github.com/caiflower/common-tools/web/v1"
+    "github.com/caiflower/common-tools/web/router/controller"
 )
 
-// 注册RESTful控制器
-webv1.Register(
-    webv1.NewRestFul().
-        Version("/v1").
-        Method("POST").
-        Path("/products").
-        Controller("ProductController").
-        Action("CreateProduct"),
+// 创建路由组
+group := controller.NewRestFul().Group("/v1/products")
+
+// 注册 POST /v1/products
+server.Register(group.
+    Method("POST").
+    RegisterMethod(productController.GetMethod("CreateProduct")),
 )
 
-webv1.Register(
-    webv1.NewRestFul().
-        Version("/v1").
-        Method("GET").
-        Path("/products/{productId}").
-        Controller("ProductController").
-        Action("GetProductByID"),
+// 注册 GET /v1/products/:productId
+server.Register(group.
+    Method("GET").
+    Path("/:productId").
+    RegisterMethod(productController.GetMethod("GetProductByID")),
 )
 ```
 
 **RESTful风格请求**：
 ```
-POST /v1/products HTTP/1.1
+POST /api/v1/products HTTP/1.1
 Content-Type: application/json
 
 {
@@ -190,7 +196,7 @@ Content-Type: application/json
     "price": 99.99
 }
 
-GET /v1/products/prod-123 HTTP/1.1
+GET /api/v1/products/prod-123 HTTP/1.1
 ```
 
 ---
@@ -208,23 +214,19 @@ type UserReq struct {
     Name  string `json:"name"`
     Email string `json:"email"`
 }
-
-func (c *UserController) CreateUser(req *UserReq) (*User, error) {
-    // req.Name 和 req.Email 自动从JSON body绑定
-    return &User{Name: req.Name}, nil
-}
 ```
 
 #### 查询参数绑定（GET/Action风格）
 
+使用 `json` tag 或 `query` tag 绑定查询参数。
+
 ```go
 type SearchReq struct {
-    Keyword string `json:"keyword"`
-    Page    int    `json:"page"`
+    Keyword string `query:"keyword"` // 推荐使用 query tag
+    Page    int    `json:"page"`     // 兼容 json tag
 }
 
 func (c *UserController) Search(req *SearchReq) (interface{}, error) {
-    // 自动从URL查询参数绑定
     // ?keyword=test&page=1
     return nil, nil
 }
@@ -232,14 +234,16 @@ func (c *UserController) Search(req *SearchReq) (interface{}, error) {
 
 #### 路径参数绑定（RESTful风格）
 
+使用 `path` tag 绑定 URL 路径参数。
+
 ```go
 type GetProductReq struct {
-    ProductID string `json:"productId"`
-    SubProductID string `json:"subProductId"`
+    ProductID    string `path:"productId"`
+    SubProductID string `path:"subProductId"`
 }
 
 func (c *ProductController) GetProduct(req *GetProductReq) (*Product, error) {
-    // 自动从路径参数 /v1/products/{productId}/sub/{subProductId} 绑定
+    // 对应路由路径：/products/:productId/sub/:subProductId
     return &Product{ID: req.ProductID}, nil
 }
 ```
@@ -251,11 +255,6 @@ type AuthReq struct {
     Authorization string `header:"Authorization"`
     ContentType   string `header:"Content-Type"`
 }
-
-func (c *UserController) GetUser(req *AuthReq) (interface{}, error) {
-    // 自动从HTTP请求头绑定
-    return nil, nil
-}
 ```
 
 #### 默认值设置
@@ -265,22 +264,17 @@ type PageReq struct {
     Page  int `json:"page" default:"1"`
     Size  int `json:"size" default:"10"`
 }
-
-func (c *UserController) List(req *PageReq) (interface{}, error) {
-    // 如果Page/Size未提供，使用默认值
-    return nil, nil
-}
 ```
 
 ### 参数校验
 
-框架支持丰富的参数校验标签：
+框架支持丰富的参数校验标签 `verf`：
 
 #### 必填校验
 
 ```go
 type UserReq struct {
-    Name string `json:"name" verf:""` // 必填
+    Name string `json:"name" verf:"required"` // 必填
 }
 ```
 
@@ -363,9 +357,11 @@ type FilterReq struct {
 
 ### 错误处理
 
-支持多种错误返回方式：
+支持多种错误返回方式，推荐使用 `web/common/e` 包中的错误类型：
 
 ```go
+import "github.com/caiflower/common-tools/web/common/e"
+
 // 方式1：返回 error
 func (c *Controller) Method1(req *Req) (*Resp, error) {
     return nil, fmt.Errorf("error message")
@@ -375,16 +371,6 @@ func (c *Controller) Method1(req *Req) (*Resp, error) {
 func (c *Controller) Method2(req *Req) (*Resp, e.ApiError) {
     return nil, e.NewApiError(e.InvalidArgument, "Invalid argument", nil)
 }
-
-// 预定义错误码
-var (
-    NotFound        // 404
-    NotAcceptable   // 406
-    Unknown         // 500
-    Internal        // 500
-    TooManyRequests // 429
-    InvalidArgument // 400
-)
 ```
 
 ### 拦截器
@@ -395,39 +381,43 @@ var (
 package interceptor
 
 import (
-    "github.com/caiflower/common-tools/web"
-    "github.com/caiflower/common-tools/web/e"
-    "github.com/caiflower/common-tools/web/interceptor"
+    "github.com/caiflower/common-tools/web/common/e"
+    "github.com/caiflower/common-tools/web/common/webctx"
+    "github.com/caiflower/common-tools/web/common/interceptor"
 )
 
 type LoggingInterceptor struct {
 }
 
-func (l *LoggingInterceptor) Before(ctx *web.Context) e.ApiError {
+func (l *LoggingInterceptor) Before(ctx *webctx.Context) e.ApiError {
     // 业务执行前
     return nil
 }
 
-func (l *LoggingInterceptor) After(ctx *web.Context, err e.ApiError) e.ApiError {
+func (l *LoggingInterceptor) After(ctx *webctx.Context, err e.ApiError) e.ApiError {
     // 业务执行后
     return err
 }
 
-func (l *LoggingInterceptor) OnPanic(ctx *web.Context, err interface{}) e.ApiError {
+func (l *LoggingInterceptor) OnPanic(ctx *webctx.Context, err interface{}) e.ApiError {
     // 发生panic时执行
     return e.NewApiError(e.Internal, "Internal error", nil)
 }
 
 // 注册拦截器
-webv1.AddInterceptor(&LoggingInterceptor{}, 1)
+server.AddInterceptor(&LoggingInterceptor{}, 1)
 ```
 
 #### Web Context用法
 
+通过在 Request 结构体中嵌入 `webctx.Context` 来获取上下文：
+
 ```go
+import "github.com/caiflower/common-tools/web/common/webctx"
+
 type MyReq struct {
     Name string `json:"name"`
-    web.Context // 嵌入Context获取上下文
+    webctx.Context // 嵌入Context获取上下文
 }
 
 func (c *Controller) MyAction(req *MyReq) (interface{}, error) {
@@ -436,9 +426,9 @@ func (c *Controller) MyAction(req *MyReq) (interface{}, error) {
     params := req.GetParams()       // 获取查询参数
     pathParams := req.GetPathParams() // 获取路径参数
     method := req.GetMethod()       // 获取HTTP方法
-    action := req.GetAction()       // 获取Action名称
-    version := req.GetVersion()     // 获取API版本
-    w, r := req.GetResponseWriterAndRequest() // 获取原始http对象
+    
+    // 获取原始http对象
+    w, r := req.GetResponseWriterAndRequest() 
     
     // 设置自定义属性
     req.Put("key", "value")
@@ -455,41 +445,29 @@ func (c *Controller) MyAction(req *MyReq) (interface{}, error) {
 ### 限流配置
 
 ```go
-config := webv1.Config{
-    WebLimiter: webv1.WebLimiter{
-        Enable: true,
-        Qos:    1000, // 每秒最多处理1000个请求
-    },
-}
-
-server := webv1.InitDefaultHttpServer(config)
-server.StartUp()
+server := web.Default(
+    config.WithQps(true, 1000), // 开启限流，每秒1000请求
+)
 ```
 
 超出限流的请求返回429 TooManyRequests错误。
 
 ### 性能监控
 
-框架内置Prometheus指标导出：
+框架内置Prometheus指标导出，可通过 `EnableMetrics` 选项开启。
 
 ```
 GET /metrics
 ```
-
-返回HTTP请求的性能指标。
 
 ### 性能分析 (Pprof)
 
 启用Pprof支持分析程序性能：
 
 ```go
-config := webv1.Config{
-    EnablePprof: true,
-}
-
-server := webv1.InitDefaultHttpServer(config)
-server.StartUp()
-
+server := web.Default(
+    config.WithEnablePprof(true),
+)
 // 访问 http://localhost:8080/debug/pprof/
 ```
 
@@ -498,26 +476,10 @@ server.StartUp()
 框架自动为每个请求生成唯一的追踪ID：
 
 ```go
-config := webv1.Config{
-    HeaderTraceID: "X-Request-Id", // 追踪ID请求头名称
-}
+server := web.Default(
+    config.WithHeaderTraceID("X-Request-Id"),
+)
 ```
-
-响应中会自动包含请求ID：
-
-```json
-{
-    "requestId": "550e8400-e29b-41d4-a716-446655440000",
-    "data": {}
-}
-```
-
-### 压缩支持
-
-框架自动支持 gzip 和 brotli 压缩：
-
-- 请求时，通过 `Content-Encoding: gzip` 或 `Content-Encoding: br` 发送
-- 响应时，通过 `Accept-Encoding` 请求头自动选择压缩算法
 
 ### 自定义前置回调
 
@@ -533,11 +495,7 @@ server.SetBeforeDispatchCallBack(func(w http.ResponseWriter, r *http.Request) bo
 
 ### 优雅关闭
 
-```go
-server.Close()
-```
-
-30秒超时内完成优雅关闭，处理完所有已接收的请求。
+`server.Close()` 会等待所有请求处理完毕或超时（默认HandleTimeout）。
 
 ---
 
@@ -547,14 +505,21 @@ server.Close()
 package main
 
 import (
-    "github.com/caiflower/common-tools/web/v1"
-    "github.com/caiflower/common-tools/web/e"
+    "time"
+    
+    "github.com/caiflower/common-tools/web"
+    "github.com/caiflower/common-tools/web/server/config"
+    "github.com/caiflower/common-tools/web/router/controller"
 )
 
 // 定义请求和响应
 type CreateUserReq struct {
-    Name  string `json:"name" verf:""`
-    Email string `json:"email" verf:""`
+    Name  string `json:"name" verf:"required"`
+    Email string `json:"email" verf:"required"`
+}
+
+type GetUserReq struct {
+    ID int `json:"id" verf:"required"`
 }
 
 type User struct {
@@ -583,39 +548,28 @@ func (c *UserController) GetUser(req *GetUserReq) (*User, error) {
     }, nil
 }
 
-type GetUserReq struct {
-    ID int `json:"id" verf:""`
-}
-
 func main() {
-    // 初始化配置
-    config := webv1.Config{
-        Name:     "user-service",
-        Port:     8080,
-        RootPath: "api",
-    }
-
     // 初始化服务器
-    server := webv1.InitDefaultHttpServer(config)
+    server := web.Default(
+        config.WithName("user-service"),
+        config.WithAddr(":8080"),
+        config.WithRootPath("/api"),
+    )
 
     // 注册Controller
-    server.AddController(&UserController{})
+    userController := server.AddController(&UserController{})
 
     // 注册RESTful路由
-    webv1.Register(
-        webv1.NewRestFul().
-            Version("/v1").
-            Method("POST").
-            Path("/users").
-            Controller("UserController").
-            Action("CreateUser"),
+    group := controller.NewRestFul().Group("/v1")
+    
+    server.Register(group.
+        Method("POST").
+        Path("/users").
+        RegisterMethod(userController.GetMethod("CreateUser")),
     )
 
     // 启动服务器
-    server.StartUp()
-
-    // 阻止程序退出
-    select {}
+    server.Start()
 }
 ```
 
@@ -623,28 +577,18 @@ func main() {
 
 ## 配置选项详解
 
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `Name` | string | "default" | 服务器名称 |
-| `Port` | uint | 8080 | 监听端口 |
-| `ReadTimeout` | uint | 20 | 读取超时（秒）|
-| `WriteTimeout` | uint | 35 | 写入超时（秒）|
-| `HandleTimeout` | *uint | 60 | 请求总处理超时（秒）|
-| `RootPath` | string | "" | API根路径前缀 |
-| `HeaderTraceID` | string | "X-Request-Id" | 追踪ID请求头 |
-| `ControllerRootPkgName` | string | "controller" | Controller包根名称 |
-| `WebLimiter.Enable` | bool | false | 是否启用限流 |
-| `WebLimiter.Qos` | int | 1000 | 限流QoS（每秒请求数）|
-| `EnablePprof` | bool | false | 是否启用性能分析 |
+`web/server/config` 包提供了多种 Option 函数：
 
----
-
-## 常见问题
-
-### Q: 如何同时支持Action和RESTful风格？
-A: 可以同时注册两种风格的路由。框架根据是否提供`action`参数来区分。
-
-### Q: 是否支持WebSocket？
-A: 框架设计用于RESTful API，不原生支持WebSocket。可在拦截器中通过`UpgradeWebsocket()`升级连接后自定义处理。
-
-
+| Option函数 | 参数 | 默认值 | 说明 |
+|-----------|------|--------|------|
+| `WithName` | string | "default" | 服务器名称 |
+| `WithAddr` | string | ":8080" | 监听地址 |
+| `WithReadTimeout` | duration | 20s | 读取超时 |
+| `WithWriteTimeout` | duration | 35s | 写入超时 |
+| `WithHandleTimeout` | duration | 60s | 请求总处理超时 |
+| `WithRootPath` | string | "" | API根路径前缀 |
+| `WithHeaderTraceID` | string | "X-Request-Id" | 追踪ID请求头 |
+| `WithControllerRootPkgName` | string | "controller" | Controller包根名称 |
+| `WithEnablePprof` | bool | false | 是否启用性能分析 |
+| `WithQps` | bool, int | false, 0 | 限流配置 |
+| `WithMode` | ServerMode | "netpoll" | 服务器模式 (Standard/Netpoll) |
