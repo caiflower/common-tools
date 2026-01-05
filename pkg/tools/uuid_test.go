@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
 	"fmt"
@@ -27,14 +27,25 @@ func TestUUID(t *testing.T) {
 	}
 }
 
+func BenchmarkUUID(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		UUID()
+	}
+}
+
 func TestGenerateId(t *testing.T) {
 	m := make(map[string]struct{})
+	pre := ""
 
 	for i := 0; i < 20000000; i++ {
 		id := GenerateId("test")
+		if pre != "" && id <= pre {
+			panic(fmt.Sprintf("id %s should be less than pre %s", id, pre))
+		}
 		if _, ok := m[id]; ok {
 			panic("id panic")
 		}
 		m[id] = struct{}{}
+		pre = id
 	}
 }

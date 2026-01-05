@@ -14,50 +14,38 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
-	"bytes"
-	crand "crypto/rand"
-	"encoding/binary"
-	"math/rand"
-	"strings"
+	"encoding/hex"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 )
 
-func UUID() string {
-	u, _ := uuid.NewUUID()
-	return strings.Replace(u.String(), "-", "", 4)
+func init() {
+	uuid.EnableRandPool()
 }
 
-func UptraceUUID() trace.TraceID {
-	tid := trace.TraceID{}
-	var rngSeed int64
-	_ = binary.Read(crand.Reader, binary.LittleEndian, &rngSeed)
-	randSource := rand.New(rand.NewSource(rngSeed))
-	randSource.Read(tid[:])
-	return tid
+func UUID() string {
+	v4, _ := uuid.NewRandom()
+	var buf [32]byte
+	encodeHex(buf[:], v4)
+	return string(buf[:])
 }
 
 func GenerateId(prefix string) string {
-	buff := bytes.Buffer{}
-	u1 := uuid.NewString()
-	u2 := UUID()
-	if rand.Intn(2)&1 == 0 {
-		buff.WriteString(u1[:4])
-		buff.WriteString(u2[:4])
-		buff.WriteString(u1[4:8])
-		buff.WriteString(u2[4:8])
-	} else {
-		buff.WriteString(u1[4:8])
-		buff.WriteString(u2[4:8])
-		buff.WriteString(u1[:4])
-		buff.WriteString(u2[:4])
-	}
-	// nodeId
-	buff.WriteString(u2[len(u2)-4:])
+	v7, _ := uuid.NewV7()
 
-	return prefix + "-" + buff.String()
+	var buf [32]byte
+	encodeHex(buf[:], v7)
+
+	return prefix + "-" + string(buf[:])
+}
+
+func encodeHex(dst []byte, uuid uuid.UUID) {
+	hex.Encode(dst, uuid[:4])
+	hex.Encode(dst[8:12], uuid[4:6])
+	hex.Encode(dst[12:16], uuid[6:8])
+	hex.Encode(dst[16:20], uuid[8:10])
+	hex.Encode(dst[20:], uuid[10:])
 }
