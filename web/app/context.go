@@ -14,23 +14,12 @@
  * limitations under the License.
  */
 
-package webctx
+package app
 
-import "net/http"
-
-type RequestContext interface {
-	GetData() interface{}
-	IsFinish() bool
-	GetPath() string
-	GetParams() map[string][]string
-	GetMethod() string
-	GetAction() string
-	GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request)
-	UpgradeWebsocket()
-}
+type RequestContext = RequestCtx
 
 type Context struct {
-	RequestContext
+	*RequestContext
 	Attributes map[string]interface{}
 }
 

@@ -63,15 +63,16 @@ import (
 	"github.com/caiflower/common-tools/pkg/bytebufferpool"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	app2 "github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/common/bytestr"
+	"github.com/caiflower/common-tools/web/common/timer"
 	"github.com/caiflower/common-tools/web/common/utils"
-	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/caiflower/common-tools/web/protocol/http2/app"
-	"github.com/caiflower/common-tools/web/protocol/suit"
-	"github.com/caiflower/common-tools/web/server/config"
+	"github.com/caiflower/common-tools/web/protocol/suite"
 	"golang.org/x/net/http2/hpack"
 )
 
@@ -106,7 +107,7 @@ var (
 )
 
 type BaseEngine struct {
-	Core suit.Core
+	Core suite.Core
 	config.Options
 }
 
@@ -374,11 +375,11 @@ type serverConn struct {
 	engine *BaseEngine
 }
 
-func (b *BaseEngine) AcquireReqCtx() *webctx.RequestCtx {
-	return b.Core.GetCtxPool().Get().(*webctx.RequestCtx)
+func (b *BaseEngine) AcquireReqCtx() *app2.RequestCtx {
+	return b.Core.GetCtxPool().Get().(*app2.RequestCtx)
 }
 
-func (b *BaseEngine) ReleaseReqCtx(ctx *webctx.RequestCtx) {
+func (b *BaseEngine) ReleaseReqCtx(ctx *app2.RequestCtx) {
 	b.Core.GetCtxPool().Put(ctx)
 }
 
@@ -750,10 +751,10 @@ func (sc *serverConn) readPreface() error {
 			errc <- nil
 		}
 	}()
-	timer := time.NewTimer(prefaceTimeout) // TODO: configurable on *Server?
-	defer timer.Stop()
+	tc := timer.AcquireTimer(prefaceTimeout) // TODO: configurable on *Server?
+	defer timer.ReleaseTimer(tc)
 	select {
-	case <-timer.C:
+	case <-tc.C:
 		return errPrefaceTimeout
 	case err := <-errc:
 		if err == nil {
@@ -1854,7 +1855,7 @@ func (sc *serverConn) newWriterAndRequestNoBody(st *stream) (*responseWriter, er
 	return rw, nil
 }
 
-func writeResponseBody(rw *responseWriter, reqCtx *webctx.RequestCtx) (err error) {
+func writeResponseBody(rw *responseWriter, reqCtx *app2.RequestCtx) (err error) {
 	if !bodyAllowedForStatus(reqCtx.Response.StatusCode()) {
 		return nil
 	}
@@ -1889,7 +1890,7 @@ func writeResponseBody(rw *responseWriter, reqCtx *webctx.RequestCtx) (err error
 }
 
 // Run on its own goroutine.
-func (sc *serverConn) runHandler(rw *responseWriter, reqCtx *webctx.RequestCtx, handler app.HandlerFunc) {
+func (sc *serverConn) runHandler(rw *responseWriter, reqCtx *app2.RequestCtx, handler app.HandlerFunc) {
 	didPanic := true
 	defer func() {
 		var err error
@@ -1943,7 +1944,7 @@ func (sc *serverConn) runHandler(rw *responseWriter, reqCtx *webctx.RequestCtx, 
 	didPanic = false
 }
 
-func handleHeaderListTooLong(reqCtx *webctx.RequestCtx) {
+func handleHeaderListTooLong(reqCtx *app2.RequestCtx) {
 	// 10.5.1 Limits on Header Block Size:
 	// .. "A server that receives a larger header block than it is
 	// willing to handle can send an HTTP 431 (Request Header Fields Too
@@ -2232,7 +2233,7 @@ func checkValidHTTP2RequestHeaders(h *protocol.RequestHeader) error {
 }
 
 func new400Handler(err error) app.HandlerFunc {
-	return func(reqCtx *webctx.RequestCtx) {
+	return func(reqCtx *app2.RequestCtx) {
 		reqCtx.AbortWithMsg(err.Error(), http.StatusBadRequest)
 	}
 }

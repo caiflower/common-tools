@@ -28,10 +28,10 @@ import (
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/reflectx"
-	"github.com/caiflower/common-tools/web/common/webctx"
 )
 
 var (
@@ -60,7 +60,7 @@ func validArgs(arg interface{}) e.ApiError {
 	return nil
 }
 
-func setArgsOptimized(ctx *webctx.RequestCtx, arg interface{}, argInfo *basic.ArgInfo) e.ApiError {
+func setArgsOptimized(ctx *app.RequestCtx, arg interface{}, argInfo *basic.ArgInfo) e.ApiError {
 	var (
 		method = ctx.GetMethod()
 	)
@@ -131,24 +131,11 @@ func setArgsOptimized(ctx *webctx.RequestCtx, arg interface{}, argInfo *basic.Ar
 	return nil
 }
 
-func setArgs(ctx *webctx.RequestCtx, arg interface{}, webContext *webctx.Context) e.ApiError {
+func setArgs(ctx *app.RequestCtx, arg interface{}) e.ApiError {
 	var (
 		contentLen = ctx.GetContentLength()
 		method     = ctx.GetMethod()
 	)
-
-	// set context
-	indirect := reflect.Indirect(reflect.ValueOf(arg))
-	for i := 0; i < indirect.NumField(); i++ {
-		field := indirect.Field(i)
-		if field.Type().AssignableTo(assignableWebContextElem) {
-			field.Set(reflect.ValueOf(*webContext))
-			break
-		} else if field.Type().AssignableTo(assignableWebContext) {
-			field.Set(reflect.ValueOf(webContext))
-			break
-		}
-	}
 
 	fnObjs := make([]tools.FnObj, 0, 10)
 
@@ -218,7 +205,7 @@ func setArgs(ctx *webctx.RequestCtx, arg interface{}, webContext *webctx.Context
 	return nil
 }
 
-func getBody(ctx *webctx.RequestCtx) (body []byte) {
+func getBody(ctx *app.RequestCtx) (body []byte) {
 	if ctx.HttpRequest != nil {
 		body, _ = io.ReadAll(ctx.HttpRequest.Body)
 	} else {

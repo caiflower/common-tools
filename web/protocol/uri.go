@@ -697,10 +697,10 @@ func ParseURI(uriStr string) *URI {
 	return uri
 }
 
-//type Proxy func(*Request) (*URI, error)
-//
-//func ProxyURI(fixedURI *URI) Proxy {
-//	return func(*Request) (*URI, error) {
-//		return fixedURI, nil
-//	}
-//}
+type Proxy func(*Request) (*URI, error)
+
+func ProxyURI(fixedURI *URI) Proxy {
+	return func(*Request) (*URI, error) {
+		return fixedURI, nil
+	}
+}

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package webctx
+package app
 
 import (
 	"context"

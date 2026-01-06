@@ -36,12 +36,12 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/common/metric"
 	"github.com/caiflower/common-tools/web/common/resp"
-	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/router/controller"
 	"github.com/caiflower/common-tools/web/router/method"
 	"github.com/caiflower/common-tools/web/router/param"
@@ -57,8 +57,8 @@ const (
 var (
 	assignableApiErrorElem   = reflect.TypeOf(new(e.ApiError)).Elem()
 	assignableErrorElem      = reflect.TypeOf(new(error)).Elem()
-	assignableWebContextElem = reflect.TypeOf(new(webctx.Context)).Elem()
-	assignableWebContext     = reflect.TypeOf(new(webctx.Context))
+	assignableWebContextElem = reflect.TypeOf(new(app.Context)).Elem()
+	assignableWebContext     = reflect.TypeOf(new(app.Context))
 )
 
 type HandlerCfg struct {
@@ -93,7 +93,7 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 	}
 
 	commonHandler.ctxPool.New = func() interface{} {
-		return &webctx.RequestCtx{
+		return &app.RequestCtx{
 			Paths: make(param.Params, 0, 10),
 		}
 	}
@@ -162,7 +162,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Dispatch(ctx)
 }
 
-func (h *Handler) Serve(ctx *webctx.RequestCtx) {
+func (h *Handler) Serve(ctx *app.RequestCtx) {
 	defer golocalv1.Clean()
 
 	ctx.SetMethod(ctx.Request.Method())
@@ -180,7 +180,7 @@ func (h *Handler) Serve(ctx *webctx.RequestCtx) {
 	h.Dispatch(ctx)
 }
 
-func (h *Handler) serverCommon(ctx *webctx.RequestCtx) bool {
+func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
 	var traceID string
 	traceID = ctx.HeaderGet(h.config.HeaderTraceID)
 	if traceID == "" {
@@ -219,7 +219,7 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 	c, err := controller.NewController(v, h.config.ControllerRootPkgName, h.config.RootPath)
 	if err != nil {
 		logger.Warn("[AddController] add error: %s", err.Error())
-		return nil
+		panic(fmt.Sprintf("AddController failed. Error: %v", err))
 	}
 
 	if h.config.EnableActionController {
@@ -250,6 +250,10 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 	}
 
 	path := fmt.Sprintf("%s%s", ctl.GetGroup(), originPath)
+	if path == "" {
+		panic("Register restfulApi failed. Path cannot be empty.")
+	}
+
 	if _, ok := h.restfulPaths[path]; ok {
 		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] path[%s] already exist. ", m, originPath))
 	}
@@ -276,13 +280,13 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 	logger.Info("Register path %v, Method: %v", path, m)
 }
 
-func (h *Handler) getRequestContext() *webctx.RequestCtx {
-	ctx := h.ctxPool.Get().(*webctx.RequestCtx)
+func (h *Handler) getRequestContext() *app.RequestCtx {
+	ctx := h.ctxPool.Get().(*app.RequestCtx)
 
 	return ctx
 }
 
-func InitCtx(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) *webctx.RequestCtx {
+func InitCtx(ctx *app.RequestCtx, w http.ResponseWriter, r *http.Request) *app.RequestCtx {
 	ctx.HttpRequest = r
 	ctx.SetMethod(bytesconv.S2b(r.Method))
 	ctx.SetPath(bytesconv.S2b(r.URL.Path))
@@ -290,18 +294,19 @@ func InitCtx(ctx *webctx.RequestCtx, w http.ResponseWriter, r *http.Request) *we
 	return ctx
 }
 
-func (h *Handler) putRequestContext(ctx *webctx.RequestCtx) {
+func (h *Handler) putRequestContext(ctx *app.RequestCtx) {
 	ctx.Reset()
 	h.ctxPool.Put(ctx)
 }
 
-func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
+func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 	defer h.onCrash("dispatch", ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	var (
 		m          *method.Method
 		find       bool
-		inputValue reflect.Value
+		inputValue []reflect.Value
+		inputArg   interface{}
 	)
 
 	// method
@@ -314,19 +319,31 @@ func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 	if m.GetType() == method.DefaultTypeOfMethod && m.HasArgs() {
 		var (
 			targetM = m.GetTargetMethod()
-			arg     = targetM.GetArgs()[0]
+			argLen  = len(targetM.GetArgs())
+			arg     reflect.Type
 		)
+
+		inputValue = make([]reflect.Value, argLen)
+		if argLen == 2 {
+			inputValue[0] = reflect.ValueOf(ctx)
+			arg = targetM.GetArgs()[1]
+		} else {
+			arg = targetM.GetArgs()[0]
+		}
 
 		switch arg.Kind() {
 		case reflect.Ptr:
-			inputValue = reflect.New(arg.Elem())
+			v := reflect.New(arg.Elem())
+			inputValue[len(inputValue)-1] = v
+			inputArg = v.Interface()
 		case reflect.Struct:
-			inputValue = reflect.New(arg)
+			v := reflect.New(arg)
+			inputArg = v.Interface()
+			inputValue[len(inputValue)-1] = v.Elem()
 		default:
 			h.writeError(ctx, e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
 			return
 		}
-		inputArg := inputValue.Interface()
 
 		// set args
 		if !h.config.DisableOptimization {
@@ -338,7 +355,7 @@ func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 				return
 			}
 		} else {
-			if err := setArgs(ctx, inputArg, webContext); err != nil {
+			if err := setArgs(ctx, inputArg); err != nil {
 				if err.IsInternalError() {
 					h.logger.Warn("setArgs failed. Error: %v", err)
 				}
@@ -371,7 +388,7 @@ func (h *Handler) Dispatch(ctx *webctx.RequestCtx) {
 	h.writeResponse(ctx)
 }
 
-func (h *Handler) getTargetMethod(ctx *webctx.RequestCtx) (*method.Method, bool) {
+func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
 	ctx.ComputeAction()
 
 	var m *method.Method
@@ -398,7 +415,7 @@ func (h *Handler) getTargetMethod(ctx *webctx.RequestCtx) (*method.Method, bool)
 	return m, m != nil
 }
 
-func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *method.Method, inputValue reflect.Value) e.ApiError {
+func (h *Handler) doTargetMethod(ctx *app.RequestCtx, targetMethodDesc *method.Method, inputValues []reflect.Value) e.ApiError {
 	t, targetMethod, grpcMethodDesc, grpcSrv := targetMethodDesc.GetInfo()
 
 	switch t {
@@ -407,7 +424,7 @@ func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *metho
 			if !h.config.DisableOptimization {
 				err = setArgsOptimized(ctx, arg, targetMethod.GetArgInfo(1))
 			} else {
-				err = setArgs(ctx, arg, nil)
+				err = setArgs(ctx, arg)
 			}
 			if err != nil {
 				return err
@@ -437,7 +454,7 @@ func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *metho
 		}
 		ctx.SetData(data)
 	default:
-		results := targetMethod.Invoke([]reflect.Value{inputValue})
+		results := targetMethod.Invoke(inputValues)
 		rets := targetMethod.GetRets()
 		for i, ret := range rets {
 			if ret.AssignableTo(assignableApiErrorElem) {
@@ -460,7 +477,7 @@ func (h *Handler) doTargetMethod(ctx *webctx.RequestCtx, targetMethodDesc *metho
 	return nil
 }
 
-func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
+func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 	if ctx.IsAbort() {
 		return
 	}
@@ -506,7 +523,7 @@ func (h *Handler) writeError(ctx *webctx.RequestCtx, err e.ApiError) {
 	}
 }
 
-func (h *Handler) writeResponse(ctx *webctx.RequestCtx) {
+func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 	if ctx.IsAbort() {
 		return
 	}
@@ -544,14 +561,14 @@ func (h *Handler) writeResponse(ctx *webctx.RequestCtx) {
 	}
 }
 
-func (h *Handler) onCrash(txt string, ctx *webctx.RequestCtx, e e.ApiError) {
+func (h *Handler) onCrash(txt string, ctx *app.RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
 		h.writeError(ctx, e)
 	}
 }
 
-func (h *Handler) onDoTargetMethodCrash(txt string, ctx *webctx.RequestCtx, interceptorCtx *webctx.Context, defaultErr e.ApiError) {
+func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, interceptorCtx *app.Context, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
 
@@ -570,7 +587,7 @@ func (h *Handler) onDoTargetMethodCrash(txt string, ctx *webctx.RequestCtx, inte
 
 var promHttpHandler = promhttp.Handler()
 
-func (h *Handler) specialRequest(ctx *webctx.RequestCtx) bool {
+func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	path := ctx.GetPath()
 
 	switch path {

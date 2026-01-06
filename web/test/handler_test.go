@@ -26,13 +26,13 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
+	"github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/common/resp"
-	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/controller"
 	"github.com/caiflower/common-tools/web/router/param"
-	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -439,7 +439,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			code = w.Code
 			res = w.Body.Bytes()
 		} else {
-			ctx := &webctx.RequestCtx{}
+			ctx := &app.RequestCtx{}
 			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
 			ctx.Request.Header.Add("X-Request-Id", requestId)
 			ctx.SetPath(ctx.Request.URI().Path())
@@ -604,7 +604,7 @@ func TestRESTfulRouting(t *testing.T) {
 			code = w.Code
 			res = w.Body.Bytes()
 		} else {
-			ctx := &webctx.RequestCtx{}
+			ctx := &app.RequestCtx{}
 			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
 			ctx.SetMethod(ctx.Request.Method())
 			ctx.SetPath(ctx.Request.URI().Path())
@@ -849,7 +849,7 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to marshal request body: %v", err)
 	}
-	ctx := &webctx.RequestCtx{}
+	ctx := &app.RequestCtx{}
 	ctx.Request = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
 	ctx.Request.Header.Add("X-Request-Id", requestId)
 	ctx.SetPath(ctx.Request.URI().Path())
@@ -918,7 +918,7 @@ func BenchmarkGrpcMod(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to marshal request body: %v", err)
 	}
-	ctx := &webctx.RequestCtx{}
+	ctx := &app.RequestCtx{}
 	ctx.Request = *protocol.NewRequest(casetest.method, casetest.path, bytes.NewReader(requestBody))
 	ctx.Request.Header.Add("X-Request-Id", requestId)
 	ctx.SetPath(ctx.Request.URI().Path())

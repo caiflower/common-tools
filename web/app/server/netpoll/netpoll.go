@@ -27,20 +27,20 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	requstoption "github.com/caiflower/common-tools/web/common/config"
 	"github.com/caiflower/common-tools/web/common/utils"
-	"github.com/caiflower/common-tools/web/common/webctx"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/network/netpoll"
 	"github.com/caiflower/common-tools/web/network/standard"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/protocol/http1"
 	"github.com/caiflower/common-tools/web/protocol/http2"
-	"github.com/caiflower/common-tools/web/protocol/suit"
+	"github.com/caiflower/common-tools/web/protocol/suite"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/param"
-	"github.com/caiflower/common-tools/web/server/config"
 )
 
 type HttpServer struct {
@@ -63,7 +63,7 @@ func NewHttpServer(options config.Options) *HttpServer {
 		protocolServers: make(map[string]protocol.Server),
 	}
 	s.requestCtxPool.New = func() interface{} {
-		ctx := &webctx.RequestCtx{
+		ctx := &app.RequestCtx{
 			Paths: make(param.Params, 0, 10),
 		}
 		ctx.Request.SetOptions(
@@ -75,13 +75,13 @@ func NewHttpServer(options config.Options) *HttpServer {
 	s.Handler = router.NewHandler(s.getHandlerCfg(), s.logger)
 
 	// http1
-	s.protocolServers[suit.HTTP1] = &http1.Server{
+	s.protocolServers[suite.HTTP1] = &http1.Server{
 		Core:    s,
 		Options: options,
 	}
 
 	if s.H2C {
-		s.AddProtocol(suit.HTTP2, &http2.Server{
+		s.AddProtocol(suite.HTTP2, &http2.Server{
 			BaseEngine: http2.BaseEngine{
 				Options: options,
 				Core:    s,
@@ -91,7 +91,7 @@ func NewHttpServer(options config.Options) *HttpServer {
 
 	if s.TLS != nil {
 		if !s.H2C {
-			s.AddProtocol(suit.HTTP2, &http2.Server{
+			s.AddProtocol(suite.HTTP2, &http2.Server{
 				BaseEngine: http2.BaseEngine{
 					Options: options,
 					Core:    s,
@@ -176,8 +176,8 @@ func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
 	if s.H2C {
 		// protocol sniffer
 		buf, _ := conn.Peek(len(bytestr.StrClientPreface))
-		if bytes.Equal(buf, bytestr.StrClientPreface) && s.protocolServers[suit.HTTP2] != nil {
-			return s.protocolServers[suit.HTTP2].Serve(c, conn)
+		if bytes.Equal(buf, bytestr.StrClientPreface) && s.protocolServers[suite.HTTP2] != nil {
+			return s.protocolServers[suite.HTTP2].Serve(c, conn)
 		}
 		s.logger.Warn("HTTP2 server is not loaded, request is going to fallback to HTTP1 server")
 	}
@@ -202,7 +202,7 @@ func (s *HttpServer) OnReq(c context.Context, cc interface{}) (err error) {
 	}
 
 	// HTTP1 path
-	err = s.protocolServers[suit.HTTP1].Serve(c, conn)
+	err = s.protocolServers[suite.HTTP1].Serve(c, conn)
 
 	return
 }
@@ -222,8 +222,8 @@ func (s *HttpServer) getNextProto(conn network.Conn) (proto string, err error) {
 	return
 }
 
-func (s *HttpServer) getRequestContext() *webctx.RequestCtx {
-	return s.requestCtxPool.Get().(*webctx.RequestCtx)
+func (s *HttpServer) getRequestContext() *app.RequestCtx {
+	return s.requestCtxPool.Get().(*app.RequestCtx)
 }
 
 func (s *HttpServer) GetCtxPool() *sync.Pool {

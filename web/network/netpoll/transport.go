@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/network"
-	"github.com/caiflower/common-tools/web/server/config"
 	"github.com/cloudwego/netpoll"
 )
 

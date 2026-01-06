@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
-	"github.com/caiflower/common-tools/web/common/webctx"
+	app2 "github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/protocol/http2/app"
 )
 
@@ -42,7 +42,7 @@ type stream struct {
 	id      uint32
 	body    *pipe       // non-nil if expecting DATA frames
 	cw      closeWaiter // closed wait stream transitions to closed state
-	reqCtx  *webctx.RequestCtx
+	reqCtx  *app2.RequestCtx
 	baseCtx context.Context
 
 	// owned by serverConn's serve loop:

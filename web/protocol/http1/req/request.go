@@ -42,8 +42,13 @@
 package req
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
 	"io"
+	"mime/multipart"
 
+	"github.com/caiflower/common-tools/web/common/bytestr"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/protocol"
@@ -140,110 +145,110 @@ var (
 //	func Read(req *protocol.Request, r network.Reader, preParse ...bool) error {
 //		return ReadHeaderAndLimitBody(req, r, 0, preParse...)
 //	}
+
+// Write writes request to w.
 //
-// // Write writes request to w.
-// //
-// // Write doesn't flush request to w for performance reasons.
-// //
-// // See also WriteTo.
+// Write doesn't flush request to w for performance reasons.
 //
-//	func Write(req *protocol.Request, w network.Writer) error {
-//		return write(req, w, false)
-//	}
-//
-// // ProxyWrite is like Write but writes the request in the form
-// // expected by an HTTP proxy. In particular, ProxyWrite writes the
-// // initial Request-URI line of the request with an absolute URI, per
-// // section 5.3 of RFC 7230, including the scheme and host.
-//
-//	func ProxyWrite(req *protocol.Request, w network.Writer) error {
-//		return write(req, w, true)
-//	}
-//
-// // write writes request to w.
-// // It supports proxy situation.
-//
-//	func write(req *protocol.Request, w network.Writer, usingProxy bool) error {
-//		if len(req.Header.Host()) == 0 || req.IsURIParsed() {
-//			uri := req.URI()
-//			host := uri.Host()
-//			if len(host) == 0 {
-//				return errRequestHostRequired
-//			}
-//
-//			if len(req.Header.Host()) == 0 {
-//				req.Header.SetHostBytes(host)
-//			}
-//
-//			ruri := uri.RequestURI()
-//			if bytes.Equal(req.Method(), bytestr.StrConnect) {
-//				ruri = uri.Host()
-//			} else if usingProxy {
-//				ruri = uri.FullURI()
-//			}
-//
-//			req.Header.SetRequestURIBytes(ruri)
-//
-//			if len(uri.Username()) > 0 {
-//				// RequestHeader.SetBytesKV only uses RequestHeader.bufKV.key
-//				// So we are free to use RequestHeader.bufKV.value as a scratch pad for
-//				// the base64 encoding.
-//				nl := len(uri.Username()) + len(uri.Password()) + 1
-//				nb := nl + len(bytestr.StrBasicSpace)
-//				tl := nb + base64.StdEncoding.EncodedLen(nl)
-//
-//				req.Header.InitBufValue(tl)
-//				buf := req.Header.GetBufValue()[:0]
-//				buf = append(buf, uri.Username()...)
-//				buf = append(buf, bytestr.StrColon...)
-//				buf = append(buf, uri.Password()...)
-//				buf = append(buf, bytestr.StrBasicSpace...)
-//				base64.StdEncoding.Encode(buf[nb:tl], buf[:nl])
-//				req.Header.SetBytesKV(bytestr.StrAuthorization, buf[nl:tl])
-//			}
-//		}
-//
-//		if req.IsBodyStream() {
-//			return writeBodyStream(req, w)
-//		}
-//
-//		body := req.BodyBytes()
-//		err := handleMultipart(req)
-//		if err != nil {
-//			return fmt.Errorf("error when handle multipart: %s", err)
-//		}
-//		if req.OnlyMultipartForm() {
-//			m, _ := req.MultipartForm() // req.multipartForm != nil
-//			body, err = protocol.MarshalMultipartForm(m, req.MultipartFormBoundary())
-//			if err != nil {
-//				return fmt.Errorf("error when marshaling multipart form: %s", err)
-//			}
-//			req.Header.SetMultipartFormBoundary(req.MultipartFormBoundary())
-//		}
-//
-//		hasBody := false
-//		if len(body) == 0 {
-//			body = req.PostArgString()
-//		}
-//		if len(body) != 0 || !req.Header.IgnoreBody() {
-//			hasBody = true
-//			req.Header.SetContentLength(len(body))
-//		}
-//
-//		header := req.Header.Header()
-//		if _, err := w.WriteBinary(header); err != nil {
-//			return err
-//		}
-//
-//		// Write body
-//		if hasBody {
-//			w.WriteBinary(body) //nolint:errcheck
-//		} else if len(body) > 0 {
-//			return fmt.Errorf("non-zero body for non-POST request. body=%q", body)
-//		}
-//		return nil
-//	}
-//
+// See also WriteTo.
+
+func Write(req *protocol.Request, w network.Writer) error {
+	return write(req, w, false)
+}
+
+// ProxyWrite is like Write but writes the request in the form
+// expected by an HTTP proxy. In particular, ProxyWrite writes the
+// initial Request-URI line of the request with an absolute URI, per
+// section 5.3 of RFC 7230, including the scheme and host.
+
+func ProxyWrite(req *protocol.Request, w network.Writer) error {
+	return write(req, w, true)
+}
+
+// write writes request to w.
+// It supports proxy situation.
+
+func write(req *protocol.Request, w network.Writer, usingProxy bool) error {
+	if len(req.Header.Host()) == 0 || req.IsURIParsed() {
+		uri := req.URI()
+		host := uri.Host()
+		if len(host) == 0 {
+			return errRequestHostRequired
+		}
+
+		if len(req.Header.Host()) == 0 {
+			req.Header.SetHostBytes(host)
+		}
+
+		ruri := uri.RequestURI()
+		if bytes.Equal(req.Method(), bytestr.StrConnect) {
+			ruri = uri.Host()
+		} else if usingProxy {
+			ruri = uri.FullURI()
+		}
+
+		req.Header.SetRequestURIBytes(ruri)
+
+		if len(uri.Username()) > 0 {
+			// RequestHeader.SetBytesKV only uses RequestHeader.bufKV.key
+			// So we are free to use RequestHeader.bufKV.value as a scratch pad for
+			// the base64 encoding.
+			nl := len(uri.Username()) + len(uri.Password()) + 1
+			nb := nl + len(bytestr.StrBasicSpace)
+			tl := nb + base64.StdEncoding.EncodedLen(nl)
+
+			req.Header.InitBufValue(tl)
+			buf := req.Header.GetBufValue()[:0]
+			buf = append(buf, uri.Username()...)
+			buf = append(buf, bytestr.StrColon...)
+			buf = append(buf, uri.Password()...)
+			buf = append(buf, bytestr.StrBasicSpace...)
+			base64.StdEncoding.Encode(buf[nb:tl], buf[:nl])
+			req.Header.SetBytesKV(bytestr.StrAuthorization, buf[nl:tl])
+		}
+	}
+
+	if req.IsBodyStream() {
+		return writeBodyStream(req, w)
+	}
+
+	body := req.BodyBytes()
+	err := handleMultipart(req)
+	if err != nil {
+		return fmt.Errorf("error when handle multipart: %s", err)
+	}
+	if req.OnlyMultipartForm() {
+		m, _ := req.MultipartForm() // req.multipartForm != nil
+		body, err = protocol.MarshalMultipartForm(m, req.MultipartFormBoundary())
+		if err != nil {
+			return fmt.Errorf("error when marshaling multipart form: %s", err)
+		}
+		req.Header.SetMultipartFormBoundary(req.MultipartFormBoundary())
+	}
+
+	hasBody := false
+	if len(body) == 0 {
+		body = req.PostArgString()
+	}
+	if len(body) != 0 || !req.Header.IgnoreBody() {
+		hasBody = true
+		req.Header.SetContentLength(len(body))
+	}
+
+	header := req.Header.Header()
+	if _, err := w.WriteBinary(header); err != nil {
+		return err
+	}
+
+	// Write body
+	if hasBody {
+		w.WriteBinary(body) //nolint:errcheck
+	} else if len(body) > 0 {
+		return fmt.Errorf("non-zero body for non-POST request. body=%q", body)
+	}
+	return nil
+}
+
 // // ContinueReadBodyStream reads request body in stream if request header contains
 // // 'Expect: 100-continue'.
 // //
@@ -401,83 +406,82 @@ func ReadLimitBody(req *protocol.Request, r network.Reader, maxBodySize int, get
 	return ContinueReadBody(req, r, maxBodySize, preParseMultipartForm)
 }
 
-//
-//func writeBodyStream(req *protocol.Request, w network.Writer) error {
-//	var err error
-//
-//	contentLength := req.Header.ContentLength()
-//	if contentLength < 0 {
-//		lrSize := ext.LimitedReaderSize(req.BodyStream())
-//		if lrSize >= 0 {
-//			contentLength = int(lrSize)
-//			if int64(contentLength) != lrSize {
-//				contentLength = -1
-//			}
-//			if contentLength >= 0 {
-//				req.Header.SetContentLength(contentLength)
-//			}
-//		}
-//	}
-//	if contentLength >= 0 {
-//		if err = WriteHeader(&req.Header, w); err == nil {
-//			err = ext.WriteBodyFixedSize(w, req.BodyStream(), int64(contentLength))
-//		}
-//	} else {
-//		req.Header.SetContentLength(-1)
-//		err = WriteHeader(&req.Header, w)
-//		if err == nil {
-//			err = ext.WriteBodyChunked(w, req.BodyStream())
-//		}
-//		if err == nil {
-//			err = ext.WriteTrailer(req.Header.Trailer(), w)
-//		}
-//	}
-//	err1 := req.CloseBodyStream()
-//	if err == nil {
-//		err = err1
-//	}
-//	return err
-//}
-//
-//func handleMultipart(req *protocol.Request) error {
-//	if len(req.MultipartFiles()) == 0 && len(req.MultipartFields()) == 0 {
-//		return nil
-//	}
-//	var err error
-//	bodyBuffer := &bytes.Buffer{}
-//	w := multipart.NewWriter(bodyBuffer)
-//	if len(req.MultipartFiles()) > 0 {
-//		for _, f := range req.MultipartFiles() {
-//			if f.Reader != nil {
-//				err = protocol.WriteMultipartFormFile(w, f.ParamName, f.Name, f.Reader)
-//			} else {
-//				err = protocol.AddFile(w, f.ParamName, f.Name)
-//			}
-//			if err != nil {
-//				return err
-//			}
-//		}
-//	}
-//
-//	if len(req.MultipartFields()) > 0 {
-//		for _, mf := range req.MultipartFields() {
-//			if err = protocol.AddMultipartFormField(w, mf); err != nil {
-//				return err
-//			}
-//		}
-//	}
-//
-//	req.Header.Set(consts.HeaderContentType, w.FormDataContentType())
-//	if err = w.Close(); err != nil {
-//		return err
-//	}
-//
-//	r := multipart.NewReader(bodyBuffer, w.Boundary())
-//	f, err := r.ReadForm(int64(bodyBuffer.Len()))
-//	if err != nil {
-//		return err
-//	}
-//	protocol.SetMultipartFormWithBoundary(req, f, w.Boundary())
-//
-//	return nil
-//}
+func writeBodyStream(req *protocol.Request, w network.Writer) error {
+	var err error
+
+	contentLength := req.Header.ContentLength()
+	if contentLength < 0 {
+		lrSize := ext.LimitedReaderSize(req.BodyStream())
+		if lrSize >= 0 {
+			contentLength = int(lrSize)
+			if int64(contentLength) != lrSize {
+				contentLength = -1
+			}
+			if contentLength >= 0 {
+				req.Header.SetContentLength(contentLength)
+			}
+		}
+	}
+	if contentLength >= 0 {
+		if err = WriteHeader(&req.Header, w); err == nil {
+			err = ext.WriteBodyFixedSize(w, req.BodyStream(), int64(contentLength))
+		}
+	} else {
+		req.Header.SetContentLength(-1)
+		err = WriteHeader(&req.Header, w)
+		if err == nil {
+			err = ext.WriteBodyChunked(w, req.BodyStream())
+		}
+		if err == nil {
+			err = ext.WriteTrailer(req.Header.Trailer(), w)
+		}
+	}
+	err1 := req.CloseBodyStream()
+	if err == nil {
+		err = err1
+	}
+	return err
+}
+
+func handleMultipart(req *protocol.Request) error {
+	if len(req.MultipartFiles()) == 0 && len(req.MultipartFields()) == 0 {
+		return nil
+	}
+	var err error
+	bodyBuffer := &bytes.Buffer{}
+	w := multipart.NewWriter(bodyBuffer)
+	if len(req.MultipartFiles()) > 0 {
+		for _, f := range req.MultipartFiles() {
+			if f.Reader != nil {
+				err = protocol.WriteMultipartFormFile(w, f.ParamName, f.Name, f.Reader)
+			} else {
+				err = protocol.AddFile(w, f.ParamName, f.Name)
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(req.MultipartFields()) > 0 {
+		for _, mf := range req.MultipartFields() {
+			if err = protocol.AddMultipartFormField(w, mf); err != nil {
+				return err
+			}
+		}
+	}
+
+	req.Header.Set(consts.HeaderContentType, w.FormDataContentType())
+	if err = w.Close(); err != nil {
+		return err
+	}
+
+	r := multipart.NewReader(bodyBuffer, w.Boundary())
+	f, err := r.ReadForm(int64(bodyBuffer.Len()))
+	if err != nil {
+		return err
+	}
+	protocol.SetMultipartFormWithBoundary(req, f, w.Boundary())
+
+	return nil
+}
