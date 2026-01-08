@@ -481,7 +481,9 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 		return
 	}
 
-	h.logger.Error("handle request failed. %s", err.Error())
+	if err.IsInternalError() {
+		h.logger.Error("handle request failed. %s", err.Error())
+	}
 	// metric
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
