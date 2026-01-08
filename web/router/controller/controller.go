@@ -102,7 +102,9 @@ func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Cont
 				elem := reflect.TypeOf(argValue.Interface()).Elem()
 				pkgPath := elem.PkgPath() + "." + elem.Name()
 				if err := tools.DoTagFunc(argValue.Interface(), []tools.FnObj{
-					{Fn: reflectx.BuildValid, Data: pkgPath},
+					{Fn: reflectx.BuildValid, Data: reflectx.BuildValidData{
+						PackageName: pkgPath,
+					}},
 				}); err != nil {
 					panic(err.Error())
 				}

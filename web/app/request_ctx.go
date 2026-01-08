@@ -18,6 +18,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"net/http"
 
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
@@ -32,8 +33,8 @@ type RequestCtx struct {
 	context.Context
 
 	// net
-	HttpRequest *http.Request
-	Writer      http.ResponseWriter
+	httpRequest *http.Request
+	writer      http.ResponseWriter
 
 	// netpoll
 	Response protocol.Response
@@ -60,8 +61,8 @@ func (c *RequestCtx) ConvertToWebCtx() *Context {
 }
 
 func (c *RequestCtx) SetHeader(key, value string) {
-	if c.Writer != nil {
-		c.Writer.Header().Set(key, value)
+	if c.writer != nil {
+		c.writer.Header().Set(key, value)
 		return
 	}
 
@@ -69,8 +70,8 @@ func (c *RequestCtx) SetHeader(key, value string) {
 }
 
 func (c *RequestCtx) WriteHeader(statusCode int) {
-	if c.Writer != nil {
-		c.Writer.WriteHeader(statusCode)
+	if c.writer != nil {
+		c.writer.WriteHeader(statusCode)
 		return
 	}
 
@@ -78,8 +79,8 @@ func (c *RequestCtx) WriteHeader(statusCode int) {
 }
 
 func (c *RequestCtx) Write(bytes []byte) (int, error) {
-	if c.Writer != nil {
-		return c.Writer.Write(bytes)
+	if c.writer != nil {
+		return c.writer.Write(bytes)
 	}
 
 	return c.Response.BodyWriter().Write(bytes)
@@ -107,8 +108,8 @@ func (c *RequestCtx) GetPath() string {
 }
 
 func (c *RequestCtx) GetParams() map[string][]string {
-	if c.HttpRequest != nil {
-		return c.HttpRequest.URL.Query()
+	if c.httpRequest != nil {
+		return c.httpRequest.URL.Query()
 	}
 
 	var params = make(map[string][]string)
@@ -120,8 +121,8 @@ func (c *RequestCtx) GetParams() map[string][]string {
 }
 
 func (c *RequestCtx) ComputeAction() {
-	if c.HttpRequest != nil {
-		c.action = c.HttpRequest.URL.Query().Get("Action")
+	if c.httpRequest != nil {
+		c.action = c.httpRequest.URL.Query().Get("Action")
 	} else {
 		c.action = bytesconv.B2s(c.Request.URI().QueryArgs().Peek("Action"))
 	}
@@ -149,9 +150,14 @@ func (c *RequestCtx) Method() []byte {
 	return c.method
 }
 
+func (c *RequestCtx) SetHttpWriterAndRequest(w http.ResponseWriter, r *http.Request) {
+	c.httpRequest = r
+	c.writer = w
+}
+
 func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
-	if c.Writer != nil {
-		return c.Writer, c.HttpRequest
+	if c.writer != nil {
+		return c.writer, c.httpRequest
 	}
 
 	request, _ := adaptor.GetCompatRequest(&c.Request)
@@ -175,8 +181,8 @@ func (c *RequestCtx) Reset() {
 	c.special = 0
 	c.Paths = c.Paths[:0]
 	c.isFinish = false
-	c.Writer = nil
-	c.HttpRequest = nil
+	c.writer = nil
+	c.httpRequest = nil
 	c.Response.Reset()
 	c.Request.Reset()
 	c.enableTrace = false
@@ -209,7 +215,7 @@ func (c *RequestCtx) GetWriter() network.Writer {
 }
 
 func (c *RequestCtx) GetContentEncoding() string {
-	if c.HttpRequest != nil {
+	if c.httpRequest != nil {
 		return c.Request.Header.Get("Content-Encoding")
 	}
 
@@ -217,24 +223,24 @@ func (c *RequestCtx) GetContentEncoding() string {
 }
 
 func (c *RequestCtx) GetAcceptEncoding() string {
-	if c.HttpRequest != nil {
-		return c.HttpRequest.Header.Get("Accept-Encoding")
+	if c.httpRequest != nil {
+		return c.httpRequest.Header.Get("Accept-Encoding")
 	}
 
 	return c.Request.Header.Get("Accept-Encoding")
 }
 
 func (c *RequestCtx) GetContentLength() int64 {
-	if c.HttpRequest != nil {
-		return c.HttpRequest.ContentLength
+	if c.httpRequest != nil {
+		return c.httpRequest.ContentLength
 	}
 
 	return int64(c.Request.Header.ContentLength())
 }
 
 func (c *RequestCtx) HeaderGet(key string) string {
-	if c.HttpRequest != nil {
-		return c.HttpRequest.Header.Get(key)
+	if c.httpRequest != nil {
+		return c.httpRequest.Header.Get(key)
 	}
 	return c.Request.Header.Get(key)
 }
@@ -247,8 +253,8 @@ func (c *RequestCtx) URI() *protocol.URI {
 //
 // The host is valid until returning from RequestHandler.
 func (c *RequestCtx) Host() []byte {
-	if c.HttpRequest != nil {
-		return bytesconv.S2b(c.HttpRequest.Host)
+	if c.httpRequest != nil {
+		return bytesconv.S2b(c.httpRequest.Host)
 	}
 	return c.URI().Host()
 }
@@ -271,4 +277,13 @@ func (c *RequestCtx) Abort() {
 
 func (c *RequestCtx) SetEnableTrace(b bool) {
 	c.enableTrace = b
+}
+
+func (c *RequestCtx) GetBody() (body []byte) {
+	if c.httpRequest != nil {
+		body, _ = io.ReadAll(c.httpRequest.Body)
+	} else {
+		body = c.Request.Body()
+	}
+	return
 }

@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -73,7 +72,7 @@ func setArgsOptimized(ctx *app.RequestCtx, arg interface{}, argInfo *basic.ArgIn
 
 	// body
 	if ctx.GetContentLength() != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
-		bytes := getBody(ctx)
+		bytes := ctx.GetBody()
 		encoding := ctx.GetContentEncoding()
 		if strings.Contains(encoding, "gzip") {
 			tmpBytes, err := compress.AppendGunzipBytes(nil, bytes)
@@ -140,7 +139,7 @@ func setArgs(ctx *app.RequestCtx, arg interface{}) e.ApiError {
 	fnObjs := make([]tools.FnObj, 0, 10)
 
 	if contentLen != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
-		bytes := getBody(ctx)
+		bytes := ctx.GetBody()
 		encoding := ctx.GetContentEncoding()
 		if strings.Contains(encoding, "gzip") {
 			tmpBytes, err := compress.AppendGunzipBytes(nil, bytes)
@@ -186,12 +185,11 @@ func setArgs(ctx *app.RequestCtx, arg interface{}) e.ApiError {
 	}
 
 	// set header
-	if ctx.HttpRequest != nil {
-		fnObjs = append(fnObjs, tools.FnObj{
-			Fn:   reflectx.SetHeader,
-			Data: ctx.HttpRequest.Header,
-		})
-	}
+	_, r := ctx.GetResponseWriterAndRequest()
+	fnObjs = append(fnObjs, tools.FnObj{
+		Fn:   reflectx.SetHeader,
+		Data: r.Header,
+	})
 
 	// set default
 	//fnObjs = append(fnObjs, tools.FnObj{
@@ -203,13 +201,4 @@ func setArgs(ctx *app.RequestCtx, arg interface{}) e.ApiError {
 	}
 
 	return nil
-}
-
-func getBody(ctx *app.RequestCtx) (body []byte) {
-	if ctx.HttpRequest != nil {
-		body, _ = io.ReadAll(ctx.HttpRequest.Body)
-	} else {
-		body = ctx.Request.Body()
-	}
-	return
 }

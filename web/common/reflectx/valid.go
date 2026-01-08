@@ -51,7 +51,17 @@ type validFunc func([]string, string, *validField) error
 
 var validMap = make(map[string][]validItem)
 
-func BuildValid(structField reflect.StructField, vValue reflect.Value, data interface{}) (err error) {
+type BuildValidData struct {
+	PackageName   string
+	alreadyStruct map[string]struct{}
+}
+
+func BuildValid(structField reflect.StructField, vValue reflect.Value, v interface{}) (err error) {
+	data := v.(BuildValidData)
+	if data.alreadyStruct == nil {
+		data.alreadyStruct = make(map[string]struct{})
+	}
+
 	switch vValue.Kind() {
 	case reflect.Ptr:
 		pValue := reflect.New(structField.Type.Elem()).Elem()
@@ -61,6 +71,11 @@ func BuildValid(structField reflect.StructField, vValue reflect.Value, data inte
 			if vValue.IsZero() {
 				newValue = reflect.New(structField.Type.Elem())
 			}
+			structName := structField.Type.String()
+			if _, ok := data.alreadyStruct[structName]; ok {
+				return
+			}
+			data.alreadyStruct[structName] = struct{}{}
 
 			if isTime(structField, newValue) {
 
@@ -68,11 +83,14 @@ func BuildValid(structField reflect.StructField, vValue reflect.Value, data inte
 				for i := 0; i < pValue.NumField(); i++ {
 					field := newValue.Elem().Field(i)
 					fieldStruct := pValue.Type().Field(i)
-					dataTmp := data.(string)
+					dataTmp := data.PackageName
 					if !structField.Anonymous {
-						dataTmp = data.(string) + "." + structField.Name
+						dataTmp = dataTmp + "." + structField.Name
 					}
-					if err = BuildValid(fieldStruct, field, dataTmp); err != nil {
+					if err = BuildValid(fieldStruct, field, BuildValidData{
+						PackageName:   dataTmp,
+						alreadyStruct: data.alreadyStruct,
+					}); err != nil {
 						return
 					}
 				}
@@ -81,16 +99,22 @@ func BuildValid(structField reflect.StructField, vValue reflect.Value, data inte
 		}
 	case reflect.Struct:
 		t := structField.Type
-		if isTime(structField, vValue) {
+		if _, ok := data.alreadyStruct[t.String()]; ok {
+			return
+		}
+		data.alreadyStruct[t.String()] = struct{}{}
 
-		} else {
+		if !isTime(structField, vValue) {
 			for i := 0; i < t.NumField(); i++ {
 				fieldStruct := t.Field(i)
-				dataTmp := data.(string)
+				dataTmp := data.PackageName
 				if !structField.Anonymous {
-					dataTmp = data.(string) + "." + structField.Name
+					dataTmp = dataTmp + "." + structField.Name
 				}
-				if err = BuildValid(fieldStruct, vValue.Field(i), dataTmp); err != nil {
+				if err = BuildValid(fieldStruct, vValue.Field(i), BuildValidData{
+					PackageName:   dataTmp,
+					alreadyStruct: data.alreadyStruct,
+				}); err != nil {
 					return
 				}
 			}
@@ -100,7 +124,7 @@ func BuildValid(structField reflect.StructField, vValue reflect.Value, data inte
 
 	}
 
-	fieldName := data.(string) + "." + structField.Name
+	fieldName := data.PackageName + "." + structField.Name
 	if _, ok := validMap[fieldName]; ok {
 		return
 	}

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/tools"
+	"golang.org/x/exp/maps"
 )
 
 type Method struct {
@@ -192,7 +193,7 @@ func extractArgTags(argType reflect.Type) ArgInfo {
 
 	// 如果参数是结构体，提取结构体字段的标签
 	if argType.Kind() == reflect.Struct || argType.Kind() == reflect.Ptr {
-		extractStructFields(argType, argInfo.Fields, argInfo.Tags)
+		extractStructFields(argType, argInfo.Fields, argInfo.Tags, make(map[string]struct{}))
 		// 构建索引
 		buildArgInfoIndexes(&argInfo)
 	}
@@ -201,7 +202,7 @@ func extractArgTags(argType reflect.Type) ArgInfo {
 }
 
 // extractStructFields 提取结构体字段的标签信息
-func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, argTags map[string]string) {
+func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, argTags map[string]string, hasStructName map[string]struct{}) {
 	if structType.Kind() == reflect.Ptr {
 		structType = structType.Elem()
 	}
@@ -245,7 +246,13 @@ func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, ar
 			fieldType = fieldType.Elem()
 		}
 		if fieldType.Kind() == reflect.Struct {
-			extractStructFields(fieldType, fieldInfo.Fields, argTags)
+			if _, ok := hasStructName[fieldType.String()]; ok {
+				continue
+			}
+			hasStructName1 := make(map[string]struct{})
+			maps.Copy(hasStructName1, hasStructName)
+			hasStructName1[fieldType.String()] = struct{}{}
+			extractStructFields(fieldType, fieldInfo.Fields, argTags, hasStructName1)
 		}
 
 		fieldTags[i] = &fieldInfo
@@ -255,7 +262,7 @@ func extractStructFields(structType reflect.Type, fieldTags map[int]*ArgInfo, ar
 // buildArgInfoIndexes 构建 ArgInfo 的索引映射
 func buildArgInfoIndexes(argInfo *ArgInfo) {
 	// 构建字段索引映射，从空路径开始
-	buildFieldIndexMap(nil, argInfo, 0)
+	buildFieldIndexMap(nil, argInfo, 0, make(map[string]struct{}))
 
 	// 构建标签索引映射
 	buildTagIndexes(argInfo)
@@ -307,7 +314,7 @@ func buildTagIndexes(argInfo *ArgInfo) {
 }
 
 // buildFieldIndexMap 构建字段索引映射，记录每个字段的访问路径
-func buildFieldIndexMap(parentArgInfo, argInfo *ArgInfo, parentArgIndex int) {
+func buildFieldIndexMap(parentArgInfo, argInfo *ArgInfo, parentArgIndex int, hasStructName map[string]struct{}) {
 	if argInfo.Type.Kind() != reflect.Struct && argInfo.Type.Kind() != reflect.Ptr {
 		return
 	}
@@ -332,18 +339,25 @@ func buildFieldIndexMap(parentArgInfo, argInfo *ArgInfo, parentArgIndex int) {
 			fieldType = fieldType.Elem()
 		}
 		if fieldType.Kind() == reflect.Struct {
-			nestedArgInfo := argInfo.Fields[i]
+			if _, ok := hasStructName[fieldType.String()]; ok {
+				continue
+			}
 
+			hasStructName1 := make(map[string]struct{})
+			maps.Copy(hasStructName1, hasStructName)
+			hasStructName1[fieldType.String()] = struct{}{}
+
+			nestedArgInfo := argInfo.Fields[i]
 			// 递归构建嵌套结构体的字段索引，传入当前字段路径作为基础路径
-			buildFieldIndexMap(argInfo, nestedArgInfo, i)
+			buildFieldIndexMap(argInfo, nestedArgInfo, i, hasStructName1)
 
 			// 将嵌套字段的索引路径合并到当前层级
 			for nestedFieldName, nestedFieldPath := range nestedArgInfo.fieldIndexMap {
-				// 确保嵌套字段名不会覆盖直接字段名
 				if _, exists := argInfo.fieldIndexMap[nestedFieldName]; !exists {
 					argInfo.fieldIndexMap[nestedFieldName] = nestedFieldPath
 				}
 			}
+
 		}
 	}
 }

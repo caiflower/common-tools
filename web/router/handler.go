@@ -287,10 +287,9 @@ func (h *Handler) getRequestContext() *app.RequestCtx {
 }
 
 func InitCtx(ctx *app.RequestCtx, w http.ResponseWriter, r *http.Request) *app.RequestCtx {
-	ctx.HttpRequest = r
 	ctx.SetMethod(bytesconv.S2b(r.Method))
 	ctx.SetPath(bytesconv.S2b(r.URL.Path))
-	ctx.Writer = w
+	ctx.SetHttpWriterAndRequest(w, r)
 	return ctx
 }
 
