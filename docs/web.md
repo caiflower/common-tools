@@ -2,38 +2,39 @@
 
 ## 概述
 
-Web包是一个轻量级的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、拦截器等功能。支持两种请求风格：
+Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、拦截器、HTTP客户端、GRPC集成等功能。支持两种请求风格：
+
 - **Action风格**：基于查询参数 `?action=xxx` 的传统风格
 - **RESTful风格**：基于HTTP方法和路径的REST API风格
 
+### 核心特性
+
+- 🚀 **高性能**：支持 Netpoll 模式
+- 🔄 **双路由**：Action 和 RESTful 两种风格并存
+- ✅ **参数校验**：内置强大的参数验证系统
+- 🎯 **拦截器**：AOP 支持，灵活的请求处理链
+- 🌐 **HTTP客户端**：内置高性能 HTTP 客户端
+- 🔌 **GRPC集成**：无缝集成 GRPC 服务
+- 📊 **监控**：内置 Prometheus 指标导出
+- 🚦 **限流**：令牌桶限流机制
+- 🗜️ **压缩**：Gzip、Brotli 压缩支持
+
 
 ---
-在CPU为Intel(R) Xeon(R) Platinum 8338C CPU，2c4g条件下，使用wrk工具压测，结果如下：
-```bash
-[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:30461/v1/req
-Running 1m test @ http://127.0.0.1:30461/v1/req
-  12 threads and 500 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    53.00ms   81.36ms   1.14s    85.02%
-    Req/Sec     2.63k     0.86k   10.88k    74.65%
-  1882444 requests in 1.00m, 454.20MB read
-  Non-2xx or 3xx responses: 1882444
-Requests/sec:  31359.32
-Transfer/sec:      7.57MB
-[root@k8s-node3 ~]# wrk -t12 -c500 -d60s http://127.0.0.1:30461/e
-Running 1m test @ http://127.0.0.1:30461/e
-  12 threads and 500 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    55.69ms   81.65ms 795.35ms   83.57%
-    Req/Sec     3.17k     1.13k   11.95k    74.39%
-  2273335 requests in 1.00m, 526.83MB read
-  Non-2xx or 3xx responses: 2273335
-Requests/sec:  37873.98
-Transfer/sec:      8.78MB
-```
-![img.png](images/app_monitor.png)
-![img.png](images/app_monitor_profile.png)
 
+在CPU为Intel(R) Xeon(R) Platinum 8338C CPU，2c4g条件下，使用wrk工具压测，结果如下：
+
+```bash
+# wrk -t12 -c500 -d50s http://127.0.0.1:30965/v1/hobby/search?query=1\&page_number=1\&hobby=math
+Running 50s test @ http://127.0.0.1:30965/v1/hobby/search?query=1&page_number=1&hobby=math
+  12 threads and 500 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    15.65ms   17.35ms 220.53ms   79.33%
+    Req/Sec     4.25k     0.99k   25.73k    68.78%
+  2540416 requests in 50.03s, 564.50MB read
+Requests/sec:  50780.67
+Transfer/sec:     11.28MB
+```
 
 ## 使用介绍
 
@@ -102,6 +103,7 @@ func (c *UserController) DeleteUser(req *GetUserReq) (interface{}, e.ApiError) {
 ```
 
 **Action风格请求**：
+
 ```
 POST /api/UserController?Action=GetUser
 Content-Type: application/json
@@ -187,6 +189,7 @@ server.Register(group.
 ```
 
 **RESTful风格请求**：
+
 ```
 POST /api/v1/products HTTP/1.1
 Content-Type: application/json
@@ -197,6 +200,76 @@ Content-Type: application/json
 }
 
 GET /api/v1/products/prod-123 HTTP/1.1
+```
+
+### 5. 注册GRPC服务
+
+框架支持将 GRPC 服务注册为 HTTP 接口：
+
+```go
+import (
+    "google.golang.org/grpc"
+    pb "path/to/your/proto"
+)
+
+// 定义 GRPC 服务实现
+type HelloServiceImpl struct {
+    pb.UnimplementedHelloServiceServer
+}
+
+func (s *HelloServiceImpl) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloReply, error) {
+    return &pb.HelloReply{Message: "Hello " + req.Name}, nil
+}
+
+// 注册 GRPC 服务
+helloService := &HelloServiceImpl{}
+helloController := server.RegisterGRPCService(&pb.HelloService_ServiceDesc, helloService)
+
+// 将 GRPC 方法注册为 RESTful 路由
+group := controller.NewRestFul().Group("/v1")
+server.Register(group.
+    Method("POST").
+    Path("/hello").
+    RegisterGrpcMethod(helloController.GetGrpcMethodDesc("SayHello")),
+)
+```
+
+### 6. 使用HTTP客户端
+
+框架内置高性能 HTTP 客户端：
+
+```go
+import (
+    "context"
+    "github.com/caiflower/common-tools/web/app/client"
+    "github.com/caiflower/common-tools/web/protocol"
+)
+
+// 创建客户端
+c, _ := client.NewClient(
+    client.WithDialTimeout(5 * time.Second),
+    client.WithMaxConnsPerHost(100),
+    client.WithReadTimeout(10 * time.Second),
+)
+
+// GET 请求
+statusCode, body, err := c.Get(context.Background(), nil, "http://example.com/api/data")
+
+// POST 请求
+req := protocol.NewRequest("POST", "http://example.com/api/create", strings.NewReader(`{"name":"test"}`))
+req.Header.SetContentType("application/json")
+resp := protocol.AcquireResponse()
+err = c.Do(context.Background(), req, resp)
+
+// 设置代理
+c.SetProxy(func(req *protocol.Request) (*protocol.URI, error) {
+    return protocol.ParseRequestURI("http://proxy.example.com:8080")
+})
+
+// 设置重试策略
+c.SetRetryIfFunc(func(req *protocol.Request, resp *protocol.Response, err error) bool {
+    return err != nil || resp.StatusCode() >= 500
+})
 ```
 
 ---
@@ -371,7 +444,34 @@ func (c *Controller) Method1(req *Req) (*Resp, error) {
 func (c *Controller) Method2(req *Req) (*Resp, e.ApiError) {
     return nil, e.NewApiError(e.InvalidArgument, "Invalid argument", nil)
 }
+
+// 方式3：返回 (data, error)
+func (c *Controller) Method3(req *Req) (*Resp, e.ApiError) {
+    if req.ID <= 0 {
+        return nil, e.NewApiError(e.InvalidArgument, "ID must be positive", nil)
+    }
+    return &Resp{ID: req.ID}, nil
+}
 ```
+
+### 预定义错误类型
+
+框架提供了丰富的预定义错误类型：
+
+| 错误类型               | HTTP状态码 | 说明         |
+| ---------------------- | ---------- | ------------ |
+| `e.NotFound`           | 404        | 资源未找到   |
+| `e.Unauthorized`       | 401        | 未授权       |
+| `e.Forbidden`          | 403        | 禁止访问     |
+| `e.InvalidArgument`    | 400        | 参数错误     |
+| `e.TooManyRequests`    | 429        | 请求过多     |
+| `e.Internal`           | 500        | 内部错误     |
+| `e.Unavailable`        | 503        | 服务不可用   |
+| `e.Timeout`            | 408        | 请求超时     |
+| `e.Conflict`           | 400        | 冲突         |
+| `e.FailedPrecondition` | 412        | 前置条件失败 |
+| `e.OutOfRange`         | 400        | 超出范围     |
+| `e.Unimplemented`      | 501        | 未实现       |
 
 ### 拦截器
 
@@ -456,9 +556,13 @@ server := web.Default(
 
 框架内置Prometheus指标导出，可通过 `EnableMetrics` 选项开启。
 
+```go
+server := web.Default(
+    config.WithEnableMetrics(true),
+)
 ```
-GET /metrics
-```
+
+访问 `GET /metrics` 获取指标数据。
 
 ### 性能分析 (Pprof)
 
@@ -468,8 +572,15 @@ GET /metrics
 server := web.Default(
     config.WithEnablePprof(true),
 )
-// 访问 http://localhost:8080/debug/pprof/
 ```
+
+访问以下端点进行性能分析：
+
+- `http://localhost:8080/debug/pprof/` - 概览
+- `http://localhost:8080/debug/pprof/profile` - CPU profile
+- `http://localhost:8080/debug/pprof/heap` - 内存堆
+- `http://localhost:8080/debug/pprof/goroutine` - Goroutine
+- `http://localhost:8080/debug/pprof/trace` - 执行追踪
 
 ### 请求追踪
 
@@ -497,80 +608,81 @@ server.SetBeforeDispatchCallBack(func(w http.ResponseWriter, r *http.Request) bo
 
 `server.Close()` 会等待所有请求处理完毕或超时（默认HandleTimeout）。
 
----
-
-## 完整示例
+### TLS/HTTPS 配置
 
 ```go
-package main
+import "crypto/tls"
 
-import (
-    "time"
-    
-    "github.com/caiflower/common-tools/web"
-    "github.com/caiflower/common-tools/web/server/config"
-    "github.com/caiflower/common-tools/web/router/controller"
+server := web.Default(
+    config.WithALPN(true, &tls.Config{
+        Certificates: []tls.Certificate{
+            // 加载证书
+        },
+    }),
 )
+```
 
-// 定义请求和响应
-type CreateUserReq struct {
-    Name  string `json:"name" verf:"required"`
-    Email string `json:"email" verf:"required"`
-}
+### HTTP/2 配置
 
-type GetUserReq struct {
-    ID int `json:"id" verf:"required"`
-}
+```go
+server := web.Default(
+    config.WithH2C(true), // 启用 HTTP/2 Cleartext
+    config.WithMaxConcurrentStreams(1000),
+    config.WithMaxUploadBufferPerConnection(1 << 20),
+    config.WithMaxUploadBufferPerStream(1 << 18),
+)
+```
 
-type User struct {
-    ID    int    `json:"id"`
-    Name  string `json:"name"`
-    Email string `json:"email"`
-}
+### 连接管理
 
-// 定义Controller
-type UserController struct {
-}
+```go
+server := web.Default(
+    config.WithDisableKeepalive(false), // 启用 Keep-Alive
+    config.WithIdleTimeout(60 * time.Second), // 空闲超时
+    config.WithKeepAliveTimeout(180 * time.Second), // Keep-Alive 超时
+)
+```
 
-func (c *UserController) CreateUser(req *CreateUserReq) (*User, error) {
-    return &User{
-        ID:    1,
-        Name:  req.Name,
-        Email: req.Email,
-    }, nil
-}
+### 自定义连接回调
 
-func (c *UserController) GetUser(req *GetUserReq) (*User, error) {
-    return &User{
-        ID:    req.ID,
-        Name:  "John Doe",
-        Email: "john@example.com",
-    }, nil
-}
+```go
+server := web.Default(
+    config.WithOnAccept(func(conn net.Conn) context.Context {
+        // 连接接受时回调
+        return context.Background()
+    }),
+    config.WithOnConnect(func(ctx context.Context, conn network.Conn) context.Context {
+        // 连接建立时回调
+        return ctx
+    }),
+)
+```
 
-func main() {
-    // 初始化服务器
-    server := web.Default(
-        config.WithName("user-service"),
-        config.WithAddr(":8080"),
-        config.WithRootPath("/api"),
-    )
+### 请求大小限制
 
-    // 注册Controller
-    userController := server.AddController(&UserController{})
+```go
+server := web.Default(
+    config.WithMaxHeaderBytes(1 << 20), // 最大请求头大小 1MB
+    config.WithMaxRequestBodySize(10 << 20), // 最大请求体大小 10MB
+)
+```
 
-    // 注册RESTful路由
-    group := controller.NewRestFul().Group("/v1")
-    
-    server.Register(group.
-        Method("POST").
-        Path("/users").
-        RegisterMethod(userController.GetMethod("CreateUser")),
-    )
+### 性能优化选项
 
-    // 启动服务器
-    server.Start()
-}
+```go
+server := web.Default(
+    config.WithDisableOptimization(false), // 启用性能优化（默认）
+    config.WithEnableActionController(true), // 启用 Action 风格控制器
+)
+```
+
+### 响应压缩
+
+框架自动根据请求头的 `Accept-Encoding` 支持 Gzip 和 Brotli 压缩：
+
+```go
+// 客户端请求时添加
+Accept-Encoding: gzip, br
 ```
 
 ---
@@ -579,16 +691,88 @@ func main() {
 
 `web/server/config` 包提供了多种 Option 函数：
 
-| Option函数 | 参数 | 默认值 | 说明 |
-|-----------|------|--------|------|
-| `WithName` | string | "default" | 服务器名称 |
-| `WithAddr` | string | ":8080" | 监听地址 |
-| `WithReadTimeout` | duration | 20s | 读取超时 |
-| `WithWriteTimeout` | duration | 35s | 写入超时 |
-| `WithHandleTimeout` | duration | 60s | 请求总处理超时 |
-| `WithRootPath` | string | "" | API根路径前缀 |
-| `WithHeaderTraceID` | string | "X-Request-Id" | 追踪ID请求头 |
-| `WithControllerRootPkgName` | string | "controller" | Controller包根名称 |
-| `WithEnablePprof` | bool | false | 是否启用性能分析 |
-| `WithQps` | bool, int | false, 0 | 限流配置 |
-| `WithMode` | ServerMode | "netpoll" | 服务器模式 (Standard/Netpoll) |
+### 服务器基础配置
+
+| Option函数    | 参数       | 默认值    | 说明                          |
+| ------------- | ---------- | --------- | ----------------------------- |
+| `WithName`    | string     | "default" | 服务器名称                    |
+| `WithAddr`    | string     | ":8080"   | 监听地址                      |
+| `WithMode`    | ServerMode | "netpoll" | 服务器模式 (Standard/Netpoll) |
+| `WithNetwork` | string     | "tcp"     | 网络类型                      |
+
+### 超时配置
+
+| Option函数             | 参数     | 默认值 | 说明            |
+| ---------------------- | -------- | ------ | --------------- |
+| `WithReadTimeout`      | duration | 20s    | 读取超时        |
+| `WithWriteTimeout`     | duration | 35s    | 写入超时        |
+| `WithHandleTimeout`    | duration | 60s    | 请求总处理超时  |
+| `WithIdleTimeout`      | duration | 60s    | 空闲连接超时    |
+| `WithKeepAliveTimeout` | duration | 180s   | Keep-Alive 超时 |
+
+### 路由配置
+
+| Option函数                  | 参数   | 默认值         | 说明               |
+| --------------------------- | ------ | -------------- | ------------------ |
+| `WithRootPath`              | string | ""             | API根路径前缀      |
+| `WithHeaderTraceID`         | string | "X-Request-Id" | 追踪ID请求头       |
+| `WithControllerRootPkgName` | string | "controller"   | Controller包根名称 |
+
+### 功能开关
+
+| Option函数                   | 参数 | 默认值 | 说明                       |
+| ---------------------------- | ---- | ------ | -------------------------- |
+| `WithEnablePprof`            | bool | false  | 是否启用性能分析           |
+| `WithEnableMetrics`          | bool | false  | 是否启用 Prometheus 指标   |
+| `WithEnableActionController` | bool | true   | 是否启用 Action 风格控制器 |
+| `WithDisableOptimization`    | bool | false  | 是否禁用性能优化           |
+| `WithDisableKeepalive`       | bool | false  | 是否禁用 Keep-Alive        |
+| `WithEnableTrace`            | bool | false  | 是否启用追踪               |
+
+### 限流配置
+
+| Option函数 | 参数      | 默认值   | 说明                   |
+| ---------- | --------- | -------- | ---------------------- |
+| `WithQps`  | bool, int | false, 0 | 限流配置 (enable, qps) |
+
+### HTTP/2 配置
+
+| Option函数                         | 参数              | 默认值     | 说明                      |
+| ---------------------------------- | ----------------- | ---------- | ------------------------- |
+| `WithH2C`                          | bool              | false      | 是否启用 HTTP/2 Cleartext |
+| `WithALPN`                         | bool, *tls.Config | false, nil | 是否启用 ALPN (TLS)       |
+| `WithMaxConcurrentStreams`         | uint32            | 100        | 最大并发流数              |
+| `WithMaxUploadBufferPerConnection` | int32             | 1<<20      | 每连接上传缓冲区大小      |
+| `WithMaxUploadBufferPerStream`     | int32             | 1<<18      | 每流上传缓冲区大小        |
+| `WithMaxReadFrameSize`             | uint32            | 0          | 最大读取帧大小            |
+| `WithPermitProhibitedCipherSuites` | bool              | false      | 是否允许禁止的密码套件    |
+
+### 连接管理
+
+| Option函数                     | 参数                                                | 默认值 | 说明               |
+| ------------------------------ | --------------------------------------------------- | ------ | ------------------ |
+| `WithSenseClientDisconnection` | bool                                                | false  | 是否检测客户端断开 |
+| `WithOnAccept`                 | func(net.Conn) context.Context                      | nil    | 连接接受回调       |
+| `WithOnConnect`                | func(context.Context, network.Conn) context.Context | nil    | 连接建立回调       |
+| `WithListenConfig`             | *net.ListenConfig                                   | nil    | 监听配置           |
+
+### 请求限制
+
+| Option函数               | 参数 | 默认值        | 说明           |
+| ------------------------ | ---- | ------------- | -------------- |
+| `WithMaxHeaderBytes`     | int  | 1<<20 (1MB)   | 最大请求头大小 |
+| `WithMaxRequestBodySize` | int  | 10<<20 (10MB) | 最大请求体大小 |
+
+### HTTP客户端配置选项
+
+| Option函数                | 参数        | 默认值 | 说明                |
+| ------------------------- | ----------- | ------ | ------------------- |
+| `WithDialTimeout`         | duration    | 5s     | 连接超时            |
+| `WithReadTimeout`         | duration    | 0      | 读取超时            |
+| `WithWriteTimeout`        | duration    | 0      | 写入超时            |
+| `WithMaxConnsPerHost`     | int         | 512    | 每主机最大连接数    |
+| `WithMaxIdleConnDuration` | duration    | 10s    | 最大空闲连接时长    |
+| `WithMaxIdleConnSeconds`  | int         | 10     | 最大空闲连接秒数    |
+| `WithKeepAlive`           | bool        | true   | 是否启用 Keep-Alive |
+| `WithDisableCompression`  | bool        | false  | 是否禁用压缩        |
+| `WithTLSClientConfig`     | *tls.Config | nil    | TLS 客户端配置      |
