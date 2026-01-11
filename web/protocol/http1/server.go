@@ -21,6 +21,7 @@ import (
 
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/app/server/config"
+	"github.com/caiflower/common-tools/web/common/bytestr"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/protocol/http1/req"
@@ -39,10 +40,12 @@ type Server struct {
 
 func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 	var (
-		cancel         context.CancelFunc
-		zr             network.Reader
-		connRequestNum = uint64(0)
-		zw             network.Writer
+		cancel          context.CancelFunc
+		zr              network.Reader
+		connRequestNum  = uint64(0)
+		zw              network.Writer
+		isHTTP11        bool
+		connectionClose bool
 	)
 
 	if s.HandleTimeout != 0 {
@@ -94,11 +97,25 @@ func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 			}
 		}
 
+		connectionClose = s.DisableKeepalive || ctx.Request.Header.ConnectionClose()
+		isHTTP11 = ctx.Request.Header.IsHTTP11()
+
 		s.Core.Serve(ctx)
 		if err != nil {
 			s.GetLogger().Error("GetHttpRequest failed. Error: %s", err.Error())
 			err = errParseRequest
 			return
+		}
+
+		if !s.IsRunning() {
+			connectionClose = true
+		}
+
+		connectionClose = connectionClose || ctx.Response.ConnectionClose()
+		if connectionClose {
+			ctx.Response.Header.SetCanonical(bytestr.StrConnection, bytestr.StrClose)
+		} else if !isHTTP11 {
+			ctx.Response.Header.SetCanonical(bytestr.StrConnection, bytestr.StrKeepAlive)
 		}
 
 		err = writeResponse(ctx, zw)
