@@ -87,6 +87,7 @@ func (s *HttpServer) Start() error {
 	if s.IsRunning() {
 		return nil
 	}
+	s.SetRunning(true)
 
 	s.Handler.SortInterceptors()
 
@@ -108,6 +109,7 @@ func (s *HttpServer) Start() error {
 
 func (s *HttpServer) Close() {
 	s.logger.Info("      **** http server shutdown ****")
+	s.SetRunning(false)
 	if s.server != nil {
 		// 30秒超时
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
