@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package limiter
+package limiter
 
 import (
 	"context"
@@ -51,7 +51,9 @@ func (l *FixedWindowLimiter) ReleaseToken() {
 }
 
 func (l *FixedWindowLimiter) TakeTokenWithTimeout(timeout time.Duration) bool {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	for {
 		select {
 		case <-ctx.Done():
