@@ -39,11 +39,11 @@ import (
 // UserRequest 用户请求结构体 - 带参数校验
 type UserRequest struct {
 	RequestID string `header:"X-Request-Id"`
-	ID        int    `json:"id" verf:"required" between:"1,1000"`
-	Name      string `json:"name" verf:"required" len:"1,100"`
-	Email     string `json:"email" verf:"nilable" reg:"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
-	Age       int    `json:"age" verf:"required" between:"1,120"`
-	Status    string `json:"status" inList:"active,inactive,pending"`
+	ID        int    `json:"id" verf:"required|between:1,1000"`
+	Name      string `json:"name" verf:"required|len:1,100"`
+	Email     string `json:"email" verf:"nilable|reg:^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"`
+	Age       int    `json:"age" verf:"required|between:1,120"`
+	Status    string `json:"status" verf:"inList:active,inactive,pending"`
 }
 
 // UserResponse 用户响应结构体
@@ -107,14 +107,14 @@ type ProductController struct{}
 
 // ProductRequest 产品请求
 type ProductRequest struct {
-	ProductID   int     `json:"product_id" verf:"required" between:"1,10000"`
-	ProductName string  `json:"product_name" verf:"required" len:"1,100"`
+	ProductID   int     `json:"product_id" verf:"required|between:1,10000"`
+	ProductName string  `json:"product_name" verf:"required|len:1,100"`
 	Price       float64 `json:"price" verf:"required"`
-	Category    string  `json:"category" verf:"required" len:"1,50"`
+	Category    string  `json:"category" verf:"required|len:1,50"`
 }
 
 type ProductRequestV1 struct {
-	ProductID   int    `json:"product_id" verf:"required" between:"1,10000" path:"productID"`
+	ProductID   int    `json:"product_id" verf:"required|between:1,10000" path:"productID"`
 	ProductName string `query:"productName"`
 }
 
