@@ -46,6 +46,7 @@ type Options struct {
 	IdleTimeout              time.Duration `yaml:"idleTimeout" default:"60s"`
 	HandleTimeout            time.Duration `yaml:"handleTimeout" default:"60s"`
 	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"180s"`
+	EnableSwagger            bool          `yaml:"enableSwagger"`
 	EnablePprof              bool          `yaml:"enablePprof"`
 	Mode                     ServerMode    `yaml:"mode" default:"netpoll"`
 	LimiterEnabled           bool          `yaml:"limiterEnabled"`
@@ -216,6 +217,13 @@ func WithALPN(opt bool, tls *tls.Config) Option {
 func WithEnableActionController(opt bool) Option {
 	return func(opts *Options) *Options {
 		opts.EnableActionController = opt
+		return opts
+	}
+}
+
+func WithEnableSwagger(opt bool) Option {
+	return func(opts *Options) *Options {
+		opts.EnableSwagger = opt
 		return opts
 	}
 }

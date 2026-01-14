@@ -20,7 +20,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -73,6 +75,7 @@ type OpenApiV3 struct {
 	Paths      Paths      `json:"paths"`
 
 	validator *defaultValidator
+	mu        sync.RWMutex
 }
 
 type AddInput struct {
@@ -94,7 +97,14 @@ func New() *OpenApiV3 {
 	return oai
 }
 
+// Add registers a struct schema or a handler function into OpenAPI.
 func (oai *OpenApiV3) Add(in AddInput) error {
+	oai.mu.Lock()
+	defer oai.mu.Unlock()
+
+	if in.Object == nil {
+		return fmt.Errorf("unsupported parameter type <nil>, only struct/function type is supported")
+	}
 	reflectValue := reflect.ValueOf(in.Object)
 	for reflectValue.Kind() == reflect.Pointer {
 		reflectValue = reflectValue.Elem()
@@ -115,6 +125,9 @@ func (oai *OpenApiV3) Add(in AddInput) error {
 }
 
 func (oai OpenApiV3) String() string {
+	oai.mu.RLock()
+	defer oai.mu.RUnlock()
+
 	b, _ := json.Marshal(oai)
 	return string(b)
 }
@@ -202,73 +215,43 @@ type addPathInput struct {
 	Function any
 }
 
+// parsedHandlerSignature is a normalized view of a Go handler function signature.
+type parsedHandlerSignature struct {
+	requestType       reflect.Type
+	requestStructType reflect.Type
+	responseType      reflect.Type
+	hasError          bool
+}
+
 func (oai *OpenApiV3) addPath(in addPathInput) error {
 	if oai.Paths == nil {
 		oai.Paths = make(Paths)
 	}
 
-	var reflectType = reflect.TypeOf(in.Function)
-	if reflectType.NumIn() < 1 || reflectType.NumOut() < 1 {
-		return fmt.Errorf("unsupported function %s for OpenAPI Path register, there should be input & output structures", reflectType.String())
+	reflectType := reflect.TypeOf(in.Function)
+	if reflectType.Kind() != reflect.Func {
+		return fmt.Errorf("unsupported parameter type %s, only function type is supported", reflectType.String())
+	}
+
+	sig, err := oai.parseHandlerSignature(reflectType)
+	if err != nil {
+		return err
 	}
 
 	var (
-		inputObject  reflect.Value
-		outputObject reflect.Value
+		inputObject         reflect.Value
+		inputStructTypeName string
+		inputTypeForParams  reflect.Type
 	)
-
-	// Determine which parameter is the actual request struct
-	var inputType reflect.Type
-	if reflectType.NumIn() == 1 {
-		// Single parameter: it's the request struct
-		inputType = reflectType.In(0)
-	} else {
-		// Multiple parameters: check if first is context
-		firstParamType := reflectType.In(0)
-		if firstParamType.Kind() == reflect.Pointer {
-			// Check if it's a context type by name or type
-			elemType := firstParamType.Elem()
-			if elemType.Name() == "RequestCtx" || elemType.Name() == "Context" ||
-				strings.Contains(elemType.PkgPath(), "/app") {
-				// First parameter is context, use second parameter as request
-				inputType = reflectType.In(1)
-			} else {
-				// First parameter is not context, use it as request
-				inputType = firstParamType
-			}
-		} else {
-			// First parameter is not a pointer, use it as request
-			inputType = firstParamType
-		}
-	}
-
-	if inputType.Kind() == reflect.Pointer {
-		inputObject = reflect.New(inputType.Elem()).Elem()
-	} else {
-		inputObject = reflect.New(inputType).Elem()
-	}
-
-	if inputObject.Kind() != reflect.Struct {
-		return fmt.Errorf("unsupported function %s for OpenAPI Path register, request parameter is not a struct", reflectType.String())
-	}
-
-	// Use the dereferenced type for field iteration
-	if inputType.Kind() == reflect.Pointer {
-		inputType = inputType.Elem()
-	}
-
-	outputType := reflectType.Out(0)
-	if outputType.Kind() == reflect.Pointer {
-		outputObject = reflect.New(outputType.Elem()).Elem()
-	} else {
-		outputObject = reflect.New(outputType).Elem()
+	if sig.requestStructType != nil {
+		inputObject = reflect.New(sig.requestStructType).Elem()
+		inputStructTypeName = oai.golangTypeToSchemaName(inputObject.Type())
+		inputTypeForParams = sig.requestStructType
 	}
 
 	var (
-		path                 = Path{XExtensions: make(XExtension)}
-		inputStructTypeName  = oai.golangTypeToSchemaName(inputObject.Type())
-		outputStructTypeName = oai.golangTypeToSchemaName(outputObject.Type())
-		operation            = Operation{
+		path      = Path{XExtensions: make(XExtension)}
+		operation = Operation{
 			Responses:   make(Responses),
 			XExtensions: make(XExtension),
 		}
@@ -293,21 +276,23 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		in.Method = "POST"
 	}
 
-	if err := oai.addSchema(inputObject.Interface()); err != nil {
-		return err
+	if sig.requestStructType != nil {
+		if err := oai.addSchema(inputObject.Interface()); err != nil {
+			return err
+		}
+		operation.Summary = inputStructTypeName
+		operation.Description = "API endpoint for " + inputStructTypeName
+	} else {
+		operation.Summary = runtime.FuncForPC(reflect.ValueOf(in.Function).Pointer()).Name()
+		operation.Description = "API endpoint for " + operation.Summary
 	}
-
-	if err := oai.addSchema(outputObject.Interface()); err != nil {
-		return err
-	}
-
-	operation.Summary = inputStructTypeName
-	operation.Description = "API endpoint for " + inputStructTypeName
 	// operation.OperationID = strings.ReplaceAll(inputStructTypeName, ".", "_")
 
-	oai.collectParameters(inputType, &operation)
+	if inputTypeForParams != nil {
+		oai.collectParameters(inputTypeForParams, &operation)
+	}
 
-	if in.Method != "GET" && in.Method != "DELETE" {
+	if in.Method != "GET" && in.Method != "DELETE" && sig.requestStructType != nil {
 		requestBody := RequestBody{
 			Content: make(map[string]MediaType),
 		}
@@ -315,9 +300,9 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		contentTypes := oai.Config.ReadContentTypes
 		for _, v := range contentTypes {
 			schemaRef, err := oai.getRequestSchemaRef(getRequestSchemaRefInput{
-				BusinessStructName: inputStructTypeName,
-				RequestObject:      oai.Config.CommonRequest,
-				RequestDataField:   oai.Config.CommonRequestDataField,
+				BusinessSchema:   SchemaRef{Ref: inputStructTypeName},
+				RequestObject:    oai.Config.CommonRequest,
+				RequestDataField: oai.Config.CommonRequestDataField,
 			})
 			if err != nil {
 				return err
@@ -329,11 +314,19 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		operation.RequestBody = &RequestBodyRef{Value: &requestBody}
 	}
 
-	response, err := oai.getResponseFromObject(outputObject.Interface(), true, outputStructTypeName)
+	outputSchemaRef := oai.outputSchemaRef(sig.responseType)
+	response, err := oai.getResponseFromOutput(outputSchemaRef, sig.responseType)
 	if err != nil {
 		return err
 	}
 	operation.Responses["200"] = ResponseRef{Value: response}
+
+	if sig.hasError {
+		if errResponse, err := oai.getResponseFromOutput(outputSchemaRef, sig.responseType); err == nil {
+			operation.Responses["400"] = ResponseRef{Value: errResponse}
+			operation.Responses["500"] = ResponseRef{Value: errResponse}
+		}
+	}
 
 	oai.removeOperationDuplicatedProperties(&operation)
 
@@ -356,6 +349,113 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 
 	oai.Paths[in.Path] = path
 	return nil
+}
+
+// parseHandlerSignature validates and extracts request/response types from a handler function.
+func (oai *OpenApiV3) parseHandlerSignature(ft reflect.Type) (*parsedHandlerSignature, error) {
+	if ft.Kind() != reflect.Func {
+		return nil, fmt.Errorf("unsupported parameter type %s, only function type is supported", ft.String())
+	}
+
+	var (
+		reqType  reflect.Type
+		inOffset int
+	)
+
+	if ft.NumIn() >= 1 && isContextParamType(ft.In(0)) {
+		inOffset = 1
+	}
+
+	switch ft.NumIn() - inOffset {
+	case 0:
+	case 1:
+		reqType = ft.In(inOffset)
+		for reqType.Kind() == reflect.Pointer {
+			reqType = reqType.Elem()
+		}
+		if reqType.Kind() != reflect.Struct {
+			return nil, fmt.Errorf("unsupported function %s for OpenAPI Path register, request parameter is not a struct", ft.String())
+		}
+	default:
+		return nil, fmt.Errorf("unsupported function %s for OpenAPI Path register, too many input parameters", ft.String())
+	}
+
+	var (
+		respType reflect.Type
+		hasError bool
+	)
+
+	errorType := reflect.TypeOf((*error)(nil)).Elem()
+	switch ft.NumOut() {
+	case 0:
+		respType = nil
+	case 1:
+		out0 := ft.Out(0)
+		if out0.Implements(errorType) {
+			hasError = true
+			respType = nil
+		} else {
+			respType = out0
+		}
+	case 2:
+		out0 := ft.Out(0)
+		out1 := ft.Out(1)
+		if !out1.Implements(errorType) {
+			return nil, fmt.Errorf("unsupported function %s for OpenAPI Path register, second return value must be error", ft.String())
+		}
+		if out0.Implements(errorType) {
+			return nil, fmt.Errorf("unsupported function %s for OpenAPI Path register, first return value must not be error", ft.String())
+		}
+		respType = out0
+		hasError = true
+	default:
+		return nil, fmt.Errorf("unsupported function %s for OpenAPI Path register, too many return values", ft.String())
+	}
+
+	var reqStructType reflect.Type
+	if reqType != nil {
+		reqStructType = reqType
+	}
+
+	if respType != nil {
+		for respType.Kind() == reflect.Pointer {
+			respType = respType.Elem()
+		}
+	}
+
+	return &parsedHandlerSignature{
+		requestStructType: reqStructType,
+		responseType:      respType,
+		hasError:          hasError,
+	}, nil
+}
+
+// isContextParamType reports whether the parameter is a web context type (e.g. *app.RequestContext).
+func isContextParamType(t reflect.Type) bool {
+	if t.Kind() == reflect.Interface {
+		return true
+	}
+	if t.Kind() != reflect.Pointer {
+		return false
+	}
+	elem := t.Elem()
+	if elem.Name() == "RequestCtx" || elem.Name() == "Context" || elem.Name() == "RequestContext" {
+		return true
+	}
+	return strings.Contains(elem.PkgPath(), "/app")
+}
+
+// outputSchemaRef converts a response Go type into an OpenAPI schema reference/value.
+func (oai *OpenApiV3) outputSchemaRef(respType reflect.Type) SchemaRef {
+	if respType == nil {
+		return SchemaRef{Value: &Schema{Type: TypeObject}}
+	}
+
+	ref, err := oai.newSchemaRefWithGolangType(respType, reflect.StructTag(""))
+	if err != nil || ref == nil {
+		return SchemaRef{Value: &Schema{Type: TypeObject}}
+	}
+	return *ref
 }
 
 func (oai *OpenApiV3) removeOperationDuplicatedProperties(operation *Operation) {
@@ -417,22 +517,21 @@ func (oai *OpenApiV3) removeItemsFromArray(array []string, items []any) []string
 }
 
 type getRequestSchemaRefInput struct {
-	BusinessStructName string
-	RequestObject      any
-	RequestDataField   string
+	BusinessSchema   SchemaRef
+	RequestObject    any
+	RequestDataField string
 }
 
 type getResponseSchemaRefInput struct {
-	BusinessStructName string
-	ResponseObject     any
-	ResponseDataField  string
+	BusinessSchema    SchemaRef
+	ResponseObject    any
+	ResponseDataField string
 }
 
 func (oai *OpenApiV3) getRequestSchemaRef(in getRequestSchemaRefInput) (*SchemaRef, error) {
 	if in.RequestObject == nil {
-		return &SchemaRef{
-			Ref: in.BusinessStructName,
-		}, nil
+		bs := in.BusinessSchema
+		return &bs, nil
 	}
 
 	requestType := reflect.TypeOf(in.RequestObject)
@@ -469,9 +568,8 @@ func (oai *OpenApiV3) getRequestSchemaRef(in getRequestSchemaRefInput) (*SchemaR
 		var err error
 
 		if fieldName == in.RequestDataField {
-			fieldSchemaRef = &SchemaRef{
-				Ref: in.BusinessStructName,
-			}
+			bs := in.BusinessSchema
+			fieldSchemaRef = &bs
 		} else {
 			fieldSchemaRef, err = oai.newSchemaRefWithGolangType(field.Type, field.Tag)
 		}
@@ -490,9 +588,8 @@ func (oai *OpenApiV3) getRequestSchemaRef(in getRequestSchemaRefInput) (*SchemaR
 
 func (oai *OpenApiV3) getResponseSchemaRef(in getResponseSchemaRefInput) (*SchemaRef, error) {
 	if in.ResponseObject == nil {
-		return &SchemaRef{
-			Ref: in.BusinessStructName,
-		}, nil
+		bs := in.BusinessSchema
+		return &bs, nil
 	}
 
 	responseType := reflect.TypeOf(in.ResponseObject)
@@ -529,9 +626,8 @@ func (oai *OpenApiV3) getResponseSchemaRef(in getResponseSchemaRefInput) (*Schem
 		var err error
 
 		if fieldName == in.ResponseDataField {
-			fieldSchemaRef = &SchemaRef{
-				Ref: in.BusinessStructName,
-			}
+			bs := in.BusinessSchema
+			fieldSchemaRef = &bs
 		} else {
 			fieldSchemaRef, err = oai.newSchemaRefWithGolangType(field.Type, field.Tag)
 		}
@@ -548,7 +644,8 @@ func (oai *OpenApiV3) getResponseSchemaRef(in getResponseSchemaRefInput) (*Schem
 	}, nil
 }
 
-func (oai *OpenApiV3) getResponseFromObject(object any, isDefault bool, businessStructName string) (*Response, error) {
+// getResponseFromOutput builds a success response schema (optionally wrapped by CommonResponse).
+func (oai *OpenApiV3) getResponseFromOutput(businessSchema SchemaRef, outputType reflect.Type) (*Response, error) {
 	response := &Response{
 		Description: "Success",
 		Content:     make(map[string]MediaType),
@@ -559,12 +656,16 @@ func (oai *OpenApiV3) getResponseFromObject(object any, isDefault bool, business
 
 	if oai.Config.CommonResponse != nil && oai.Config.CommonResponseDataField != "" {
 		schemaRef, err = oai.getResponseSchemaRef(getResponseSchemaRefInput{
-			BusinessStructName: businessStructName,
-			ResponseObject:     oai.Config.CommonResponse,
-			ResponseDataField:  oai.Config.CommonResponseDataField,
+			BusinessSchema:    businessSchema,
+			ResponseObject:    oai.Config.CommonResponse,
+			ResponseDataField: oai.Config.CommonResponseDataField,
 		})
 	} else {
-		schemaRef, err = oai.newSchemaRefWithGolangType(reflect.TypeOf(object), reflect.StructTag(""))
+		if outputType == nil {
+			schemaRef = &SchemaRef{Value: &Schema{Type: TypeObject}}
+		} else {
+			schemaRef, err = oai.newSchemaRefWithGolangType(outputType, reflect.StructTag(""))
+		}
 	}
 
 	if err != nil {

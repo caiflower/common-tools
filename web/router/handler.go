@@ -73,6 +73,7 @@ type HandlerCfg struct {
 	EnableMetrics          bool          `yaml:"enableMetrics"`
 	DisableOptimization    bool          `yaml:"disableOptimization"`
 	EnableActionController bool          `yaml:"enableActionController"`
+	EnableSwagger          bool          `yaml:"enableSwagger"`
 }
 
 type LimiterConfig struct {
@@ -97,9 +98,11 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 	setGoAIInstance(commonHandler.oai)
 
 	commonHandler.ctxPool.New = func() interface{} {
-		return &app.RequestCtx{
+		ctx := &app.RequestCtx{
 			Paths: make(param.Params, 0, 10),
 		}
+		ctx.SetNetWorkType("standard")
+		return ctx
 	}
 
 	if config.WebLimiter.Enable {
@@ -371,22 +374,12 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 		}
 
 		// set args
-		if !h.config.DisableOptimization {
-			if err := setArgsOptimized(ctx, inputArg, targetM.GetArgInfo(0)); err != nil {
-				if err.IsInternalError() {
-					h.logger.Warn("setArgsOptimized failed. Error: %v", err)
-				}
-				h.writeError(ctx, err)
-				return
+		if err := setArgsOptimized(ctx, inputArg, targetM.GetArgInfo(0)); err != nil {
+			if err.IsInternalError() {
+				h.logger.Warn("setArgsOptimized failed. Error: %v", err)
 			}
-		} else {
-			if err := setArgs(ctx, inputArg); err != nil {
-				if err.IsInternalError() {
-					h.logger.Warn("setArgs failed. Error: %v", err)
-				}
-				h.writeError(ctx, err)
-				return
-			}
+			h.writeError(ctx, err)
+			return
 		}
 
 		// valid args
@@ -446,11 +439,7 @@ func (h *Handler) doTargetMethod(ctx *app.RequestCtx, targetMethodDesc *method.M
 	switch t {
 	case method.GrpcTypeOfMethod:
 		bindAndValid := func(arg interface{}) (err error) {
-			if !h.config.DisableOptimization {
-				err = setArgsOptimized(ctx, arg, targetMethod.GetArgInfo(1))
-			} else {
-				err = setArgs(ctx, arg)
-			}
+			err = setArgsOptimized(ctx, arg, targetMethod.GetArgInfo(1))
 			if err != nil {
 				return err
 			}
@@ -617,40 +606,40 @@ var promHttpHandler = promhttp.Handler()
 func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	path := ctx.GetPath()
 
-	switch path {
-	case "/metrics":
+	if h.config.EnableMetrics && path == "/metrics" {
 		w, r := ctx.GetResponseWriterAndRequest()
 		promHttpHandler.ServeHTTP(w, r)
 		return true
-	}
-	if h.config.EnablePprof {
-		if strings.HasPrefix(path, "/debug/pprof/") {
-			handleName := strings.Replace(path, "/debug/pprof/", "", 1)
-			w, r := ctx.GetResponseWriterAndRequest()
-			switch handleName {
-			case "":
-				pprof.Index(w, r)
-				return true
-			case "profile":
-				pprof.Profile(w, r)
-				return true
-			case "cmdline":
-				pprof.Cmdline(w, r)
-				return true
-			case "trace":
-				pprof.Trace(w, r)
-				return true
-			case "symbol":
-				pprof.Symbol(w, r)
-				return true
-			}
+	} else if h.config.EnableSwagger && path == "/swagger/json" {
+		ctx.Write([]byte(h.oai.String()))
+		return true
+	} else if h.config.EnablePprof {
+		handleName := strings.Replace(path, "/debug/pprof/", "", 1)
+		w, r := ctx.GetResponseWriterAndRequest()
+		switch handleName {
+		case "":
+			pprof.Index(w, r)
+			return true
+		case "profile":
+			pprof.Profile(w, r)
+			return true
+		case "cmdline":
+			pprof.Cmdline(w, r)
+			return true
+		case "trace":
+			pprof.Trace(w, r)
+			return true
+		case "symbol":
+			pprof.Symbol(w, r)
+			return true
+		}
 
-			if runtimepprof.Lookup(handleName) != nil {
-				pprof.Handler(handleName).ServeHTTP(w, r)
-				return true
-			}
+		if runtimepprof.Lookup(handleName) != nil {
+			pprof.Handler(handleName).ServeHTTP(w, r)
+			return true
 		}
 	}
+
 	return false
 }
 

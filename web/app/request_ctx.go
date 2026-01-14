@@ -54,6 +54,7 @@ type RequestCtx struct {
 	special int8
 	// enableTrace defines whether enable trace.
 	enableTrace bool
+	networkType string
 }
 
 func (c *RequestCtx) ConvertToWebCtx() *Context {
@@ -286,4 +287,12 @@ func (c *RequestCtx) GetBody() (body []byte) {
 		body = c.Request.Body()
 	}
 	return
+}
+
+func (c *RequestCtx) SetNetWorkType(networkType string) {
+	c.networkType = networkType
+}
+
+func (c *RequestCtx) IsNetpoll() bool {
+	return c.networkType == ""
 }

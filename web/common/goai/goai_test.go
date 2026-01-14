@@ -17,12 +17,14 @@
 package goai
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
 
 	"github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/stretchr/testify/assert"
 )
@@ -591,4 +593,145 @@ func TestCommonRequestAndResponse(t *testing.T) {
 	responseDataRef := responseProperties["Data"]
 	assert.NotNil(t, responseDataRef)
 	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateUserResponse", responseDataRef.Ref)
+}
+
+func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
+	oai := New()
+	oai.Config.CommonResponse = &resp.Result{}
+	oai.Config.CommonResponseDataField = "Data"
+
+	type CreateUserRequest struct {
+		Name string `json:"name" description:"name" verf:"required"`
+	}
+
+	type CreateUserResponse struct {
+		ID int `json:"id" description:"id"`
+	}
+
+	type CreateResourceReq struct {
+		Name string `json:"name"`
+	}
+
+	type CreateResourceRes struct {
+		FlowId int64 `json:"flowId"`
+	}
+
+	assertWrapped := func(op *Operation) map[string]SchemaRef {
+		t.Helper()
+
+		assert.NotNil(t, op)
+		resp200 := op.Responses["200"]
+		assert.NotNil(t, resp200.Value)
+		content := resp200.Value.Content["application/json"]
+		assert.NotNil(t, content.Schema)
+		assert.NotNil(t, content.Schema.Value)
+		props := content.Schema.Value.Properties.Map()
+		assert.Contains(t, props, "Data")
+		return props
+	}
+
+	t.Run("func(req CreateUserRequest)", func(t *testing.T) {
+		f := func(req CreateUserRequest) {}
+		err := oai.Add(AddInput{Path: "/sig/1", Method: http.MethodPost, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/1"].Post)
+		dataRef := props["Data"]
+		assert.Equal(t, "", dataRef.Ref)
+		assert.NotNil(t, dataRef.Value)
+		assert.Equal(t, TypeObject, dataRef.Value.Type)
+	})
+
+	t.Run("func(req CreateUserRequest) (CreateUserResponse, error)", func(t *testing.T) {
+		f := func(req CreateUserRequest) (CreateUserResponse, error) { return CreateUserResponse{}, nil }
+		err := oai.Add(AddInput{Path: "/sig/2", Method: http.MethodPost, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/2"].Post)
+		dataRef := props["Data"]
+		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateUserResponse", dataRef.Ref)
+		assert.NotNil(t, oai.Components.Schemas.Get(dataRef.Ref))
+		assert.NotNil(t, oai.Paths["/sig/2"].Post.Responses["400"].Value)
+		assert.NotNil(t, oai.Paths["/sig/2"].Post.Responses["500"].Value)
+	})
+
+	t.Run("func(ctx, req) (res, err)", func(t *testing.T) {
+		f := func(ctx *app.RequestContext, req *CreateResourceReq) (res *CreateResourceRes, err error) {
+			return nil, nil
+		}
+		err := oai.Add(AddInput{Path: "/sig/3", Method: http.MethodPost, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/3"].Post)
+		dataRef := props["Data"]
+		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceRes", dataRef.Ref)
+		assert.NotNil(t, oai.Paths["/sig/3"].Post.Responses["400"].Value)
+	})
+
+	t.Run("SayHelloWorld() string", func(t *testing.T) {
+		f := func() string { return "ok" }
+		err := oai.Add(AddInput{Path: "/sig/4", Method: http.MethodGet, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/4"].Get)
+		dataRef := props["Data"]
+		assert.Equal(t, "", dataRef.Ref)
+		assert.NotNil(t, dataRef.Value)
+		assert.Equal(t, TypeString, dataRef.Value.Type)
+		_, has400 := oai.Paths["/sig/4"].Get.Responses["400"]
+		assert.False(t, has400)
+	})
+
+	t.Run("ReturnError() e.ApiError", func(t *testing.T) {
+		f := func() e.ApiError { return nil }
+		err := oai.Add(AddInput{Path: "/sig/5", Method: http.MethodGet, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/5"].Get)
+		dataRef := props["Data"]
+		assert.Equal(t, "", dataRef.Ref)
+		assert.NotNil(t, dataRef.Value)
+		assert.Equal(t, TypeObject, dataRef.Value.Type)
+		assert.NotNil(t, oai.Paths["/sig/5"].Get.Responses["400"].Value)
+		assert.NotNil(t, oai.Paths["/sig/5"].Get.Responses["500"].Value)
+	})
+
+	// RepeatRequest is a request model used by signature-variation tests.
+	type RepeatRequest struct {
+		Value string `json:"value"`
+	}
+
+	t.Run("Repeat(req *base.RepeatRequest) string", func(t *testing.T) {
+		f := func(req *RepeatRequest) string { return req.Value }
+		err := oai.Add(AddInput{Path: "/sig/6", Method: http.MethodPost, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/6"].Post)
+		dataRef := props["Data"]
+		assert.Equal(t, "", dataRef.Ref)
+		assert.NotNil(t, dataRef.Value)
+		assert.Equal(t, TypeString, dataRef.Value.Type)
+	})
+
+	t.Run("Reject primitive input", func(t *testing.T) {
+		f := func(x int) (string, error) { return "", nil }
+		err := oai.Add(AddInput{Path: "/sig/bad1", Method: http.MethodPost, Object: f})
+		assert.Error(t, err)
+	})
+
+	t.Run("Reject bad return signature", func(t *testing.T) {
+		f := func(req CreateUserRequest) (string, int) { return "", 0 }
+		err := oai.Add(AddInput{Path: "/sig/bad2", Method: http.MethodPost, Object: f})
+		assert.Error(t, err)
+	})
+
+	t.Run("Reject nil object", func(t *testing.T) {
+		err := oai.Add(AddInput{Path: "/sig/bad3", Method: http.MethodPost, Object: nil})
+		assert.Error(t, err)
+	})
+
+	jsonStr := oai.String()
+	assert.NotEmpty(t, jsonStr)
+	var m map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(jsonStr), &m))
 }

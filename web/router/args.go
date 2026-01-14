@@ -31,7 +31,6 @@ import (
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
-	"github.com/caiflower/common-tools/web/common/reflectx"
 )
 
 var (
@@ -108,13 +107,6 @@ func setArgsOptimized(ctx *app.RequestCtx, arg interface{}, argInfo *basic.ArgIn
 		structVal = structVal.Elem()
 	}
 
-	// params
-	if (!ctx.IsRestful() || method == http.MethodGet) && argInfo.HasTagName(paramStr) {
-		ctx.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
-			_ = builder.WithOption(basic.WithTag(paramByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
-		})
-	}
-
 	// paths
 	if ctx.IsRestful() && len(ctx.Paths) > 0 && argInfo.HasTagName(pathStr) {
 		for _, path := range ctx.Paths {
@@ -122,84 +114,40 @@ func setArgsOptimized(ctx *app.RequestCtx, arg interface{}, argInfo *basic.ArgIn
 		}
 	}
 
-	// header
-	if argInfo.HasTagName(headerStr) {
-		ctx.Request.Header.VisitAll(func(key, value []byte) {
-			_ = builder.WithOption(basic.WithTag(headerByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
-		})
-	}
-
-	return nil
-}
-
-func setArgs(ctx *app.RequestCtx, arg interface{}) e.ApiError {
-	var (
-		contentLen = ctx.GetContentLength()
-		method     = ctx.GetMethod()
-	)
-
-	fnObjs := make([]tools.FnObj, 0, 10)
-
-	if contentLen != 0 && (!ctx.IsRestful() || method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch) {
-		bytes := ctx.GetBody()
-		encoding := ctx.GetContentEncoding()
-		if strings.Contains(encoding, "gzip") {
-			tmpBytes, err := compress.AppendGunzipBytes(nil, bytes)
-			if err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. ungzip failed. %s", err.Error()), nil)
-			}
-
-			bytes = tmpBytes
-		} else if strings.Contains(encoding, "br") {
-			tmpBytes, err := tools.UnBrotil(bytes)
-			if err != nil {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("parse param failed. unbr failed. %s", err.Error()), nil)
-			}
-
-			bytes = tmpBytes
+	if ctx.IsNetpoll() {
+		// params
+		if (!ctx.IsRestful() || method == http.MethodGet) && argInfo.HasTagName(paramStr) {
+			ctx.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
+				_ = builder.WithOption(basic.WithTag(paramByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
+			})
 		}
 
-		if err := tools.Unmarshal(bytes, arg); err != nil {
-			err = json.Unmarshal(bytes, arg)
-			var typeError *json.UnmarshalTypeError
-			if errors.As(err, &typeError) {
-				return e.NewApiError(e.InvalidArgument, fmt.Sprintf("Malformed %s type '%s'", reflect.TypeOf(arg).Elem().Name()+"."+typeError.Field, typeError.Value), err)
-			}
-
-			return e.NewApiError(e.InvalidArgument, fmt.Sprintf("%s", err.Error()), err)
+		// header
+		if argInfo.HasTagName(headerStr) {
+			ctx.Request.Header.VisitAll(func(key, value []byte) {
+				_ = builder.WithOption(basic.WithTag(headerByte, key)).SetFieldValueUsingIndex(structVal, value, argInfo)
+			})
 		}
-	}
+	} else {
+		_, r := ctx.GetResponseWriterAndRequest()
 
-	params := ctx.GetParams()
-	if len(params) >= 1 && ctx.IsRestful() || len(params) >= 2 {
-		fnObjs = append(fnObjs, tools.FnObj{
-			Fn:   reflectx.SetQuery,
-			Data: params,
-		})
-	}
+		// params
+		if (!ctx.IsRestful() || method == http.MethodGet) && argInfo.HasTagName(paramStr) {
+			for key, values := range r.URL.Query() {
+				for _, value := range values {
+					_ = builder.WithOption(basic.WithTag(paramByte, bytesconv.S2b(key))).SetFieldValueUsingIndex(structVal, bytesconv.S2b(value), argInfo)
+				}
+			}
+		}
 
-	// set paths
-	if ctx.IsRestful() && len(ctx.Paths) > 0 {
-		fnObjs = append(fnObjs, tools.FnObj{
-			Fn:   reflectx.SetPath,
-			Data: ctx.Paths,
-		})
-	}
-
-	// set header
-	_, r := ctx.GetResponseWriterAndRequest()
-	fnObjs = append(fnObjs, tools.FnObj{
-		Fn:   reflectx.SetHeader,
-		Data: r.Header,
-	})
-
-	// set default
-	//fnObjs = append(fnObjs, tools.FnObj{
-	//	Fn: tools.SetDefaultValueIfNil,
-	//})
-
-	if err := tools.DoTagFunc(arg, fnObjs); err != nil {
-		return e.NewInternalError(err)
+		// header
+		if argInfo.HasTagName(headerStr) {
+			for key, values := range r.Header {
+				for _, value := range values {
+					_ = builder.WithOption(basic.WithTag(headerByte, []byte(key))).SetFieldValueUsingIndex(structVal, []byte(value), argInfo)
+				}
+			}
+		}
 	}
 
 	return nil

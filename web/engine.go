@@ -80,5 +80,6 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 		EnableMetrics:          options.EnableMetrics,
 		DisableOptimization:    true,
 		EnableActionController: options.EnableActionController,
+		EnableSwagger:          options.EnableSwagger,
 	}
 }

@@ -167,6 +167,7 @@ func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
 		EnableMetrics:          options.EnableMetrics,
 		DisableOptimization:    options.DisableOptimization,
 		EnableActionController: options.EnableActionController,
+		EnableSwagger:          options.EnableSwagger,
 	}
 }
 

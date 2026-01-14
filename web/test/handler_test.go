@@ -266,7 +266,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 					"email":     "1239811789@qq.com",
 					"age":       float64(25),
 					"status":    "active",
-					"requestId": requestId,
+					"requestId": "test-request-id",
 				},
 			},
 		},
@@ -458,7 +458,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 		} else {
 			if tc.expectedStatus == 200 {
 				assert.Nil(t, response.Error)
-				assert.Equal(t, response.Data, tc.expectData)
+				assert.Equal(t, tc.expectData, response.Data)
 				assert.NotNil(t, response.RequestId, "want request id not nil")
 			} else {
 				assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
