@@ -374,3 +374,7 @@ func (m *Method) GetArgInfo(argIndex int) *ArgInfo {
 func (m *Method) GetArgsInfo() []ArgInfo {
 	return m.argsInfo
 }
+
+func (m *Method) GetFunc() interface{} {
+	return m.funC
+}

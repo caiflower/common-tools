@@ -30,6 +30,7 @@ import (
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
+	"github.com/caiflower/common-tools/web/common/goai"
 	"github.com/caiflower/common-tools/web/common/reflectx"
 )
 
@@ -42,20 +43,21 @@ var (
 	headerStr  = "header"
 )
 
+var goaiInstance *goai.OpenApiV3
+
+func setGoAIInstance(o *goai.OpenApiV3) {
+	goaiInstance = o
+}
+
 func validArgs(arg interface{}) e.ApiError {
-	elem := reflect.TypeOf(arg).Elem()
-	pkgPath := elem.PkgPath()
-	if err := tools.DoTagFunc(arg, []tools.FnObj{
-		{
-			Fn: reflectx.CheckParam,
-			Data: reflectx.ValidObject{
-				PkgPath:   pkgPath,
-				FiledName: elem.Name(),
-			}},
-	}); err != nil {
-		return e.NewApiError(e.InvalidArgument, err.Error(), nil)
+	if goaiInstance != nil {
+		if err := goaiInstance.Validate(arg); err != nil {
+			return e.NewApiError(e.InvalidArgument, err.Error(), nil)
+		}
+		return nil
 	}
 
+	// fallback: no goai instance, skip validation
 	return nil
 }
 

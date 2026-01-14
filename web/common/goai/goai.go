@@ -71,6 +71,8 @@ type OpenApiV3 struct {
 	OpenAPI    string     `json:"openapi"`
 	Components Components `json:"components,omitempty"`
 	Paths      Paths      `json:"paths"`
+
+	validator *defaultValidator
 }
 
 type AddInput struct {
@@ -87,6 +89,7 @@ func New() *OpenApiV3 {
 			Schemas: createSchemas(),
 		},
 	}
+	oai.validator = newDefaultValidator()
 	oai.fillWithDefaultValue()
 	return oai
 }

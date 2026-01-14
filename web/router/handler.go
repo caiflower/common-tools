@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/goai"
+
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/limiter"
@@ -90,7 +92,9 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 		restfulPaths: make(map[string]struct{}),
 		logger:       logger,
 		metric:       metrics,
+		oai:          goai.Default(),
 	}
+	setGoAIInstance(commonHandler.oai)
 
 	commonHandler.ctxPool.New = func() interface{} {
 		return &app.RequestCtx{
@@ -141,6 +145,8 @@ type Handler struct {
 	// RequestContext pool
 	ctxPool sync.Pool
 	running bool
+	// goai
+	oai *goai.OpenApiV3
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +240,20 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 		bean.AddBean(v)
 	}
 
+	// register method argument schemas to goai
+	for _, m := range c.GetAllMethod() {
+		if m.HasArgs() {
+			arg := m.GetArgs()[0]
+			switch arg.Kind() {
+			case reflect.Ptr:
+				_ = h.oai.Add(goai.AddInput{Object: reflect.New(arg.Elem()).Elem().Interface()})
+			case reflect.Struct:
+				_ = h.oai.Add(goai.AddInput{Object: reflect.New(arg).Elem().Interface()})
+			default:
+			}
+		}
+	}
+
 	return c
 }
 
@@ -276,6 +296,12 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 	}
 
 	methodRouter.addRoute(path, []method.Method{*methodDesc})
+
+	_ = h.oai.Add(goai.AddInput{
+		Path:   path,
+		Method: m,
+		Object: targetMethod.GetFunc(),
+	})
 
 	logger.Info("Register path %v, Method: %v", path, m)
 }

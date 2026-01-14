@@ -64,7 +64,7 @@ type Schema struct {
 	AdditionalProperties *SchemaRef     `json:"additionalProperties,omitempty"`
 	Discriminator        *Discriminator `json:"discriminator,omitempty"`
 	XExtensions          XExtension     `json:"-"`
-	ValidationRules      string         `json:"-"`
+	ValidationRules      string         `json:"x-validation,omitempty"`
 }
 
 // Clone creates a deep copy of the Schema
@@ -282,10 +282,10 @@ func (oai *OpenApiV3) structToSchema(object any) (*Schema, error) {
 			return nil, err
 		}
 
-		// Set validation rules from field tag
-		verfTag := structField.Tag.Get("verf")
-		if verfTag != "" && schemaRef.Value != nil {
-			schemaRef.Value.ValidationRules = verfTag
+		verfTag := strings.TrimSpace(structField.Tag.Get("verf"))
+		validateTag := strings.TrimSpace(structField.Tag.Get("validate"))
+		if schemaRef.Value != nil {
+			schemaRef.Value.ValidationRules = mergeValidationRules(verfTag, validateTag)
 		}
 
 		schema.Properties.Set(fieldName, *schemaRef)
@@ -294,7 +294,10 @@ func (oai *OpenApiV3) structToSchema(object any) (*Schema, error) {
 	var ignoreProperties []any
 	schema.Properties.Iterator(func(key string, ref SchemaRef) bool {
 		if ref.Value != nil && ref.Value.ValidationRules != "" {
-			if strings.Contains(ref.Value.ValidationRules, validationRuleKeyForRequired) {
+			if strings.Contains(ref.Value.ValidationRules, validationRuleKeyForNilable) {
+				ref.Value.Nullable = true
+			}
+			if strings.Contains(ref.Value.ValidationRules, validationRuleKeyForRequired) && !strings.Contains(ref.Value.ValidationRules, validationRuleKeyForNilable) {
 				schema.Required = append(schema.Required, key)
 			}
 
@@ -319,11 +322,51 @@ func (oai *OpenApiV3) structToSchema(object any) (*Schema, error) {
 
 				if strings.HasPrefix(rule, validationRuleKeyForLen) {
 					lenRule := stringsSplitAndTrim(rule[len(validationRuleKeyForLen):], ",")
-					if len(lenRule) == 2 {
-						minLen := tools.ToUint64(lenRule[0])
-						ref.Value.MinLength = minLen
-						maxLen := tools.ToUint64(lenRule[1])
-						ref.Value.MaxLength = &maxLen
+					if len(lenRule) >= 1 && len(lenRule) <= 2 {
+						var (
+							minSet bool
+							maxSet bool
+							minVal uint64
+							maxVal uint64
+						)
+						if lenRule[0] != "" {
+							minSet = true
+							minVal = tools.ToUint64(lenRule[0])
+						}
+						if len(lenRule) == 2 && lenRule[1] != "" {
+							maxSet = true
+							maxVal = tools.ToUint64(lenRule[1])
+						}
+						switch ref.Value.Type {
+						case TypeString:
+							if minSet {
+								ref.Value.MinLength = minVal
+							}
+							if maxSet {
+								ref.Value.MaxLength = &maxVal
+							}
+						case TypeArray:
+							if minSet {
+								ref.Value.MinItems = minVal
+							}
+							if maxSet {
+								ref.Value.MaxItems = &maxVal
+							}
+						case TypeObject:
+							if minSet {
+								ref.Value.MinProps = minVal
+							}
+							if maxSet {
+								ref.Value.MaxProps = &maxVal
+							}
+						default:
+							if minSet {
+								ref.Value.MinLength = minVal
+							}
+							if maxSet {
+								ref.Value.MaxLength = &maxVal
+							}
+						}
 					}
 				}
 
@@ -335,6 +378,37 @@ func (oai *OpenApiV3) structToSchema(object any) (*Schema, error) {
 							max := tools.ToFloat64(betweenRule[1])
 							ref.Value.Min = &min
 							ref.Value.Max = &max
+						}
+					}
+				}
+
+				if strings.HasPrefix(rule, validationRuleKeyForItemLen) {
+					if ref.Value.Type != TypeArray || ref.Value.Items == nil || ref.Value.Items.Value == nil {
+						continue
+					}
+					itemLenRule := stringsSplitAndTrim(rule[len(validationRuleKeyForItemLen):], ",")
+					if len(itemLenRule) >= 1 && len(itemLenRule) <= 2 {
+						var (
+							minSet bool
+							maxSet bool
+							minVal uint64
+							maxVal uint64
+						)
+						if itemLenRule[0] != "" {
+							minSet = true
+							minVal = tools.ToUint64(itemLenRule[0])
+						}
+						if len(itemLenRule) == 2 && itemLenRule[1] != "" {
+							maxSet = true
+							maxVal = tools.ToUint64(itemLenRule[1])
+						}
+						if ref.Value.Items.Value.Type == TypeString {
+							if minSet {
+								ref.Value.Items.Value.MinLength = minVal
+							}
+							if maxSet {
+								ref.Value.Items.Value.MaxLength = &maxVal
+							}
 						}
 					}
 				}
@@ -353,6 +427,34 @@ func (oai *OpenApiV3) structToSchema(object any) (*Schema, error) {
 	return schema, nil
 }
 
+func mergeValidationRules(verfTag string, validateTag string) string {
+	if verfTag == "" {
+		return validateTag
+	}
+	if validateTag == "" {
+		return verfTag
+	}
+	a := stringsSplitAndTrim(verfTag, "|")
+	b := stringsSplitAndTrim(validateTag, "|")
+	distinct := make(map[string]struct{}, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, r := range a {
+		if _, ok := distinct[r]; ok {
+			continue
+		}
+		distinct[r] = struct{}{}
+		out = append(out, r)
+	}
+	for _, r := range b {
+		if _, ok := distinct[r]; ok {
+			continue
+		}
+		distinct[r] = struct{}{}
+		out = append(out, r)
+	}
+	return strings.Join(out, "|")
+}
+
 func (oai *OpenApiV3) tagMapToSchema(t reflect.Type, schema *Schema) error {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -365,8 +467,9 @@ func (oai *OpenApiV3) tagMapToSchema(t reflect.Type, schema *Schema) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		verfTag := field.Tag.Get("verf")
-		if verfTag != "" {
-			schema.ValidationRules = verfTag
+		validateTag := field.Tag.Get("validate")
+		if strings.TrimSpace(verfTag) != "" || strings.TrimSpace(validateTag) != "" {
+			schema.ValidationRules = mergeValidationRules(strings.TrimSpace(verfTag), strings.TrimSpace(validateTag))
 			break
 		}
 	}

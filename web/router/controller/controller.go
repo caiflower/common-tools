@@ -22,8 +22,7 @@ import (
 	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
-	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/web/common/reflectx"
+	"github.com/caiflower/common-tools/web/common/goai"
 	"github.com/caiflower/common-tools/web/router/method"
 	"google.golang.org/grpc"
 )
@@ -88,25 +87,13 @@ func NewController(v interface{}, controllerRootPkgName, rootPath string) (*Cont
 		for _, m := range cls.GetAllMethod() {
 			if m.HasArgs() {
 				arg := m.GetArgs()[0]
-				var argValue reflect.Value
 				switch arg.Kind() {
 				case reflect.Ptr:
-					argValue = reflect.New(arg.Elem())
+					_ = goai.Default().Add(goai.AddInput{Object: reflect.New(arg.Elem()).Elem().Interface()})
 				case reflect.Struct:
-					argValue = reflect.New(arg)
-				case reflect.Interface:
-					continue
+					_ = goai.Default().Add(goai.AddInput{Object: reflect.New(arg).Elem().Interface()})
 				default:
-					panic(fmt.Sprintf("parse param failed. not support kind %s", arg.Kind()))
-				}
-				elem := reflect.TypeOf(argValue.Interface()).Elem()
-				pkgPath := elem.PkgPath() + "." + elem.Name()
-				if err := tools.DoTagFunc(argValue.Interface(), []tools.FnObj{
-					{Fn: reflectx.BuildValid, Data: reflectx.BuildValidData{
-						PackageName: pkgPath,
-					}},
-				}); err != nil {
-					panic(err.Error())
+					continue
 				}
 			}
 		}
