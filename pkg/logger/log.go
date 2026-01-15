@@ -37,7 +37,6 @@ var (
 	workdirPrefixLen int
 	gopathPrefix     string
 	gopathPrefixLen  int
-	runMode          string
 )
 
 const (
@@ -303,37 +302,28 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 	if idx := strings.LastIndex(file, "/common-tools/"); idx != -1 {
 		relativePath = file[idx+1:]
 	} else {
-		switch runMode {
-		case "GOPATH":
-			relativePath = file[gopathPrefixLen:]
-		case "WORKSPACE":
-			relativePath = file[workdirPrefixLen:]
-		default:
-			prefixCheckOnce.Do(func() {
-				goPath := os.Getenv("GOPATH")
-				if goPath != "" {
-					gopathPrefix = goPath + "/src/"
-					gopathPrefixLen = len(gopathPrefix)
-				}
+		prefixCheckOnce.Do(func() {
+			goPath := os.Getenv("GOPATH")
+			if goPath != "" {
+				gopathPrefix = goPath + "/src/"
+				gopathPrefixLen = len(gopathPrefix)
+			}
 
-				var err error
-				workDir, err := os.Getwd()
-				if err != nil {
-					workDir = ""
-				}
-				if workDir != "" {
-					workdirPrefix = workDir + "/"
-					workdirPrefixLen = len(workdirPrefix)
-				}
-			})
-			if len(file) >= gopathPrefixLen && file[:gopathPrefixLen] == gopathPrefix {
-				relativePath = file[gopathPrefixLen:]
-				runMode = "GOPATH"
+			workDir, err := os.Getwd()
+			if err != nil {
+				workDir = ""
 			}
-			if len(file) >= workdirPrefixLen && file[:workdirPrefixLen] == workdirPrefix {
-				relativePath = file[workdirPrefixLen:]
-				runMode = "WORKSPACE"
+			if workDir != "" {
+				workdirPrefix = workDir + "/"
+				workdirPrefixLen = len(workdirPrefix)
 			}
+		})
+
+		switch {
+		case gopathPrefixLen > 0 && strings.HasPrefix(file, gopathPrefix):
+			relativePath = file[gopathPrefixLen:]
+		case workdirPrefixLen > 0 && strings.HasPrefix(file, workdirPrefix):
+			relativePath = file[workdirPrefixLen:]
 		}
 	}
 
