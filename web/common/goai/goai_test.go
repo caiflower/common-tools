@@ -17,6 +17,7 @@
 package goai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -694,6 +695,19 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.Equal(t, TypeObject, dataRef.Value.Type)
 		assert.NotNil(t, oai.Paths["/sig/5"].Get.Responses["400"].Value)
 		assert.NotNil(t, oai.Paths["/sig/5"].Get.Responses["500"].Value)
+	})
+
+	t.Run("func(context.Context, req) (res, err)", func(t *testing.T) {
+		f := func(ctx context.Context, req *CreateResourceReq) (res *CreateResourceRes, err error) {
+			return nil, nil
+		}
+		err := oai.Add(AddInput{Path: "/sig/6", Method: http.MethodPost, Object: f})
+		assert.NoError(t, err)
+
+		props := assertWrapped(oai.Paths["/sig/6"].Post)
+		dataRef := props["Data"]
+		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceRes", dataRef.Ref)
+		assert.NotNil(t, oai.Paths["/sig/6"].Post.Responses["400"].Value)
 	})
 
 	// RepeatRequest is a request model used by signature-variation tests.

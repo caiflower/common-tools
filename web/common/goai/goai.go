@@ -97,6 +97,27 @@ func New() *OpenApiV3 {
 	return oai
 }
 
+var (
+	defaultMu  sync.RWMutex
+	defaultOAI = New()
+)
+
+func Default() *OpenApiV3 {
+	defaultMu.RLock()
+	o := defaultOAI
+	defaultMu.RUnlock()
+	return o
+}
+
+func SetDefault(o *OpenApiV3) {
+	if o == nil {
+		return
+	}
+	defaultMu.Lock()
+	defaultOAI = o
+	defaultMu.Unlock()
+}
+
 // Add registers a struct schema or a handler function into OpenAPI.
 func (oai *OpenApiV3) Add(in AddInput) error {
 	oai.mu.Lock()
@@ -432,7 +453,7 @@ func (oai *OpenApiV3) parseHandlerSignature(ft reflect.Type) (*parsedHandlerSign
 
 // isContextParamType reports whether the parameter is a web context type (e.g. *app.RequestContext).
 func isContextParamType(t reflect.Type) bool {
-	if t.Kind() == reflect.Interface {
+	if t.Kind() == reflect.Interface && t.String() == "context.Context" {
 		return true
 	}
 	if t.Kind() != reflect.Pointer {
