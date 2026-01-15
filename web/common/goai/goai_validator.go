@@ -14,8 +14,9 @@ type Validator interface {
 }
 
 type defaultValidator struct {
-	mu       sync.RWMutex
-	compiled map[string]*compiledFieldValidator
+	mu          sync.RWMutex
+	compiled    map[string]*compiledFieldValidator
+	propIndexes map[string][]int
 }
 
 type compiledFieldValidator struct {
@@ -28,8 +29,88 @@ type compiledRule func(v reflect.Value, fieldName string) error
 
 func newDefaultValidator() *defaultValidator {
 	return &defaultValidator{
-		compiled: make(map[string]*compiledFieldValidator),
+		compiled:    make(map[string]*compiledFieldValidator),
+		propIndexes: make(map[string][]int),
 	}
+}
+
+func schemaHasValidation(s *Schema) bool {
+	if s == nil {
+		return false
+	}
+	if strings.TrimSpace(s.ValidationRules) != "" {
+		return true
+	}
+	switch s.Type {
+	case TypeObject:
+		props := s.Properties.Map()
+		for _, ref := range props {
+			if schemaHasValidation(ref.Value) {
+				return true
+			}
+		}
+	case TypeArray:
+		if s.Items != nil && s.Items.Value != nil {
+			return schemaHasValidation(s.Items.Value)
+		}
+	}
+	return false
+}
+
+func (dv *defaultValidator) verfFieldIndexes(cacheKey string, t reflect.Type, schema *Schema) []int {
+	dv.mu.RLock()
+	if idx, ok := dv.propIndexes[cacheKey]; ok {
+		dv.mu.RUnlock()
+		return idx
+	}
+	dv.mu.RUnlock()
+
+	var (
+		indexes  []int
+		hasVerf  bool
+		propMaps = schema.Properties.Map()
+	)
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		jsonName := field.Name
+		if tag := field.Tag.Get("json"); tag != "" {
+			s := strings.Split(strings.Trim(tag, ","), ",")
+			if len(s) > 0 && s[0] == "-" {
+				continue
+			}
+			if len(s) > 0 && s[0] != "" {
+				jsonName = s[0]
+			}
+		}
+
+		propRef, ok := propMaps[jsonName]
+		if !ok || propRef.Value == nil {
+			continue
+		}
+		if !schemaHasValidation(propRef.Value) {
+			continue
+		}
+
+		hasVerf = true
+		indexes = append(indexes, i)
+	}
+
+	if !hasVerf {
+		dv.mu.Lock()
+		dv.propIndexes[cacheKey] = nil
+		dv.mu.Unlock()
+		return nil
+	}
+
+	dv.mu.Lock()
+	dv.propIndexes[cacheKey] = indexes
+	dv.mu.Unlock()
+	return indexes
 }
 
 func (dv *defaultValidator) ValidateField(cacheKey string, displayName string, value reflect.Value, schema *Schema) error {
@@ -557,13 +638,19 @@ func (oai *OpenApiV3) validateStructWithSchema(v reflect.Value, schemaName strin
 		return nil
 	}
 	schema := schemaRef.Value
+	if schema.Type != TypeObject {
+		return nil
+	}
 
 	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
+	indexKey := schemaName
+	verfIndexes := oai.validator.verfFieldIndexes(indexKey, t, schema)
+	if len(verfIndexes) == 0 {
+		return nil
+	}
+
+	for _, i := range verfIndexes {
 		field := t.Field(i)
-		if !field.IsExported() {
-			continue
-		}
 
 		if field.Anonymous {
 			fv := derefValue(v.Field(i))

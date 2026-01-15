@@ -140,3 +140,64 @@ func TestValidate_Failures(t *testing.T) {
 		assert.Equal(t, "validateTarget.Items[1].Value is missing", err.Error())
 	})
 }
+
+type benchValidate struct {
+	A1  string  `json:"a1" verf:"required|len:1,5"`
+	A2  int     `json:"a2" verf:"between:0,10"`
+	A3  string  `json:"a3"`
+	A4  string  `json:"a4"`
+	A5  string  `json:"a5"`
+	A6  int     `json:"a6"`
+	A7  int     `json:"a7"`
+	A8  string  `json:"a8" verf:"reg:^ok$"`
+	A9  string  `json:"a9"`
+	A10 float64 `json:"a10"`
+}
+
+func newBenchValidate() benchValidate {
+	return benchValidate{
+		A1:  "ok",
+		A2:  5,
+		A3:  "x",
+		A4:  "y",
+		A5:  "z",
+		A6:  1,
+		A7:  2,
+		A8:  "ok",
+		A9:  "n",
+		A10: 3.14,
+	}
+}
+
+// 提前缓存索引、判断 verf 标签
+func BenchmarkValidate_WithCache(b *testing.B) {
+	oai := New()
+	target := newBenchValidate()
+	_ = oai.Validate(&target) // warm schema and cache
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := oai.Validate(&target); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkValidate_RecomputeIndexes(b *testing.B) {
+	oai := New()
+	target := newBenchValidate()
+	_ = oai.Validate(&target) // warm schema once
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		oai.validator.mu.Lock()
+		oai.validator.propIndexes = make(map[string][]int)
+		oai.validator.mu.Unlock()
+
+		if err := oai.Validate(&target); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
