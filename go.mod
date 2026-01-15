@@ -18,9 +18,9 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/json-iterator/go v1.1.12
-	github.com/modern-go/gls v0.0.0-20220109145502-612d0167dce5
 	github.com/modern-go/reflect2 v1.0.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
+	github.com/petermattis/goid v0.0.0-20260113132338-7c7de50cc741
 	github.com/prometheus/client_golang v1.12.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.10.0

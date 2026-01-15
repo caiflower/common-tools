@@ -20,7 +20,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/modern-go/gls"
+	"github.com/petermattis/goid"
 )
 
 const (
@@ -33,7 +33,7 @@ const shardCount = 128
 var localMaps [shardCount]sync.Map
 
 func getGoID() int64 {
-	return gls.GoID()
+	return goid.Get()
 }
 
 func getMapByGoID(goID int64) *sync.Map {
