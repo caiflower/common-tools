@@ -181,11 +181,18 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 		group := controller.NewRestFul().Group("/v1/products")
 
 		restfulController := group.
-			Path("/:productID").
+			Path("/{productID}").
 			Method("GET").
 			RegisterMethod(productController.GetMethod("GetProduct"))
 
 		handler.Register(restfulController)
+
+		restfulControllerx := group.
+			Path("/sub/:productID").
+			Method("GET").
+			RegisterMethod(productController.GetMethod("GetProduct"))
+
+		handler.Register(restfulControllerx)
 
 		restfulController2 := group.
 			Method("POST").
@@ -501,6 +508,22 @@ func TestRESTfulRouting(t *testing.T) {
 		{
 			name:   "GET product by ID",
 			path:   "/v1/products/123?productName=testProductName",
+			method: "GET",
+			expectData: map[string]interface{}{
+				"success": true,
+				"message": "Product retrieved successfully",
+				"data": map[string]interface{}{
+					"product_id":   float64(123),
+					"product_name": "testProductName",
+					"price":        float64(99.99),
+					"category":     "Electronics",
+				},
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:   "GET product by ID",
+			path:   "/v1/products/sub/123?productName=testProductName",
 			method: "GET",
 			expectData: map[string]interface{}{
 				"success": true,

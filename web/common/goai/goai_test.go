@@ -186,7 +186,7 @@ func TestAddAPI(t *testing.T) {
 
 func TestOpenApiV3_Add(t *testing.T) {
 	type CommonReq struct {
-		AppId      int64  `json:"appId" verf:"required" path:"appId" description:"应用Id"`
+		AppId      int64  `verf:"required" path:"appId" description:"应用Id"`
 		ResourceId string `json:"resourceId" query:"resourceId" description:"资源Id"`
 	}
 	type SetSpecInfo struct {

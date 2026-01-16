@@ -988,10 +988,22 @@ func (oai *OpenApiV3) collectParametersRecursive(t reflect.Type, operation *Oper
 			continue
 		}
 
+		pathTag := field.Tag.Get("path")
+		queryTag := field.Tag.Get("query")
+		headerTag := field.Tag.Get("header")
 		paramName := field.Name
 		jsonTag := field.Tag.Get("json")
 		if jsonTag != "" {
 			paramName = strings.Split(strings.Trim(jsonTag, ","), ",")[0]
+		}
+		if headerTag != "" {
+			paramName = headerTag
+		}
+		if queryTag != "" {
+			paramName = queryTag
+		}
+		if pathTag != "" {
+			paramName = pathTag
 		}
 
 		parameter := Parameter{
@@ -1002,12 +1014,12 @@ func (oai *OpenApiV3) collectParametersRecursive(t reflect.Type, operation *Oper
 			XExtensions: make(XExtension),
 		}
 
-		if field.Tag.Get("header") != "" {
+		if headerTag != "" {
 			parameter.In = ParameterInHeader
-		} else if field.Tag.Get("path") != "" {
+		} else if pathTag != "" {
 			parameter.In = ParameterInPath
 			parameter.Required = true
-		} else if field.Tag.Get("query") != "" || field.Tag.Get("in") == "query" {
+		} else if queryTag != "" || field.Tag.Get("in") == "query" {
 			parameter.In = ParameterInQuery
 		} else {
 			continue

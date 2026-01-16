@@ -272,7 +272,8 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 		panic("Register restfulApi failed. Method cannot be empty.")
 	}
 
-	path := fmt.Sprintf("%s%s", ctl.GetGroup(), originPath)
+	rawPath := fmt.Sprintf("%s%s", ctl.GetGroup(), originPath)
+	path := normalizeRestfulPath(rawPath)
 	if path == "" {
 		panic("Register restfulApi failed. Path cannot be empty.")
 	}
@@ -280,6 +281,7 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 	if _, ok := h.restfulPaths[path]; ok {
 		panic(fmt.Sprintf("Register restfulApi failed. RestfulPath method[%s] path[%s] already exist. ", m, originPath))
 	}
+	h.restfulPaths[path] = struct{}{}
 
 	targetMethod := ctl.GetTargetMethod()
 	if targetMethod == nil {
@@ -300,8 +302,9 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 
 	methodRouter.addRoute(path, []method.Method{*methodDesc})
 
+	swaggerPath := toSwaggerPath(rawPath)
 	_ = h.oai.Add(goai.AddInput{
-		Path:   path,
+		Path:   swaggerPath,
 		Method: m,
 		Object: targetMethod.GetFunc(),
 	})
