@@ -27,8 +27,6 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/e"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
-
-	"github.com/caiflower/common-tools/pkg/syncx"
 )
 
 var (
@@ -102,7 +100,7 @@ func Fatal(text string, v ...interface{}) {
 }
 
 type LoggerHandler struct {
-	lock        sync.Locker
+	lock        sync.RWMutex
 	level       int
 	dataQueue   chan data
 	logAppender Appender
@@ -205,7 +203,7 @@ func newLoggerHandler(config *Config) *LoggerHandler {
 
 	logger := &LoggerHandler{
 		level:       getLevel(config.Level),
-		lock:        syncx.NewSpinLock(),
+		lock:        sync.RWMutex{},
 		dataQueue:   make(chan data, config.QueueLength),
 		logAppender: newLogAppender(config.TimeFormat, config.Path, config.FileName, config.RollingPolicy, config.MaxTime, config.MaxSize, config.BackupMaxDisk, config.BackupMaxCount, enableTrace, compress, enableCleanBackup, enableColor),
 		closeChan:   make(chan struct{}, config.AppenderNum),
@@ -327,6 +325,8 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 		}
 	}
 
+	lh.lock.RLock()
+	defer lh.lock.RUnlock()
 	if lh.running {
 		lh.dataQueue <- data{
 			timestamp: time.Now(),
