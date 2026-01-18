@@ -30,6 +30,7 @@ import (
 	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/caiflower/common-tools/web/router/controller"
 	"github.com/caiflower/common-tools/web/router/param"
@@ -445,6 +446,8 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			handler.ServeHTTP(w, req)
 			code = w.Code
 			res = w.Body.Bytes()
+			assert.Equal(t, "application/json; charset=UTF-8", w.Header()[consts.HeaderContentType][0])
+			assert.Equal(t, "gzip, br", w.Header()[consts.HeaderAcceptEncoding][0])
 		} else {
 			ctx := &app.RequestCtx{}
 			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
@@ -453,6 +456,8 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			handler.Serve(ctx)
 			code = ctx.Response.StatusCode()
 			res = ctx.Response.Body()
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, string(ctx.Response.Header.ContentType()))
+			//assert.Equal(t, "gzip, br", string(ctx.Response.Header.Get(consts.HeaderAcceptEncoding)))
 		}
 
 		assert.Equal(t, 200, code, "want 200 status code")
@@ -466,13 +471,13 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			if tc.expectedStatus == 200 {
 				assert.Nil(t, response.Error)
 				assert.Equal(t, tc.expectData, response.Data)
-				assert.NotNil(t, response.RequestId, "want request id not nil")
+				assert.NotNil(t, response.RequestID, "want request id not nil")
 			} else {
 				assert.Equal(t, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
 				assert.Equal(t, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 			}
 		}
-		assert.Equal(t, response.RequestId, requestId, "request id should be equal")
+		assert.Equal(t, response.RequestID, requestId, "request id should be equal")
 	}
 
 	for _, tc := range testCases {
@@ -626,6 +631,8 @@ func TestRESTfulRouting(t *testing.T) {
 			handler.ServeHTTP(w, req)
 			code = w.Code
 			res = w.Body.Bytes()
+			assert.Equal(t, "application/json; charset=UTF-8", w.Header()[consts.HeaderContentType][0])
+			assert.Equal(t, "gzip, br", w.Header()[consts.HeaderAcceptEncoding][0])
 		} else {
 			ctx := &app.RequestCtx{}
 			ctx.Request = *protocol.NewRequest(tc.method, tc.path, bytes.NewReader(requestBody))
@@ -635,6 +642,8 @@ func TestRESTfulRouting(t *testing.T) {
 			handler.Serve(ctx)
 			code = ctx.Response.StatusCode()
 			res = ctx.Response.Body()
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, string(ctx.Response.Header.ContentType()))
+			//assert.Equal(t, "gzip, br", string(ctx.Response.Header.Get(consts.HeaderAcceptEncoding)))
 		}
 
 		var response resp.Result
@@ -809,13 +818,13 @@ func BenchmarkHandler(b *testing.B) {
 			if tc.expectedStatus == 200 {
 				assert.Nil(b, response.Error)
 				assert.Equal(b, response.Data, tc.expectData)
-				assert.NotNil(b, response.RequestId, "want request id not nil")
+				assert.NotNil(b, response.RequestID, "want request id not nil")
 			} else {
 				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
 				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 			}
 		}
-		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+		assert.Equal(b, response.RequestID, requestId, "request id should be equal")
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -894,13 +903,13 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 			if tc.expectedStatus == 200 {
 				assert.Nil(b, response.Error)
 				assert.Equal(b, response.Data, tc.expectData)
-				assert.NotNil(b, response.RequestId, "want request id not nil")
+				assert.NotNil(b, response.RequestID, "want request id not nil")
 			} else {
 				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
 				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 			}
 		}
-		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+		assert.Equal(b, response.RequestID, requestId, "request id should be equal")
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -963,13 +972,13 @@ func BenchmarkGrpcMod(b *testing.B) {
 			if tc.expectedStatus == 200 {
 				assert.Nil(b, response.Error)
 				assert.Equal(b, response.Data, tc.expectData)
-				assert.NotNil(b, response.RequestId, "want request id not nil")
+				assert.NotNil(b, response.RequestID, "want request id not nil")
 			} else {
 				assert.Equal(b, tc.expectedStatus, response.Error.GetCode(), "code should be equal")
 				assert.Equal(b, tc.expectErrMessage, response.Error.GetMessage(), "message should be equal")
 			}
 		}
-		assert.Equal(b, response.RequestId, requestId, "request id should be equal")
+		assert.Equal(b, response.RequestID, requestId, "request id should be equal")
 	}
 
 	for i := 0; i < b.N; i++ {

@@ -2,8 +2,6 @@ module github.com/caiflower/common-tools
 
 go 1.18
 
-replace github.com/json-iterator/go v1.1.12 => github.com/caiflower/json-iterator v1.1.12
-
 require (
 	github.com/IBM/sarama v1.42.2
 	github.com/andybalholm/brotli v1.1.1

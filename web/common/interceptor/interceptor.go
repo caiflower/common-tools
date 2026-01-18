@@ -54,7 +54,7 @@ func (itemList ItemSort) DoInterceptor(ctx *app.Context, doTargetMethod func() e
 			return apiErr
 		}
 
-		if ctx.IsFinish() {
+		if ctx.IsAbort() {
 			return nil
 		}
 	}

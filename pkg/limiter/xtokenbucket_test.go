@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package limiter
+package limiter
 
 import (
 	"fmt"

@@ -34,7 +34,12 @@ type Core interface {
 	Register(ctl *controller.RestfulController)
 
 	AddInterceptor(i interceptor.Interceptor, order int)
-	SetBeforeDispatchCallBack(callbackFunc router.BeforeDispatchCallbackFunc)
+
+	SetBeforeDispatchCallBack(callbackFunc router.CallbackFunc)
+
+	// SetAfterDispatchCallBack after dispatch call back
+	// use for set response format, only netpoll mod support
+	SetAfterDispatchCallBack(callbackFunc router.CallbackFunc)
 
 	AddProtocol(protocol string, core protocol.Server)
 }

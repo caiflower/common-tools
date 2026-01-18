@@ -22,10 +22,13 @@ import (
 	"net/http"
 
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
+	"github.com/caiflower/common-tools/web/app/server/render"
 	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytestr"
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/caiflower/common-tools/web/protocol"
+	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/caiflower/common-tools/web/router/param"
 )
 
@@ -41,8 +44,8 @@ type RequestCtx struct {
 	Request  protocol.Request
 	conn     network.Conn
 
-	isFinish bool
-	data     interface{}
+	data interface{}
+	err  e.ApiError
 
 	method  []byte
 	action  string
@@ -57,242 +60,284 @@ type RequestCtx struct {
 	networkType string
 }
 
-func (c *RequestCtx) ConvertToWebCtx() *Context {
-	return &Context{RequestContext: c}
+func (ctx *RequestCtx) ConvertToWebCtx() *Context {
+	return &Context{RequestContext: ctx}
 }
 
-func (c *RequestCtx) SetHeader(key, value string) {
-	if c.writer != nil {
-		c.writer.Header().Set(key, value)
+func (ctx *RequestCtx) SetHeader(key, value string) {
+	if ctx.IsNetpoll() {
+		ctx.Response.Header.Set(key, value)
 		return
 	}
 
-	c.Response.Header.Set(key, value)
+	ctx.writer.Header().Set(key, value)
 }
 
-func (c *RequestCtx) WriteHeader(statusCode int) {
-	if c.writer != nil {
-		c.writer.WriteHeader(statusCode)
-		return
+func (ctx *RequestCtx) Write(bytes []byte) (int, error) {
+	if ctx.IsNetpoll() {
+		return ctx.Response.BodyWriter().Write(bytes)
+
 	}
 
-	c.Response.Header.SetStatusCode(statusCode)
+	return ctx.writer.Write(bytes)
 }
 
-func (c *RequestCtx) Write(bytes []byte) (int, error) {
-	if c.writer != nil {
-		return c.writer.Write(bytes)
+func (ctx *RequestCtx) SetData(v interface{}) {
+	ctx.data = v
+}
+
+func (ctx *RequestCtx) GetData() interface{} {
+	return ctx.data
+}
+
+func (ctx *RequestCtx) SetPath(path []byte) {
+	ctx.path = path
+}
+
+func (ctx *RequestCtx) GetPath() string {
+	return bytesconv.B2s(ctx.path)
+}
+
+func (ctx *RequestCtx) GetParams() map[string][]string {
+	if ctx.IsNetpoll() {
+		var params = make(map[string][]string)
+		ctx.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
+			params[bytesconv.B2s(key)] = append(params[bytesconv.B2s(key)], bytesconv.B2s(value))
+		})
+
+		return params
 	}
 
-	return c.Response.BodyWriter().Write(bytes)
+	return ctx.httpRequest.URL.Query()
 }
 
-func (c *RequestCtx) SetData(v interface{}) {
-	c.isFinish = true
-	c.data = v
-}
-
-func (c *RequestCtx) GetData() interface{} {
-	return c.data
-}
-
-func (c *RequestCtx) IsFinish() bool {
-	return c.isFinish
-}
-
-func (c *RequestCtx) SetPath(path []byte) {
-	c.path = path
-}
-
-func (c *RequestCtx) GetPath() string {
-	return bytesconv.B2s(c.path)
-}
-
-func (c *RequestCtx) GetParams() map[string][]string {
-	if c.httpRequest != nil {
-		return c.httpRequest.URL.Query()
-	}
-
-	var params = make(map[string][]string)
-	c.Request.URI().QueryArgs().VisitAll(func(key, value []byte) {
-		params[bytesconv.B2s(key)] = append(params[bytesconv.B2s(key)], bytesconv.B2s(value))
-	})
-
-	return params
-}
-
-func (c *RequestCtx) ComputeAction() {
-	if c.httpRequest != nil {
-		c.action = c.httpRequest.URL.Query().Get("Action")
+func (ctx *RequestCtx) ComputeAction() {
+	if !ctx.IsNetpoll() {
+		ctx.action = ctx.httpRequest.URL.Query().Get("Action")
 	} else {
-		c.action = bytesconv.B2s(c.Request.URI().QueryArgs().Peek("Action"))
+		ctx.action = bytesconv.B2s(ctx.Request.URI().QueryArgs().Peek("Action"))
 	}
 
-	c.restful = c.action == ""
+	ctx.restful = ctx.action == ""
 }
 
-func (c *RequestCtx) SetAction(action string) {
-	c.action = action
+func (ctx *RequestCtx) SetAction(action string) {
+	ctx.action = action
 }
 
-func (c *RequestCtx) GetAction() string {
-	return c.action
+func (ctx *RequestCtx) GetAction() string {
+	return ctx.action
 }
 
-func (c *RequestCtx) SetMethod(method []byte) {
-	c.method = method
+func (ctx *RequestCtx) SetMethod(method []byte) {
+	ctx.method = method
 }
 
-func (c *RequestCtx) GetMethod() string {
-	return bytesconv.B2s(c.method)
+func (ctx *RequestCtx) GetMethod() string {
+	return bytesconv.B2s(ctx.method)
 }
 
-func (c *RequestCtx) Method() []byte {
-	return c.method
+func (ctx *RequestCtx) Method() []byte {
+	return ctx.method
 }
 
-func (c *RequestCtx) SetHttpWriterAndRequest(w http.ResponseWriter, r *http.Request) {
-	c.httpRequest = r
-	c.writer = w
+func (ctx *RequestCtx) SetHttpWriterAndRequest(w http.ResponseWriter, r *http.Request) {
+	ctx.httpRequest = r
+	ctx.writer = w
 }
 
-func (c *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
-	if c.writer != nil {
-		return c.writer, c.httpRequest
+func (ctx *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http.Request) {
+	if ctx.writer != nil {
+		return ctx.writer, ctx.httpRequest
 	}
 
-	request, _ := adaptor.GetCompatRequest(&c.Request)
-	response := adaptor.GetCompatResponseWriter(&c.Response)
+	request, _ := adaptor.GetCompatRequest(&ctx.Request)
+	response := adaptor.GetCompatResponseWriter(&ctx.Response)
 	return response, request
 }
 
-func (c *RequestCtx) UpgradeWebsocket() {
-	c.special = 1
+func (ctx *RequestCtx) UpgradeWebsocket() {
+	ctx.special = 1
 }
 
-func (c *RequestCtx) IsAbort() bool {
-	return c.special != 0
+func (ctx *RequestCtx) IsAbort() bool {
+	return ctx.special != 0
 }
 
-func (c *RequestCtx) IsRestful() bool {
-	return c.restful
+func (ctx *RequestCtx) IsRestful() bool {
+	return ctx.restful
 }
 
-func (c *RequestCtx) Reset() {
-	c.special = 0
-	c.Paths = c.Paths[:0]
-	c.isFinish = false
-	c.writer = nil
-	c.httpRequest = nil
-	c.Response.Reset()
-	c.Request.Reset()
-	c.enableTrace = false
+func (ctx *RequestCtx) Reset() {
+	ctx.special = 0
+	ctx.Paths = ctx.Paths[:0]
+	ctx.writer = nil
+	ctx.err = nil
+	ctx.data = nil
+	ctx.httpRequest = nil
+	ctx.Response.Reset()
+	ctx.Request.Reset()
+	ctx.enableTrace = false
 }
 
-func (c *RequestCtx) GetConn() network.Conn {
-	return c.conn
+func (ctx *RequestCtx) GetConn() network.Conn {
+	return ctx.conn
 }
 
-func (c *RequestCtx) SetConn(conn network.Conn) *RequestCtx {
-	c.conn = conn
-	return c
+func (ctx *RequestCtx) SetConn(conn network.Conn) *RequestCtx {
+	ctx.conn = conn
+	return ctx
 }
 
-func (c *RequestCtx) SetContext(ctx context.Context) *RequestCtx {
-	c.Context = ctx
-	return c
+func (ctx *RequestCtx) SetContext(c context.Context) *RequestCtx {
+	ctx.Context = ctx
+	return ctx
 }
 
-func (c *RequestCtx) GetContext() context.Context {
-	return c.Context
+func (ctx *RequestCtx) GetContext() context.Context {
+	return ctx.Context
 }
 
-func (c *RequestCtx) GetReader() network.Reader {
-	return c.conn
+func (ctx *RequestCtx) GetReader() network.Reader {
+	return ctx.conn
 }
 
-func (c *RequestCtx) GetWriter() network.Writer {
-	return c.conn
+func (ctx *RequestCtx) GetWriter() network.Writer {
+	return ctx.conn
 }
 
-func (c *RequestCtx) GetContentEncoding() string {
-	if c.httpRequest != nil {
-		return c.Request.Header.Get("Content-Encoding")
+func (ctx *RequestCtx) GetContentEncoding() string {
+	if ctx.IsNetpoll() {
+		return bytesconv.B2s(ctx.Request.Header.PeekContentEncoding())
 	}
 
-	return bytesconv.B2s(c.Request.Header.PeekContentEncoding())
+	return ctx.Request.Header.Get("Content-Encoding")
 }
 
-func (c *RequestCtx) GetAcceptEncoding() string {
-	if c.httpRequest != nil {
-		return c.httpRequest.Header.Get("Accept-Encoding")
+func (ctx *RequestCtx) GetAcceptEncoding() string {
+	if ctx.IsNetpoll() {
+		return ctx.Request.Header.Get("Accept-Encoding")
 	}
 
-	return c.Request.Header.Get("Accept-Encoding")
+	return ctx.httpRequest.Header.Get("Accept-Encoding")
 }
 
-func (c *RequestCtx) GetContentLength() int64 {
-	if c.httpRequest != nil {
-		return c.httpRequest.ContentLength
+func (ctx *RequestCtx) GetContentLength() int64 {
+	if ctx.IsNetpoll() {
+		return int64(ctx.Request.Header.ContentLength())
 	}
 
-	return int64(c.Request.Header.ContentLength())
+	return ctx.httpRequest.ContentLength
 }
 
-func (c *RequestCtx) HeaderGet(key string) string {
-	if c.httpRequest != nil {
-		return c.httpRequest.Header.Get(key)
+func (ctx *RequestCtx) HeaderGet(key string) string {
+	if ctx.IsNetpoll() {
+		return ctx.Request.Header.Get(key)
 	}
-	return c.Request.Header.Get(key)
+
+	return ctx.httpRequest.Header.Get(key)
 }
 
-func (c *RequestCtx) URI() *protocol.URI {
-	return c.Request.URI()
+func (ctx *RequestCtx) URI() *protocol.URI {
+	return ctx.Request.URI()
 }
 
 // Host returns requested host.
 //
 // The host is valid until returning from RequestHandler.
-func (c *RequestCtx) Host() []byte {
-	if c.httpRequest != nil {
-		return bytesconv.S2b(c.httpRequest.Host)
+func (ctx *RequestCtx) Host() []byte {
+	if ctx.IsNetpoll() {
+		return ctx.URI().Host()
 	}
-	return c.URI().Host()
+	return bytesconv.S2b(ctx.httpRequest.Host)
 }
 
-func (c *RequestCtx) IsEnableTrace() bool {
+func (ctx *RequestCtx) IsEnableTrace() bool {
 	return false
 }
 
-func (c *RequestCtx) AbortWithMsg(msg string, statusCode int) {
-	c.Response.Reset()
-	c.WriteHeader(statusCode)
-	c.Response.Header.SetContentTypeBytes(bytestr.DefaultContentType)
-	c.Response.SetBodyString(msg)
-	c.Abort()
+func (ctx *RequestCtx) AbortWithMsg(msg string, statusCode int) {
+	ctx.Response.Reset()
+	ctx.SetStatusCode(statusCode)
+	ctx.Response.Header.SetContentTypeBytes(bytestr.DefaultContentType)
+	ctx.Response.SetBodyString(msg)
+	ctx.Abort()
 }
 
-func (c *RequestCtx) Abort() {
-	c.special = -1
+func (ctx *RequestCtx) Abort() {
+	ctx.special = -1
 }
 
-func (c *RequestCtx) SetEnableTrace(b bool) {
-	c.enableTrace = b
+func (ctx *RequestCtx) SetEnableTrace(b bool) {
+	ctx.enableTrace = b
 }
 
-func (c *RequestCtx) GetBody() (body []byte) {
-	if c.httpRequest != nil {
-		body, _ = io.ReadAll(c.httpRequest.Body)
-	} else {
-		body = c.Request.Body()
+func (ctx *RequestCtx) GetBody() (body []byte) {
+	if ctx.IsNetpoll() {
+		body = ctx.Request.Body()
+		return
 	}
+
+	body, _ = io.ReadAll(ctx.httpRequest.Body)
 	return
 }
 
-func (c *RequestCtx) SetNetWorkType(networkType string) {
-	c.networkType = networkType
+func (ctx *RequestCtx) SetNetWorkType(networkType string) {
+	ctx.networkType = networkType
 }
 
-func (c *RequestCtx) IsNetpoll() bool {
-	return c.networkType == ""
+func (ctx *RequestCtx) IsNetpoll() bool {
+	return ctx.networkType == ""
+}
+
+func (ctx *RequestContext) SetError(err e.ApiError) {
+	ctx.err = err
+}
+
+func (ctx *RequestCtx) GetError() e.ApiError {
+	return ctx.err
+}
+
+// bodyAllowedForStatus is a copy of http.bodyAllowedForStatus non-exported function.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == consts.StatusNoContent:
+		return false
+	case status == consts.StatusNotModified:
+		return false
+	}
+	return true
+}
+
+// SetStatusCode sets response status code.
+func (ctx *RequestContext) SetStatusCode(statusCode int) {
+	if ctx.IsNetpoll() {
+		ctx.Response.SetStatusCode(statusCode)
+		return
+	}
+
+	ctx.writer.WriteHeader(statusCode)
+}
+
+// Render writes the response headers and calls render.Render to render data.
+func (ctx *RequestContext) Render(code int, r render.Render) {
+	ctx.SetStatusCode(code)
+
+	if !bodyAllowedForStatus(code) {
+		r.WriteContentType(&ctx.Response)
+		return
+	}
+
+	if err := r.Render(&ctx.Response); err != nil {
+		panic(err)
+	}
+}
+
+// JSON serializes the given struct as JSON into the response body.
+//
+// It also sets the Content-Type as "application/json".
+func (ctx *RequestContext) JSON(code int, obj interface{}) {
+	ctx.Render(code, render.JSONRender{Data: obj})
 }

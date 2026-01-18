@@ -19,7 +19,13 @@ package resp
 import "github.com/caiflower/common-tools/web/common/e"
 
 type Result struct {
-	RequestId string
+	RequestID string      `json:"requestID"`
+	Data      interface{} `json:"data,omitempty"`
+	Error     *e.Error    `json:"error,omitempty"`
+}
+
+type ResultV1 struct {
+	RequestID string
 	Data      interface{} `json:",omitempty"`
 	Error     *e.Error    `json:",omitempty"`
 }

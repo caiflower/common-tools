@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/web/common/goai"
+	"github.com/caiflower/common-tools/web/protocol/consts"
 
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -57,11 +58,12 @@ const (
 )
 
 var (
-	assignableApiErrorElem   = reflect.TypeOf(new(e.ApiError)).Elem()
-	assignableErrorElem      = reflect.TypeOf(new(error)).Elem()
-	assignableWebContextElem = reflect.TypeOf(new(app.Context)).Elem()
-	assignableWebContext     = reflect.TypeOf(new(app.Context))
+	assignableApiErrorElem = reflect.TypeOf(new(e.ApiError)).Elem()
+	assignableErrorElem    = reflect.TypeOf(new(error)).Elem()
 )
+
+// CallbackFunc 在进行分发前进行回调的函数, 返回true结束
+type CallbackFunc func(ctx *app.RequestContext) bool
 
 type HandlerCfg struct {
 	Name                   string        `yaml:"name" default:"default"`
@@ -81,19 +83,17 @@ type LimiterConfig struct {
 	Qos    int  `yaml:"qos" default:"1000"`
 }
 
-// BeforeDispatchCallbackFunc 在进行分发前进行回调的函数, 返回true结束
-type BeforeDispatchCallbackFunc func(w http.ResponseWriter, r *http.Request) bool
-
 var metrics = metric.NewHttpMetric()
 
 func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 	commonHandler := &Handler{
-		config:       &config,
-		controllers:  make(map[string]*controller.Controller),
-		restfulPaths: make(map[string]struct{}),
-		logger:       logger,
-		metric:       metrics,
-		oai:          goai.Default(),
+		config:                    &config,
+		controllers:               make(map[string]*controller.Controller),
+		restfulPaths:              make(map[string]struct{}),
+		logger:                    logger,
+		metric:                    metrics,
+		oai:                       goai.Default(),
+		afterDispatchCallbackFunc: resp.DefaultResultCallback,
 	}
 	setGoAIInstance(commonHandler.oai)
 
@@ -112,23 +112,16 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 		}
 
 		limiterBucket := getLimiterCallBack(config.WebLimiter.Qos)
-		commonHandler.beforeDispatchCallbackFunc = func(w http.ResponseWriter, r *http.Request) bool {
+		commonHandler.qosCallback = func(ctx *app.RequestContext) bool {
 			if limiterBucket.TakeTokenNonBlocking() {
 				return false
 			}
 
-			res := resp.Result{
-				RequestId: tools.UUID(),
-				Error:     e.NewApiError(e.TooManyRequests, "TooManyRequests", nil),
-			}
-
-			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-			w.WriteHeader(res.Error.GetCode())
-			_, _ = w.Write([]byte(tools.ToJson(res)))
+			ctx.SetError(e.NewApiError(e.TooManyRequests, "Too Many Requests", nil))
 			return true
-
 		}
 	}
+
 	return commonHandler
 }
 
@@ -142,8 +135,11 @@ type Handler struct {
 	logger logger.ILog
 	metric *metric.HttpMetric
 
-	beforeDispatchCallbackFunc BeforeDispatchCallbackFunc
+	// qos call back
+	qosCallback                CallbackFunc
+	beforeDispatchCallbackFunc CallbackFunc
 	interceptors               interceptor.ItemSort
+	afterDispatchCallbackFunc  CallbackFunc
 
 	// RequestContext pool
 	ctxPool sync.Pool
@@ -156,7 +152,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer golocalv1.Clean()
 
 	ctx := h.getRequestContext()
-	ctx = InitCtx(ctx, w, r)
+	ctx = initCtx(ctx, w, r)
 	defer h.putRequestContext(ctx)
 
 	if h.specialRequest(ctx) {
@@ -169,6 +165,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// dispatch
 	h.Dispatch(ctx)
+
+	if err := ctx.GetError(); err != nil {
+		h.writeError(ctx, err)
+	} else {
+		h.writeResponse(ctx)
+	}
 }
 
 func (h *Handler) Serve(ctx *app.RequestCtx) {
@@ -187,6 +189,8 @@ func (h *Handler) Serve(ctx *app.RequestCtx) {
 
 	// dispatch
 	h.Dispatch(ctx)
+
+	h.afterDispatchCallbackFunc(ctx)
 }
 
 func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
@@ -202,15 +206,23 @@ func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
 	}
 	golocalv1.PutContext(ctx.GetContext())
 
+	if h.qosCallback != nil {
+		return h.qosCallback(ctx)
+	}
+
 	if h.beforeDispatchCallbackFunc != nil {
-		return h.beforeDispatchCallbackFunc(ctx.GetResponseWriterAndRequest())
+		return h.beforeDispatchCallbackFunc(ctx)
 	}
 
 	return false
 }
 
-func (h *Handler) SetBeforeDispatchCallBack(callbackFunc BeforeDispatchCallbackFunc) {
+func (h *Handler) SetBeforeDispatchCallBack(callbackFunc CallbackFunc) {
 	h.beforeDispatchCallbackFunc = callbackFunc
+}
+
+func (h *Handler) SetAfterDispatchCallBack(callbackFunc CallbackFunc) {
+	h.afterDispatchCallbackFunc = callbackFunc
 }
 
 func (h *Handler) AddInterceptor(i interceptor.Interceptor, order int) {
@@ -313,12 +325,10 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 }
 
 func (h *Handler) getRequestContext() *app.RequestCtx {
-	ctx := h.ctxPool.Get().(*app.RequestCtx)
-
-	return ctx
+	return h.ctxPool.Get().(*app.RequestCtx)
 }
 
-func InitCtx(ctx *app.RequestCtx, w http.ResponseWriter, r *http.Request) *app.RequestCtx {
+func initCtx(ctx *app.RequestCtx, w http.ResponseWriter, r *http.Request) *app.RequestCtx {
 	ctx.SetMethod(bytesconv.S2b(r.Method))
 	ctx.SetPath(bytesconv.S2b(r.URL.Path))
 	ctx.SetHttpWriterAndRequest(w, r)
@@ -342,7 +352,7 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 
 	// method
 	if m, find = h.getTargetMethod(ctx); !find {
-		h.writeError(ctx, e.NewApiError(e.NotFound, "no such api.", nil))
+		ctx.SetError(e.NewApiError(e.NotFound, "no such api.", nil))
 		return
 	}
 
@@ -372,7 +382,7 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 			inputArg = v.Interface()
 			inputValue[len(inputValue)-1] = v.Elem()
 		default:
-			h.writeError(ctx, e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
+			ctx.SetError(e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
 			return
 		}
 
@@ -381,13 +391,13 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 			if err.IsInternalError() {
 				h.logger.Warn("setArgsOptimized failed. Error: %v", err)
 			}
-			h.writeError(ctx, err)
+			ctx.SetError(err)
 			return
 		}
 
 		// valid args
 		if err := validArgs(inputArg); err != nil {
-			h.writeError(ctx, err)
+			ctx.SetError(err)
 			return
 		}
 	}
@@ -401,12 +411,9 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 
 	// aop
 	if err := h.interceptors.DoInterceptor(webContext, targetMethod); err != nil {
-		h.writeError(ctx, err)
+		ctx.SetError(err)
 		return
 	}
-
-	// set response
-	h.writeResponse(ctx)
 }
 
 func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
@@ -495,13 +502,14 @@ func (h *Handler) doTargetMethod(ctx *app.RequestCtx, targetMethodDesc *method.M
 }
 
 func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
-	if ctx.IsAbort() {
+	if ctx.IsAbort() || err == nil {
 		return
 	}
 
 	if err.IsInternalError() {
 		h.logger.Error("handle request failed. %s", err.Error())
 	}
+
 	// metric
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
@@ -509,22 +517,19 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 		h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
 	}
 
-	ctx.SetHeader("Content-Type", "application/json; charset=UTF-8")
-	ctx.SetHeader("Accept-Encoding", "gzip, br")
+	ctx.SetHeader(consts.HeaderContentType, "application/json; charset=UTF-8")
+	ctx.SetHeader(consts.HeaderAcceptEncoding, "gzip, br")
 
 	res := resp.Result{
-		RequestId: golocalv1.GetTraceID(),
+		RequestID: golocalv1.GetTraceID(),
 		Error:     &e.Error{Code: err.GetCode(), Message: err.GetMessage(), Type: err.GetType(), Cause: err.GetCause()},
-	}
-
-	restful := ctx.IsRestful()
-	if restful && res.Error != nil {
-		ctx.WriteHeader(res.Error.GetCode())
 	}
 
 	bytes, _ := tools.Marshal(res)
 	str := ctx.GetAcceptEncoding()
-	if !restful {
+	if ctx.IsRestful() {
+		ctx.SetStatusCode(err.GetCode())
+	} else {
 		if strings.Contains(str, "gzip") {
 			bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
 			ctx.SetHeader("Content-Encoding", "gzip")
@@ -554,11 +559,11 @@ func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 		h.metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
 	}
 
-	ctx.SetHeader("Content-Type", "application/json; charset=UTF-8")
-	ctx.SetHeader("Accept-Encoding", "gzip, br")
+	ctx.SetHeader(consts.HeaderContentType, "application/json; charset=UTF-8")
+	ctx.SetHeader(consts.HeaderAcceptEncoding, "gzip, br")
 
 	res := resp.Result{
-		RequestId: golocalv1.GetTraceID(),
+		RequestID: golocalv1.GetTraceID(),
 		Data:      ctx.GetData(),
 	}
 
@@ -583,7 +588,7 @@ func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 func (h *Handler) onCrash(txt string, ctx *app.RequestCtx, e e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
-		h.writeError(ctx, e)
+		ctx.SetError(e)
 	}
 }
 
@@ -600,7 +605,7 @@ func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, interce
 			}
 		}
 
-		h.writeError(ctx, defaultErr)
+		ctx.SetError(defaultErr)
 	}
 }
 

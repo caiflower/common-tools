@@ -24,7 +24,7 @@ import (
 type MethodType uint8
 
 const (
-	DefaultTypeOfMethod = iota
+	DefaultTypeOfMethod MethodType = iota
 	GrpcTypeOfMethod
 )
 

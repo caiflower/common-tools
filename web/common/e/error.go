@@ -33,10 +33,10 @@ type ApiError interface {
 type Error = apiError
 
 type apiError struct {
-	Code    int
-	Type    string
-	Message string
-	Cause   error `json:"-"`
+	Code    int    `json:"code"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
+	Cause   error  `json:"-"`
 }
 
 func (e *apiError) GetCode() int {

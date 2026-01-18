@@ -386,7 +386,7 @@ func TestCommonResponse(t *testing.T) {
 	oai := New()
 
 	oai.Config.CommonResponse = &resp.Result{}
-	oai.Config.CommonResponseDataField = "Data"
+	oai.Config.CommonResponseDataField = "data"
 
 	type CreateUserRequest struct {
 		Name  string `json:"name" description:"User name" verf:"required"`
@@ -432,10 +432,10 @@ func TestCommonResponse(t *testing.T) {
 	assert.Equal(t, TypeObject, schema.Type)
 
 	properties := schema.Properties.Map()
-	assert.Contains(t, properties, "Data")
-	assert.Contains(t, properties, "RequestId")
+	assert.Contains(t, properties, "data")
+	assert.Contains(t, properties, "requestID")
 
-	dataRef := properties["Data"]
+	dataRef := properties["data"]
 	assert.NotNil(t, dataRef)
 	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateUserResponse", dataRef.Ref)
 
@@ -453,7 +453,7 @@ func TestCommonRequest(t *testing.T) {
 	oai := New()
 
 	oai.Config.CommonRequest = &resp.Result{}
-	oai.Config.CommonRequestDataField = "Data"
+	oai.Config.CommonRequestDataField = "data"
 
 	type CreateUserRequest struct {
 		Name  string `json:"name" description:"User name" verf:"required"`
@@ -499,10 +499,10 @@ func TestCommonRequest(t *testing.T) {
 	assert.Equal(t, TypeObject, schema.Type)
 
 	properties := schema.Properties.Map()
-	assert.Contains(t, properties, "Data")
-	assert.Contains(t, properties, "RequestId")
+	assert.Contains(t, properties, "data")
+	assert.Contains(t, properties, "requestID")
 
-	dataRef := properties["Data"]
+	dataRef := properties["data"]
 	assert.NotNil(t, dataRef)
 	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateUserRequest", dataRef.Ref)
 
@@ -519,9 +519,9 @@ func TestCommonRequest(t *testing.T) {
 func TestCommonRequestAndResponse(t *testing.T) {
 	oai := New()
 
-	oai.Config.CommonRequest = &resp.Result{}
+	oai.Config.CommonRequest = &resp.ResultV1{}
 	oai.Config.CommonRequestDataField = "Data"
-	oai.Config.CommonResponse = &resp.Result{}
+	oai.Config.CommonResponse = &resp.ResultV1{}
 	oai.Config.CommonResponseDataField = "Data"
 
 	type CreateUserRequest struct {
@@ -569,7 +569,7 @@ func TestCommonRequestAndResponse(t *testing.T) {
 
 	requestProperties := requestSchema.Properties.Map()
 	assert.Contains(t, requestProperties, "Data")
-	assert.Contains(t, requestProperties, "RequestId")
+	assert.Contains(t, requestProperties, "RequestID")
 
 	response := path.Post.Responses["200"]
 	assert.NotNil(t, response)
@@ -585,7 +585,7 @@ func TestCommonRequestAndResponse(t *testing.T) {
 
 	responseProperties := responseSchema.Properties.Map()
 	assert.Contains(t, responseProperties, "Data")
-	assert.Contains(t, responseProperties, "RequestId")
+	assert.Contains(t, responseProperties, "RequestID")
 
 	requestDataRef := requestProperties["Data"]
 	assert.NotNil(t, requestDataRef)
@@ -599,7 +599,7 @@ func TestCommonRequestAndResponse(t *testing.T) {
 func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 	oai := New()
 	oai.Config.CommonResponse = &resp.Result{}
-	oai.Config.CommonResponseDataField = "Data"
+	oai.Config.CommonResponseDataField = "data"
 
 	type CreateUserRequest struct {
 		Name string `json:"name" description:"name" verf:"required"`
@@ -627,7 +627,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NotNil(t, content.Schema)
 		assert.NotNil(t, content.Schema.Value)
 		props := content.Schema.Value.Properties.Map()
-		assert.Contains(t, props, "Data")
+		assert.Contains(t, props, "data")
 		return props
 	}
 
@@ -637,7 +637,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/1"].Post)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "", dataRef.Ref)
 		assert.NotNil(t, dataRef.Value)
 		assert.Equal(t, TypeObject, dataRef.Value.Type)
@@ -649,7 +649,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/2"].Post)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateUserResponse", dataRef.Ref)
 		assert.NotNil(t, oai.Components.Schemas.Get(dataRef.Ref))
 		assert.NotNil(t, oai.Paths["/sig/2"].Post.Responses["400"].Value)
@@ -664,7 +664,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/3"].Post)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceRes", dataRef.Ref)
 		assert.NotNil(t, oai.Paths["/sig/3"].Post.Responses["400"].Value)
 	})
@@ -675,7 +675,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/4"].Get)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "", dataRef.Ref)
 		assert.NotNil(t, dataRef.Value)
 		assert.Equal(t, TypeString, dataRef.Value.Type)
@@ -689,7 +689,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/5"].Get)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "", dataRef.Ref)
 		assert.NotNil(t, dataRef.Value)
 		assert.Equal(t, TypeObject, dataRef.Value.Type)
@@ -705,7 +705,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/6"].Post)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceRes", dataRef.Ref)
 		assert.NotNil(t, oai.Paths["/sig/6"].Post.Responses["400"].Value)
 	})
@@ -721,7 +721,7 @@ func TestOpenApiV3_Add_FunctionSignatureVariations(t *testing.T) {
 		assert.NoError(t, err)
 
 		props := assertWrapped(oai.Paths["/sig/6"].Post)
-		dataRef := props["Data"]
+		dataRef := props["data"]
 		assert.Equal(t, "", dataRef.Ref)
 		assert.NotNil(t, dataRef.Value)
 		assert.Equal(t, TypeString, dataRef.Value.Type)
