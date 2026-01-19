@@ -2,14 +2,11 @@ package resp
 
 import (
 	"net/http"
-	"sync"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/e"
 )
-
-var once sync.Once
 
 var DefaultResultCallback = func(ctx *app.RequestContext) bool {
 	if ctx.IsAbort() {
