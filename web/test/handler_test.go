@@ -23,11 +23,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web"
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/app/server/config"
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/protocol/consts"
@@ -213,6 +215,19 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 			Path("search").
 			RegisterGrpcMethod(helloController.GetGrpcMethodDesc("Search"))
 		handler.Register(restfulController4)
+
+		interceptorController := handler.AddController(&InterceptorController{})
+		restfulController5 := controller.NewRestFul().Group("/v1").
+			Method("GET").
+			Path("/interceptor").
+			RegisterMethod(interceptorController.GetMethod("Exec"))
+		handler.Register(restfulController5)
+
+		restfulController6 := controller.NewRestFul().Group("/v1").
+			Method("GET").
+			Path("/interceptor1").
+			RegisterMethod(interceptorController.GetMethod("Exec1"))
+		handler.Register(restfulController6)
 	}
 
 	return engine, handler
@@ -446,7 +461,7 @@ func TestHTTPRequestWithValidation(t *testing.T) {
 			handler.ServeHTTP(w, req)
 			code = w.Code
 			res = w.Body.Bytes()
-			assert.Equal(t, "application/json; charset=UTF-8", w.Header()[consts.HeaderContentType][0])
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, w.Header()[consts.HeaderContentType][0])
 			assert.Equal(t, "gzip, br", w.Header()[consts.HeaderAcceptEncoding][0])
 		} else {
 			ctx := &app.RequestCtx{}
@@ -631,7 +646,7 @@ func TestRESTfulRouting(t *testing.T) {
 			handler.ServeHTTP(w, req)
 			code = w.Code
 			res = w.Body.Bytes()
-			assert.Equal(t, "application/json; charset=UTF-8", w.Header()[consts.HeaderContentType][0])
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, w.Header()[consts.HeaderContentType][0])
 			assert.Equal(t, "gzip, br", w.Header()[consts.HeaderAcceptEncoding][0])
 		} else {
 			ctx := &app.RequestCtx{}
@@ -984,4 +999,145 @@ func BenchmarkGrpcMod(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		fn(casetest, handler, false)
 	}
+}
+
+type TestInterceptorResp struct {
+	Before time.Time
+	After  time.Time
+	Panic  time.Time
+	Func   time.Time
+}
+
+type testInterceptor struct {
+}
+
+func (i *testInterceptor) Before(ctx *app.Context) e.ApiError {
+	data := &TestInterceptorResp{}
+	data.Before = time.Now()
+	ctx.SetData(data)
+	return nil
+}
+
+func (i *testInterceptor) After(ctx *app.Context, err e.ApiError) e.ApiError {
+	ctx.GetData().(*TestInterceptorResp).After = time.Now()
+	return nil
+}
+
+func (i *testInterceptor) OnPanic(ctx *app.Context, err interface{}) e.ApiError {
+	ctx.GetData().(*TestInterceptorResp).Panic = time.Now()
+	return nil
+}
+
+type InterceptorController struct{}
+
+func (ic *InterceptorController) Exec(ctx *app.RequestContext, _ *TestInterceptorResp) {
+	time.Sleep(100 * time.Millisecond)
+	ctx.GetData().(*TestInterceptorResp).Func = time.Now()
+	return
+}
+
+func (ic *InterceptorController) Exec1(ctx *app.RequestContext, _ *TestInterceptorResp) {
+	time.Sleep(100 * time.Millisecond)
+	ctx.GetData().(*TestInterceptorResp).Func = time.Now()
+	panic("test panic")
+}
+
+func TestInterceptor(t *testing.T) {
+	_, handler := setupTestServer(true)
+	_, handler1 := setupTestServer(false)
+
+	type testCase struct {
+		name             string
+		path             string
+		method           string
+		requestBody      interface{}
+		expectedStatus   int
+		expectSuccess    bool
+		expectErrMessage string
+		expectData       interface{}
+	}
+
+	fn := func(t *testing.T, tc testCase, handler *router.Handler, disableOptimization bool) *resp.Result {
+		// 创建HTTP请求
+		var code int
+		var res []byte
+		if disableOptimization {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("Content-Type", "application/json")
+
+			// 创建响应记录器
+			w := httptest.NewRecorder()
+			// 执行请求
+			handler.ServeHTTP(w, req)
+			code = w.Code
+			res = w.Body.Bytes()
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, w.Header()[consts.HeaderContentType][0])
+			assert.Equal(t, "gzip, br", w.Header()[consts.HeaderAcceptEncoding][0])
+		} else {
+			ctx := &app.RequestCtx{}
+			ctx.Request = *protocol.NewRequest(tc.method, tc.path, nil)
+			ctx.SetMethod(ctx.Request.Method())
+			ctx.SetPath(ctx.Request.URI().Path())
+			ctx.Paths = make(param.Params, 0, 10)
+			handler.Serve(ctx)
+			code = ctx.Response.StatusCode()
+			res = ctx.Response.Body()
+			assert.Equal(t, consts.MIMEApplicationJSONUTF8, string(ctx.Response.Header.ContentType()))
+			//assert.Equal(t, "gzip, br", string(ctx.Response.Header.Get(consts.HeaderAcceptEncoding)))
+		}
+
+		assert.Equal(t, tc.expectedStatus, code, "want 200 status code")
+
+		// 解析响应
+		var response resp.Result
+		response.Data = new(TestInterceptorResp)
+		if err := json.Unmarshal(res, &response); err != nil {
+			assert.Nil(t, err)
+			return &response
+		}
+
+		return &response
+	}
+
+	validTime := func(t *testing.T, resp *TestInterceptorResp) {
+		assert.True(t, resp.Before.Before(resp.Func), "before less func")
+		assert.True(t, resp.Func.Before(resp.After), "func less after")
+		assert.Zero(t, resp.Panic, "panic should be zero")
+	}
+
+	// validTime1 := func(t *testing.T, resp *TestInterceptorResp) {
+	// 	assert.True(t, resp.Before.Before(resp.Func), "before less func")
+	// 	assert.True(t, resp.Func.Before(resp.Panic), "func less panic")
+	// 	assert.Zero(t, resp.After, "after should be zero")
+	// }
+
+	t.Run("valid interceptor time", func(t *testing.T) {
+		casetest := testCase{
+			name:           "valid interceptor time",
+			path:           "/v1/interceptor",
+			method:         "GET",
+			expectedStatus: 200,
+		}
+		handler.AddInterceptor(&testInterceptor{}, 1)
+		resp := fn(t, casetest, handler, true)
+		validTime(t, resp.Data.(*TestInterceptorResp))
+
+		handler1.AddInterceptor(&testInterceptor{}, 1)
+		resp = fn(t, casetest, handler1, false)
+		validTime(t, resp.Data.(*TestInterceptorResp))
+	})
+
+	// t.Run("valid panic time", func(t *testing.T) {
+	// 	casetest := testCase{
+	// 		name:           "valid interceptor time",
+	// 		path:           "/v1/interceptor1",
+	// 		method:         "GET",
+	// 		expectedStatus: 500,
+	// 	}
+	// 	handler.AddInterceptor(&testInterceptor{}, 1)
+	// 	fn(t, casetest, handler, true)
+
+	// 	handler1.AddInterceptor(&testInterceptor{}, 1)
+	// 	fn(t, casetest, handler1, false)
+	// })
 }

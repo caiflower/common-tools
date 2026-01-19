@@ -25,7 +25,6 @@ import (
 	"runtime/debug"
 	runtimepprof "runtime/pprof"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,7 +53,7 @@ import (
 )
 
 const (
-	BeginTime = "web/handler/req_beginTime"
+	dispatchBeginTime = "web/handler/dispatch_begin_time"
 )
 
 var (
@@ -171,6 +170,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.writeResponse(ctx)
 	}
+
+	// record metric
+	h.recordMetric(ctx)
 }
 
 func (h *Handler) Serve(ctx *app.RequestCtx) {
@@ -191,6 +193,9 @@ func (h *Handler) Serve(ctx *app.RequestCtx) {
 	h.Dispatch(ctx)
 
 	h.afterDispatchCallbackFunc(ctx)
+
+	// record metric
+	h.recordMetric(ctx)
 }
 
 func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
@@ -202,7 +207,7 @@ func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
 
 	golocalv1.PutTraceID(traceID)
 	if h.config.EnableMetrics {
-		golocalv1.Put(BeginTime, time.Now())
+		golocalv1.Put(dispatchBeginTime, time.Now())
 	}
 	golocalv1.PutContext(ctx.GetContext())
 
@@ -510,14 +515,7 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 		h.logger.Error("handle request failed. %s", err.Error())
 	}
 
-	// metric
-	if h.config.EnableMetrics {
-		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
-		// fix: 关闭协程提升性能
-		h.metric.SaveMetric(h.config.Name, strconv.Itoa(err.GetCode()), ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
-	}
-
-	ctx.SetHeader(consts.HeaderContentType, "application/json; charset=UTF-8")
+	ctx.SetHeader(consts.HeaderContentType, consts.MIMEApplicationJSONUTF8)
 	ctx.SetHeader(consts.HeaderAcceptEncoding, "gzip, br")
 
 	res := resp.Result{
@@ -532,12 +530,12 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 	} else {
 		if strings.Contains(str, "gzip") {
 			bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
-			ctx.SetHeader("Content-Encoding", "gzip")
+			ctx.SetHeader(consts.HeaderContentEncoding, "gzip")
 		} else if strings.Contains(str, "br") {
 			tmpBytes, err := tools.Brotil(bytes)
 			if err == nil {
 				bytes = tmpBytes
-				ctx.SetHeader("Content-Encoding", "br")
+				ctx.SetHeader(consts.HeaderContentEncoding, "br")
 			}
 		}
 	}
@@ -552,14 +550,7 @@ func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 		return
 	}
 
-	// metric
-	if h.config.EnableMetrics {
-		sub := time.Now().Sub(golocalv1.Get(BeginTime).(time.Time))
-		// fix: 关闭协程提升性能
-		h.metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
-	}
-
-	ctx.SetHeader(consts.HeaderContentType, "application/json; charset=UTF-8")
+	ctx.SetHeader(consts.HeaderContentType, consts.MIMEApplicationJSONUTF8)
 	ctx.SetHeader(consts.HeaderAcceptEncoding, "gzip, br")
 
 	res := resp.Result{
@@ -571,12 +562,12 @@ func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 	str := ctx.GetAcceptEncoding()
 	if strings.Contains(str, "gzip") {
 		bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
-		ctx.SetHeader("Content-Encoding", "gzip")
+		ctx.SetHeader(consts.HeaderContentEncoding, "gzip")
 	} else if strings.Contains(str, "br") {
 		tmpBytes, err := tools.Brotil(bytes)
 		if err == nil {
 			bytes = tmpBytes
-			ctx.SetHeader("Content-Encoding", "br")
+			ctx.SetHeader(consts.HeaderContentEncoding, "br")
 		}
 	}
 
@@ -667,4 +658,12 @@ func (h *Handler) RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interfa
 	ctl := h.AddController(srv)
 	ctl.SetGrpcService(serviceDesc, srv)
 	return ctl
+}
+
+func (h *Handler) recordMetric(ctx *app.RequestContext) {
+	if h.config.EnableMetrics {
+		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
+		// fix: 关闭协程提升性能
+		h.metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
+	}
 }

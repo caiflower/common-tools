@@ -12,6 +12,10 @@ import (
 var once sync.Once
 
 var DefaultResultCallback = func(ctx *app.RequestContext) bool {
+	if ctx.IsAbort() {
+		return false
+	}
+
 	if err := ctx.GetError(); err != nil {
 		res := Result{
 			RequestID: golocalv1.GetTraceID(),
