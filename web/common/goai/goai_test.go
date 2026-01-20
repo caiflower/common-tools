@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/caiflower/common-tools/web/app"
@@ -182,6 +183,39 @@ func TestAddAPI(t *testing.T) {
 	assert.NotNil(t, path.Post)
 	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.TestCreateUserRequest", path.Post.Summary)
 	assert.Equal(t, "API endpoint for github.com.caiflower.common-tools.web.common.goai.TestCreateUserRequest", path.Post.Description)
+}
+
+func TestOperationIDGeneration(t *testing.T) {
+	oai := New()
+
+	f := func(req TestCreateUserRequest) (TestCreateUserResponse, error) {
+		return TestCreateUserResponse{}, nil
+	}
+
+	err := oai.Add(AddInput{
+		Method: http.MethodPost,
+		Path:   "/op/1",
+		Object: f,
+	})
+	assert.NoError(t, err)
+
+	err = oai.Add(AddInput{
+		Method: http.MethodPost,
+		Path:   "/op/2",
+		Object: f,
+	})
+	assert.NoError(t, err)
+
+	op1 := oai.Paths["/op/1"].Post
+	op2 := oai.Paths["/op/2"].Post
+	assert.NotNil(t, op1)
+	assert.NotNil(t, op2)
+
+	assert.NotEmpty(t, op1.OperationID)
+	assert.NotEmpty(t, op2.OperationID)
+	assert.Equal(t, op1.OperationID+"_1", op2.OperationID)
+	assert.False(t, strings.Contains(op1.OperationID, "/"))
+	assert.False(t, strings.Contains(op1.OperationID, "."))
 }
 
 func TestOpenApiV3_Add(t *testing.T) {

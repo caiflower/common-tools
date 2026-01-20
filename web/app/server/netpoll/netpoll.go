@@ -50,7 +50,6 @@ type HttpServer struct {
 	logger          logger.ILog
 	transporter     network.Transporter
 	requestCtxPool  sync.Pool
-	startLock       sync.Mutex
 	protocolServers map[string]protocol.Server
 }
 
@@ -119,18 +118,12 @@ func (s *HttpServer) Start() error {
 		"\n***************************** netpoll http server startup ***************************************\n"+
 			"************* web service [name:%s] [rootPath:%s] listening on %s *********\n"+
 			"*************************************************************************************************", s.Options.Name, s.RootPath, s.Addr)
-	if s.IsRunning() {
-		return nil
-	}
 
-	s.startLock.Lock()
-	defer s.startLock.Unlock()
-	if s.IsRunning() {
+	if !s.SetRunning(true) {
 		return nil
 	}
 
 	s.Handler.SortInterceptors()
-	s.SetRunning(true)
 	var err error
 	go func() {
 		if err = s.transporter.ListenAndServe(s.OnReq); err != nil {
@@ -144,7 +137,10 @@ func (s *HttpServer) Start() error {
 func (s *HttpServer) Close() {
 	s.logger.Info("      **** netpoll http server shutdown, wait at most 5s ****")
 
-	s.SetRunning(false)
+	if !s.SetRunning(false) {
+		return
+	}
+
 	timeout, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancelFunc()
 	if err := s.transporter.Shutdown(timeout); err != nil {

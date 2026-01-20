@@ -74,15 +74,17 @@ type OpenApiV3 struct {
 	Components Components `json:"components,omitempty"`
 	Paths      Paths      `json:"paths"`
 
+	operationIDCounter map[string]int
+
 	validator *defaultValidator
 	mu        sync.RWMutex
 }
 
 type AddInput struct {
-	Path   string
-	Prefix string
-	Method string
-	Object any
+	Path        string
+	Method      string
+	Object      any
+	OperationID string
 }
 
 func New() *OpenApiV3 {
@@ -91,6 +93,7 @@ func New() *OpenApiV3 {
 		Components: Components{
 			Schemas: createSchemas(),
 		},
+		operationIDCounter: make(map[string]int),
 	}
 	oai.validator = newDefaultValidator()
 	oai.fillWithDefaultValue()
@@ -135,10 +138,10 @@ func (oai *OpenApiV3) Add(in AddInput) error {
 		return oai.addSchema(in.Object)
 	case reflect.Func:
 		return oai.addPath(addPathInput{
-			Path:     in.Path,
-			Prefix:   in.Prefix,
-			Method:   in.Method,
-			Function: in.Object,
+			Path:        in.Path,
+			Method:      in.Method,
+			Function:    in.Object,
+			OperationID: in.OperationID,
 		})
 	default:
 		return fmt.Errorf("unsupported parameter type %s, only struct/function type is supported", reflect.TypeOf(in.Object).String())
@@ -230,10 +233,10 @@ func isValidParameterName(key string) bool {
 }
 
 type addPathInput struct {
-	Path     string
-	Prefix   string
-	Method   string
-	Function any
+	Path        string
+	Method      string
+	Function    any
+	OperationID string
 }
 
 // parsedHandlerSignature is a normalized view of a Go handler function signature.
@@ -282,13 +285,6 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		in.Path = "/"
 	}
 
-	if in.Prefix != "" {
-		if !strings.HasPrefix(in.Prefix, "/") {
-			in.Prefix = "/" + in.Prefix
-		}
-		in.Path = strings.TrimRight(in.Prefix, "/") + "/" + strings.TrimLeft(in.Path, "/")
-	}
-
 	if v, ok := oai.Paths[in.Path]; ok {
 		path = v
 	}
@@ -297,17 +293,10 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		in.Method = "POST"
 	}
 
-	if sig.requestStructType != nil {
-		if err := oai.addSchema(inputObject.Interface()); err != nil {
-			return err
-		}
-		operation.Summary = inputStructTypeName
-		operation.Description = "API endpoint for " + inputStructTypeName
-	} else {
-		operation.Summary = runtime.FuncForPC(reflect.ValueOf(in.Function).Pointer()).Name()
-		operation.Description = "API endpoint for " + operation.Summary
-	}
-	// operation.OperationID = strings.ReplaceAll(inputStructTypeName, ".", "_")
+	operationID := oai.generateOperationID(in.Function, in.OperationID)
+	operation.Summary = operationID
+	operation.Description = "API endpoint for " + operation.Summary
+	operation.OperationID = operationID
 
 	if inputTypeForParams != nil {
 		oai.collectParameters(inputTypeForParams, &operation)
@@ -315,7 +304,8 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 
 	if in.Method != "GET" && in.Method != "DELETE" && sig.requestStructType != nil {
 		requestBody := RequestBody{
-			Content: make(map[string]MediaType),
+			Content:  make(map[string]MediaType),
+			Required: true,
 		}
 
 		contentTypes := oai.Config.ReadContentTypes
@@ -968,6 +958,56 @@ func (oai *OpenApiV3) collectParameters(t reflect.Type, operation *Operation) {
 	}
 
 	oai.collectParametersRecursive(t, operation, make(map[string]bool))
+}
+
+func (oai *OpenApiV3) ensureUniqueOperationID(base string) string {
+	if oai.operationIDCounter == nil {
+		oai.operationIDCounter = make(map[string]int)
+	}
+	if base == "" {
+		base = "operation"
+	}
+	count := oai.operationIDCounter[base]
+	id := base
+	if count > 0 {
+		id = fmt.Sprintf("%s_%d", base, count)
+	}
+	oai.operationIDCounter[base] = count + 1
+	return id
+}
+
+func sanitizeOperationID(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range raw {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteRune('_')
+			lastUnderscore = true
+		}
+	}
+	result := strings.Trim(b.String(), "_")
+	return result
+}
+
+func (oai *OpenApiV3) generateOperationID(fn any, operationID string) string {
+	if fn == nil {
+		return oai.ensureUniqueOperationID("")
+	}
+	if operationID != "" {
+		return oai.ensureUniqueOperationID(operationID)
+	}
+
+	fnName := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	fnName = sanitizeOperationID(fnName)
+	return oai.ensureUniqueOperationID(fnName)
 }
 
 func (oai *OpenApiV3) collectParametersRecursive(t reflect.Type, operation *Operation, visited map[string]bool) {

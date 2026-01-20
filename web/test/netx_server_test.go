@@ -43,7 +43,7 @@ func TestNewHttpServer(t *testing.T) {
 			name: "Valid configuration",
 			options: config.Options{
 				Name:                     "test-server",
-				Addr:                     ":8080",
+				Addr:                     ":0",
 				ReadTimeout:              time.Second * 30,
 				WriteTimeout:             time.Second * 30,
 				HandleTimeout:            time.Second * 60,
@@ -64,7 +64,7 @@ func TestNewHttpServer(t *testing.T) {
 			name: "Minimal configuration",
 			options: config.Options{
 				Name: "minimal-server",
-				Addr: ":9090",
+				Addr: ":0",
 			},
 			wantErr: false,
 		},
@@ -73,10 +73,12 @@ func TestNewHttpServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := netpoll.NewHttpServer(tt.options)
+			_ = server.Start()
 
 			assert.NotNil(t, server, "Server should not be nil")
 			assert.NotNil(t, server.Handler, "Handler should not be nil")
 			assert.Equal(t, fmt.Sprintf("NETPOLL_HTTP_SERVER:%s", tt.options.Name), server.Name())
+			server.Close()
 		})
 	}
 }

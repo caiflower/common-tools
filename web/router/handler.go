@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/web/common/e"
@@ -54,6 +55,12 @@ import (
 
 const (
 	dispatchBeginTime = "web/handler/dispatch_begin_time"
+)
+
+const (
+	statusInitialized uint32 = iota
+	statusRunning
+	statusClosed
 )
 
 var (
@@ -142,7 +149,7 @@ type Handler struct {
 
 	// RequestContext pool
 	ctxPool sync.Pool
-	running bool
+	status  uint32
 	// goai
 	oai *goai.OpenApiV3
 }
@@ -321,9 +328,10 @@ func (h *Handler) Register(ctl *controller.RestfulController) {
 
 	swaggerPath := toSwaggerPath(rawPath)
 	_ = h.oai.Add(goai.AddInput{
-		Path:   swaggerPath,
-		Method: m,
-		Object: targetMethod.GetFunc(),
+		Path:        swaggerPath,
+		Method:      m,
+		Object:      targetMethod.GetFunc(),
+		OperationID: strings.Replace(targetMethod.GetName(), targetMethod.GetPkgName()+".", "", -1),
 	})
 
 	logger.Info("Register path %v, Method: %v", path, m)
@@ -643,11 +651,20 @@ func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 }
 
 func (h *Handler) IsRunning() bool {
-	return h.running
+	if atomic.LoadUint32(&h.status) != statusRunning {
+		return false
+	}
+
+	return true
 }
 
-func (h *Handler) SetRunning(running bool) {
-	h.running = running
+// SetRunning 设置运行状态
+func (h *Handler) SetRunning(val bool) bool {
+	if val {
+		return atomic.CompareAndSwapUint32(&h.status, statusInitialized, statusRunning)
+	} else {
+		return atomic.CompareAndSwapUint32(&h.status, statusRunning, statusClosed)
+	}
 }
 
 func (h *Handler) GetCtxPool() *sync.Pool {
