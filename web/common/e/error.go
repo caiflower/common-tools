@@ -19,6 +19,8 @@ package e
 import (
 	"fmt"
 	"net/http"
+
+	"google.golang.org/grpc/status"
 )
 
 type ApiError interface {
@@ -28,6 +30,7 @@ type ApiError interface {
 	GetCause() error
 	IsInternalError() bool
 	Error() string
+	GRPCStatus() *status.Status
 }
 
 type Error = apiError
@@ -61,6 +64,10 @@ func (e *apiError) Error() string {
 
 func (e *apiError) IsInternalError() bool {
 	return e.Code == http.StatusInternalServerError
+}
+
+func (e *apiError) GRPCStatus() *status.Status {
+	return ConvertErrorCodeToGrpcCode(e)
 }
 
 type ErrorCode struct {

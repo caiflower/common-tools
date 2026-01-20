@@ -17,6 +17,7 @@
 package webtest
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -26,6 +27,10 @@ import (
 	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/app/server/netpoll"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestNewHttpServer(t *testing.T) {
@@ -136,4 +141,46 @@ func TestHttpServerIntegration(t *testing.T) {
 	if err != nil {
 		assert.NotNil(t, err, "Connection failed (expected))")
 	}
+}
+
+func TestGrpcCode(t *testing.T) {
+	listen, err := net.Listen("tcp", ":0")
+	if err != nil {
+		panic(err)
+	}
+	addr := listen.Addr().String()
+
+	grpcServer := grpc.NewServer()
+	// 注册helloImpl
+	RegisterIServiceServer(grpcServer, &HelloImpl{})
+
+	go func() {
+		err = grpcServer.Serve(listen)
+		if err != nil {
+			panic(err)
+		}
+	}()
+	defer grpcServer.GracefulStop()
+
+	// client
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	// 远程调用
+	client := NewIServiceClient(conn)
+	search, err := client.Search(context.Background(), &SearchRequest{})
+	assert.NotNil(t, err)
+	st, _ := status.FromError(err)
+	assert.Equal(t, codes.OutOfRange, st.Code())
+
+	search, err = client.Search(context.Background(), &SearchRequest{Query: "1", PageNumber: 2, Hobby: []string{"english", "math"}})
+	assert.Nil(t, err)
+	assert.Equal(t, "math", search.Message)
+
+	search, err = client.Search(context.Background(), &SearchRequest{Query: "2", Hobby: []string{"english", "math"}})
+	assert.Nil(t, err)
+	assert.Equal(t, "english,math", search.Message)
 }

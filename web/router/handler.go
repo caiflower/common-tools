@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
 	"github.com/caiflower/common-tools/web/protocol/consts"
 
@@ -40,7 +41,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/compress"
-	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/interceptor"
 	"github.com/caiflower/common-tools/web/common/metric"
 	"github.com/caiflower/common-tools/web/common/resp"
@@ -472,7 +472,7 @@ func (h *Handler) doTargetMethod(ctx *app.RequestCtx, targetMethodDesc *method.M
 			default:
 				st, ok := status.FromError(err)
 				if ok {
-					apiErr := ConvertGrpcCodeToErrorCode(st)
+					apiErr := e.ConvertGrpcCodeToErrorCode(st)
 					if apiErr != nil {
 						return apiErr
 					}
@@ -512,7 +512,7 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 	}
 
 	if err.IsInternalError() {
-		h.logger.Error("handle request failed. %s", err.Error())
+		h.logger.Error("handle request failed. Error: %s", err.Error())
 	}
 
 	ctx.SetHeader(consts.HeaderContentType, consts.MIMEApplicationJSONUTF8)

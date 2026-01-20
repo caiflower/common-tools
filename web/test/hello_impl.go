@@ -21,8 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"github.com/caiflower/common-tools/web/common/e"
 )
 
 type HelloImpl struct {
@@ -35,9 +34,9 @@ func (h *HelloImpl) Search(ctx context.Context, req *SearchRequest) (*SearchResp
 			return &SearchResponse{Code: 1, Message: req.Hobby[req.PageNumber-1]}, nil
 		}
 
-		return nil, status.Errorf(codes.InvalidArgument, fmt.Sprintf("pageNumber %v out of range", req.GetPageNumber()))
+		return nil, e.NewApiError(e.InvalidArgument, fmt.Sprintf("pageNumber %v out of range", req.GetPageNumber()), nil)
 	} else if req.Query == "2" {
 		return &SearchResponse{Code: 1, Message: strings.Join(req.Hobby, ",")}, nil
 	}
-	return nil, status.Errorf(codes.OutOfRange, fmt.Sprintf("query %v is not impl", req.Query))
+	return nil, e.NewApiError(e.OutOfRange, fmt.Sprintf("query %v is not impl", req.Query), nil)
 }

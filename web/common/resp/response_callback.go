@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
+	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/common/e"
 )
@@ -14,6 +15,10 @@ var DefaultResultCallback = func(ctx *app.RequestContext) bool {
 	}
 
 	if err := ctx.GetError(); err != nil {
+		if err.IsInternalError() {
+			logger.Error("handle request failed. Error: %s", err.Error())
+		}
+
 		res := Result{
 			RequestID: golocalv1.GetTraceID(),
 			Error:     &e.Error{Code: err.GetCode(), Message: err.GetMessage(), Type: err.GetType(), Cause: err.GetCause()},
