@@ -162,7 +162,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t1.Cluster = cluster1
 	cluster1.AddJobTracker(&t1)
 
-	go cluster1.Start()
+	cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -175,7 +175,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t2.Cluster = cluster2
 	cluster2.AddJobTracker(&t2)
 
-	go cluster2.Start()
+	cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -188,7 +188,7 @@ func TestClusterJobTracker(t *testing.T) {
 	t3.Cluster = cluster3
 	cluster3.AddJobTracker(&t3)
 
-	go cluster3.Start()
+	cluster3.Start()
 
 	time.Sleep(15 * time.Second)
 
@@ -359,7 +359,7 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker1 := NewDefaultJobTracker(10, testCaller1)
 	_ = cluster1.AddJobTracker(tracker1)
-	go cluster1.Start()
+	cluster1.Start()
 
 	testCaller2 := &TestCaller{
 		Name: "Localhost2",
@@ -372,7 +372,7 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker2 := NewDefaultJobTracker(10, testCaller2)
 	_ = cluster2.AddJobTracker(tracker2)
-	go cluster2.Start()
+	cluster2.Start()
 
 	testCaller3 := &TestCaller{
 		Name: "Localhost3",
@@ -384,7 +384,7 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker3 := NewDefaultJobTracker(10, testCaller3)
 	_ = cluster3.AddJobTracker(tracker3)
-	go cluster3.Start()
+	cluster3.Start()
 
-	time.Sleep(60 * time.Second)
+	time.Sleep(20 * time.Second)
 }

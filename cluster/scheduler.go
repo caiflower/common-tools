@@ -18,7 +18,10 @@ package cluster
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
+
+	"github.com/caiflower/common-tools/pkg/logger"
 )
 
 type JobTracker interface {
@@ -54,6 +57,12 @@ func (dc *DefaultCaller) OnNewLeader(leaderName string) {}
 func (dc *DefaultCaller) MasterCall()                   {}
 func (dc *DefaultCaller) SlaverCall(leaderName string)  {}
 
+const (
+	statusStopped uint32 = iota
+	statusRunning
+	statusClose
+)
+
 type DefaultJobTracker struct {
 	Interval     int
 	leaderCtx    context.Context
@@ -61,6 +70,7 @@ type DefaultJobTracker struct {
 	workerCtx    context.Context
 	workerCancel context.CancelFunc
 	callers      []Caller
+	status       uint32
 }
 
 func NewDefaultJobTracker(interval int, caller ...Caller) *DefaultJobTracker {
@@ -79,6 +89,10 @@ func (t *DefaultJobTracker) Name() string {
 }
 
 func (t *DefaultJobTracker) OnStartedLeading() {
+	if !atomic.CompareAndSwapUint32(&t.status, statusStopped, statusRunning) {
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	t.leaderCtx = ctx
 	t.leaderCancel = cancel
@@ -103,6 +117,10 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 }
 
 func (t *DefaultJobTracker) OnStoppedLeading() {
+	if !atomic.CompareAndSwapUint32(&t.status, statusRunning, statusStopped) {
+		return
+	}
+
 	if t.leaderCancel != nil {
 		t.leaderCancel()
 		t.leaderCancel = nil
@@ -113,6 +131,10 @@ func (t *DefaultJobTracker) OnStoppedLeading() {
 }
 
 func (t *DefaultJobTracker) OnReleaseMaster() {
+	if !atomic.CompareAndSwapUint32(&t.status, statusRunning, statusStopped) {
+		return
+	}
+
 	if t.workerCancel != nil {
 		t.workerCancel()
 		t.workerCancel = nil
@@ -123,6 +145,10 @@ func (t *DefaultJobTracker) OnReleaseMaster() {
 }
 
 func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
+	if !atomic.CompareAndSwapUint32(&t.status, statusStopped, statusRunning) {
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	t.workerCtx = ctx
 	t.workerCancel = cancel
@@ -147,6 +173,9 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 }
 
 func (t *DefaultJobTracker) Close() {
+	atomic.CompareAndSwapUint32(&t.status, statusRunning, statusClose)
+	atomic.CompareAndSwapUint32(&t.status, statusStopped, statusClose)
+
 	if t.leaderCancel != nil {
 		t.leaderCancel()
 		t.leaderCancel = nil
@@ -155,4 +184,6 @@ func (t *DefaultJobTracker) Close() {
 		t.workerCancel()
 		t.workerCancel = nil
 	}
+
+	logger.Info("[DefaultJobTracker] close success.")
 }

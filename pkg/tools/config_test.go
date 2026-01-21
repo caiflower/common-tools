@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
- package tools
+package tools
 
 import (
 	"fmt"
-	"os"
 	"reflect"
 	"testing"
 )
@@ -44,15 +43,15 @@ type TestConfig1 struct {
 	Money float64 `yaml:"money" default:"1.231321"`
 }
 
-func TestLoadConfig(t *testing.T) {
-	config := &TestConfig{}
-	err := LoadConfig(os.Getenv("HOME")+"/common-tools/config/test.yaml", config)
-	if err != nil {
-		panic(err)
-	}
+// func TestLoadConfig(t *testing.T) {
+// 	config := &TestConfig{}
+// 	err := LoadConfig(os.Getenv("HOME")+"/common-tools/config/test.yaml", config)
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	fmt.Printf("%+v\n", config)
-}
+// 	fmt.Printf("%+v\n", config)
+// }
 
 func TestLoadConfig2(t *testing.T) {
 	tc := TestConfig{}

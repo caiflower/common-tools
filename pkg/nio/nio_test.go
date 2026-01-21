@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package nio
+package nio
 
 import (
 	"fmt"
@@ -136,5 +136,5 @@ func TestNio(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(3600 * time.Second)
+	time.Sleep(5 * time.Second)
 }

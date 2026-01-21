@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package dbv1
+package dbv1
 
 import (
 	"database/sql"
@@ -58,7 +58,8 @@ func TestNewDBClient(t *testing.T) {
 
 	client, err := NewDBClient(config)
 	if err != nil {
-		panic(err)
+		fmt.Println("connect failed. Skip TestNewDBClient")
+		t.Skip()
 	}
 
 	var containerRegistry []ContainerRegistry
@@ -97,7 +98,8 @@ func TestTransactionTimeout(t *testing.T) {
 
 	client, err := NewDBClient(config)
 	if err != nil {
-		panic(err)
+		fmt.Println("connect failed. Skip TestNewDBClient")
+		t.Skip()
 	}
 
 	tx, cancel, err := client.Begin()

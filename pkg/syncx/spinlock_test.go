@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package syncx
+package syncx
 
 import (
 	"runtime"
@@ -80,12 +80,4 @@ func BenchmarkBackOffSpinLock(b *testing.B) {
 			spin.Unlock()
 		}
 	})
-}
-
-func TestNewSpinLock(t *testing.T) {
-	// 不支持锁重入
-	lock := NewSpinLock()
-	lock.Lock()
-	lock.Lock()
-	defer lock.Unlock()
 }

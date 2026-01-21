@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
@@ -182,10 +183,10 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	cluster.aliveNodes.Store(cluster.GetMyName(), cluster.GetMyNode())
 
 	if cluster.curNode == nil {
-		return nil, errors.New("can not find current node")
+		return nil, errors.New("can not find local node")
 	}
 
-	cluster.logger.Info("[cluster] curNode address: %s", cluster.curNode.address)
+	cluster.logger.Info("[cluster] local node address: %s", cluster.curNode.address)
 
 	// redis beanName
 	if config.Mode == modeRedis && config.RedisDiscovery.BeanName != "" {
@@ -302,19 +303,28 @@ func (c *Cluster) Close() {
 	c.curNode.clean()
 	c.releaseLeader()
 
+	// close nio
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
 		if node.name != c.GetMyName() && node.connection != nil {
-			go node.connection.Close()
+			node.connection.Close()
 		}
 		return true
 	})
 
 	if c.server != nil {
-		go c.server.Close()
+		c.server.Close()
 	}
 
 	c.createEvent(eventNameClose, "")
+	c.jobTrackers.Range(func(key, value interface{}) bool {
+		closer, ok := value.(global.Resource)
+		if ok {
+			closer.Close()
+		}
+		return true
+	})
+
 	c.sate = closed
 	c.logger.Info("[cluster] close success. ")
 }
@@ -834,29 +844,30 @@ func (c *Cluster) signLeader(node *Node, term int) bool {
 		return false
 	}
 
-	if c.GetMyTerm() <= term {
-		c.releaseLeaderNoLock()
-
-		if node.name == c.GetMyName() {
-			c.sate = leader
-			c.createEvent(eventNameSignMaster, node.name)
-			if c.config.Mode == modeSingle {
-				c.createEvent(eventNameSignFollower, node.name)
-			}
-		} else {
-			c.sate = follower
-			c.curNode.heartbeat = time.Now()
-			c.createEvent(eventNameSignFollower, node.name)
-		}
-
-		c.lostLeaderTime = time.Time{}
-		c.leaderNode = node
-		c.leaderName = node.name
-		c.term = term
-		return true
+	if term < c.GetMyTerm() {
+		return false
 	}
 
-	return false
+	c.releaseLeaderNoLock()
+
+	if node.name == c.GetMyName() {
+		c.sate = leader
+		c.createEvent(eventNameSignMaster, node.name)
+	} else {
+		c.sate = follower
+		c.curNode.heartbeat = time.Now()
+		c.createEvent(eventNameSignFollower, node.name)
+	}
+
+	if c.config.Mode == modeSingle {
+		c.createEvent(eventNameSignFollower, node.name)
+	}
+
+	c.lostLeaderTime = time.Time{}
+	c.leaderNode = node
+	c.leaderName = node.name
+	c.term = term
+	return true
 }
 
 func (c *Cluster) releaseWithNodeName(name string) {
@@ -950,21 +961,21 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					go jobTracker.OnNewLeader(ev.leaderName)
+					jobTracker.OnNewLeader(ev.leaderName)
 					return true
 				})
 			case eventNameSignMaster:
 				c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					go jobTracker.OnStartedLeading()
+					jobTracker.OnStartedLeading()
 					return true
 				})
 			case eventNameStopMaster:
 				c.logger.Debug("[cluster] %s stop master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					go jobTracker.OnStoppedLeading()
+					jobTracker.OnStoppedLeading()
 					return true
 				})
 			case eventNameElectionStart:
@@ -975,7 +986,7 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s release master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					tracker := value.(JobTracker)
-					go tracker.OnReleaseMaster()
+					tracker.OnReleaseMaster()
 					return true
 				})
 			case eventNameClose:

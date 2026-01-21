@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -35,16 +36,8 @@ func printDataFn(data interface{}) (interface{}, error) {
 }
 
 func getOtherNode(cluster ICluster) string {
-
 	names := cluster.GetAliveNodeNames()
 	return names[rand.Intn(len(names))]
-
-	//for {
-	//	name := names[rand.Intn(len(names))]
-	//	if name != cluster.GetMyName() {
-	//		return name
-	//	}
-	//}
 }
 
 func TestRemoteCall(t *testing.T) {
@@ -54,60 +47,45 @@ func TestRemoteCall(t *testing.T) {
 	cluster3.RegisterFunc(printData, printDataFn)
 
 	// 等待leader选出来
-	time.Sleep(3 * time.Second)
+	for {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
+	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName(), "leader must same")
+	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName(), "leader must same")
 
 	// 同步调用
 	fmt.Println("----- Test sync FuncSpec ------")
 	if cluster1.IsLeader() {
-		response, err := cluster1.CallFunc(NewFuncSpec(getOtherNode(cluster1), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		result, err := cluster1.CallFunc(NewFuncSpec(getOtherNode(cluster1), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
+		assert.Nil(t, err)
+		assert.Equal(t, result, "testParam")
 	} else if cluster2.IsLeader() {
-		response, err := cluster2.CallFunc(NewFuncSpec(getOtherNode(cluster2), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		result, err := cluster2.CallFunc(NewFuncSpec(getOtherNode(cluster2), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
+		assert.Nil(t, err)
+		assert.Equal(t, result, "testParam")
 	} else if cluster3.IsLeader() {
-		response, err := cluster3.CallFunc(NewFuncSpec(getOtherNode(cluster3), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		result, err := cluster3.CallFunc(NewFuncSpec(getOtherNode(cluster3), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
+		assert.Nil(t, err)
+		assert.Equal(t, result, "testParam")
 	}
 
 	// 异步调用
 	fmt.Println("----- Test async FuncSpec ------")
 	var f *FuncSpec
 	if cluster1.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster1), printData, "testAsyncParam", time.Second*3).SetTraceId("myAsyncTraceId")
-		response, err := cluster1.CallFunc(f)
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		f = NewAsyncFuncSpec(getOtherNode(cluster1), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := cluster1.CallFunc(f)
+		assert.Nil(t, err)
 	} else if cluster2.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster2), printData, "testAsyncParam", time.Second*3).SetTraceId("myAsyncTraceId")
-		response, err := cluster2.CallFunc(f)
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		f = NewAsyncFuncSpec(getOtherNode(cluster2), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := cluster2.CallFunc(f)
+		assert.Nil(t, err)
 	} else if cluster3.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster3), printData, "testAsyncParam", time.Second*3).SetTraceId("myAsyncTraceId")
-		response, err := cluster3.CallFunc(f)
-		if err != nil {
-			fmt.Printf("err = %v \n", err)
-		} else {
-			fmt.Printf("response = %v \n", response)
-		}
+		f = NewAsyncFuncSpec(getOtherNode(cluster3), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := cluster3.CallFunc(f)
+		assert.Nil(t, err)
 	}
 
 	for {
@@ -117,15 +95,12 @@ func TestRemoteCall(t *testing.T) {
 			return
 		default:
 			result, err := f.GetResult()
-			if err != nil {
-				fmt.Printf("err = %v \n", err)
-				return
-			}
+			assert.Nil(t, err)
 			if result != nil {
-				fmt.Printf("result = %v \n", result)
+				assert.Equal(t, "testAsyncParam", result)
 				return
 			}
-			fmt.Println("no result, sleep.")
+			fmt.Println("no result, wait async result sleep.")
 			time.Sleep(time.Millisecond * 50)
 		}
 	}

@@ -302,7 +302,7 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		oai.collectParameters(inputTypeForParams, &operation)
 	}
 
-	if in.Method != "GET" && in.Method != "DELETE" && sig.requestStructType != nil {
+	if in.Method != "GET" && sig.requestStructType != nil {
 		requestBody := RequestBody{
 			Content:  make(map[string]MediaType),
 			Required: true,
@@ -325,6 +325,12 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 		operation.RequestBody = &RequestBodyRef{Value: &requestBody}
 	}
 
+	if sig.requestStructType != nil {
+		if err = oai.addSchema(inputObject.Interface()); err != nil {
+			return err
+		}
+	}
+
 	outputSchemaRef := oai.outputSchemaRef(sig.responseType)
 	response, err := oai.getResponseFromOutput(outputSchemaRef, sig.responseType)
 	if err != nil {
@@ -334,9 +340,14 @@ func (oai *OpenApiV3) addPath(in addPathInput) error {
 
 	if sig.hasError {
 		if errResponse, err := oai.getResponseFromOutput(outputSchemaRef, sig.responseType); err == nil {
+			errResponse.Description = "Invalid parameter"
 			operation.Responses["400"] = ResponseRef{Value: errResponse}
+		}
+		if errResponse, err := oai.getResponseFromOutput(outputSchemaRef, sig.responseType); err == nil {
+			errResponse.Description = "Internal Server Error"
 			operation.Responses["500"] = ResponseRef{Value: errResponse}
 		}
+
 	}
 
 	oai.removeOperationDuplicatedProperties(&operation)

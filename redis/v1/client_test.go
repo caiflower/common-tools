@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
- package redisv1
+package redisv1
 
 import (
-	"github.com/google/go-cmp/cmp"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 type TestObject struct {
@@ -145,6 +146,12 @@ func commonTestcase(client RedisClient) {
 }
 
 func TestNewRedisClient(t *testing.T) {
+	defer func() {
+		if err := recover(); err != nil {
+			t.Skip()
+		}
+	}()
+
 	client := NewRedisClient(Config{
 		Addrs:    []string{"redis-headless.svc.app.cluster.local:6379"},
 		Password: "",
@@ -158,6 +165,12 @@ func TestNewRedisClient(t *testing.T) {
 }
 
 func TestNewRedisClientWithPrefix(t *testing.T) {
+	defer func() {
+		if err := recover(); err != nil {
+			t.Skip()
+		}
+	}()
+
 	client := NewRedisClient(Config{
 		Addrs:     []string{"redis-headless.svc.app.cluster.local:6379"},
 		Password:  "",

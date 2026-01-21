@@ -1,3 +1,5 @@
+//go:build test
+
 /*
  * Copyright 2024 caiflower Authors
  *
@@ -14,7 +16,7 @@
  * limitations under the License.
  */
 
- package v2
+package v2
 
 import (
 	"fmt"

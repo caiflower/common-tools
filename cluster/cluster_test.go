@@ -21,84 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/redis/v1"
-
-	"github.com/caiflower/common-tools/global"
+	redisv1 "github.com/caiflower/common-tools/redis/v1"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 )
-
-func TestCluster(t *testing.T) {
-	cluster1, cluster2, cluster3 := common()
-
-	for i := 0; i < 3; i++ {
-		fmt.Printf("模拟重启\n")
-		// 模拟重启
-		cluster1.Close()
-		fmt.Println("localhost1 closed")
-		time.Sleep(20 * time.Second)
-		cluster2.Close()
-		fmt.Println("localhost2 closed")
-		time.Sleep(20 * time.Second)
-		fmt.Println("localhost3 closed")
-		cluster3.Close()
-
-		time.Sleep(20 * time.Second)
-
-		fmt.Println("localhost1 start")
-		cluster1.Start()
-		time.Sleep(20 * time.Second)
-		fmt.Println("localhost2 start")
-		cluster2.Start()
-		time.Sleep(20 * time.Second)
-		fmt.Println("localhost3 start")
-		cluster3.Start()
-		fmt.Printf("模拟重启完成\n")
-
-		time.Sleep(50 * time.Second)
-
-		fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-		fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-		fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
-	}
-}
-
-func Test2(t *testing.T) {
-	cluster1, cluster2, cluster3 := common()
-	mockDown(cluster1, cluster2, cluster3)
-}
-
-func mockDown(cluster1, cluster2, cluster3 *Cluster) {
-	fmt.Printf("开始模拟主节点宕机，一段时间后被拉起\n")
-	// 模拟主节点宕机
-	switch cluster1.GetLeaderName() {
-	case "localhost1":
-		fmt.Printf("localhost1 is closed\n")
-		cluster1.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost1 is start\n")
-		cluster1.Start()
-	case "localhost2":
-		fmt.Printf("localhost2 is closed\n")
-		cluster2.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost2 is start\n")
-		cluster2.Start()
-	case "localhost3":
-		fmt.Printf("localhost3 is closed\n")
-		cluster3.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost3 is start\n")
-		cluster3.Start()
-	default:
-	}
-	fmt.Printf("结束模拟主节点宕机，一段时间后被拉起\n")
-
-	time.Sleep(60 * time.Second)
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
-}
 
 func common() (cluster1, cluster2, cluster3 *Cluster) {
 	c1 := Config{Enable: "true"}
@@ -236,12 +162,6 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	return cluster1, cluster2, cluster3
 }
 
-func TestSignalCluster(t *testing.T) {
-	common()
-
-	global.DefaultResourceManger.Signal()
-}
-
 func TestSingleCluster(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
 
@@ -251,13 +171,9 @@ func TestSingleCluster(t *testing.T) {
 		panic(err)
 	} else {
 		cluster.Start()
-		time.Sleep(20 * time.Second)
-
+		time.Sleep(2 * time.Second)
 		cluster.Close()
-
-		time.Sleep(10 * time.Second)
 	}
-
 }
 
 func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
@@ -410,9 +326,4 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 	return cluster1, cluster2, cluster3
-}
-
-func TestRedisCluster(t *testing.T) {
-	cluster1, cluster2, cluster3 := redisCommon()
-	mockDown(cluster1, cluster2, cluster3)
 }

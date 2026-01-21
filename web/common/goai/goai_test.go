@@ -181,8 +181,8 @@ func TestAddAPI(t *testing.T) {
 	path := oai.Paths["/users"]
 	assert.NotNil(t, path)
 	assert.NotNil(t, path.Post)
-	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.TestCreateUserRequest", path.Post.Summary)
-	assert.Equal(t, "API endpoint for github.com.caiflower.common-tools.web.common.goai.TestCreateUserRequest", path.Post.Description)
+	assert.Equal(t, "github_com_caiflower_common_tools_web_common_goai_TestAddAPI_func1", path.Post.Summary)
+	assert.Equal(t, "API endpoint for github_com_caiflower_common_tools_web_common_goai_TestAddAPI_func1", path.Post.Description)
 }
 
 func TestOperationIDGeneration(t *testing.T) {
@@ -282,8 +282,8 @@ func TestOpenApiV3_Add(t *testing.T) {
 	assert.NotNil(t, test1Path, "Path /test1/{appId} should exist")
 
 	assert.NotNil(t, test1Path.Put, "PUT method should exist for /test1/{appId}")
-	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test1Path.Put.Summary)
-	assert.Equal(t, "API endpoint for github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test1Path.Put.Description)
+	assert.Equal(t, "github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1", test1Path.Put.Summary)
+	assert.Equal(t, "API endpoint for github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1", test1Path.Put.Description)
 
 	putParams := test1Path.Put.Parameters
 	assert.Len(t, putParams, 2, "PUT should have 2 parameters")
@@ -320,8 +320,8 @@ func TestOpenApiV3_Add(t *testing.T) {
 	assert.Contains(t, putResponseProperties, "FlowId")
 
 	assert.NotNil(t, test1Path.Post, "POST method should exist for /test1/{appId}")
-	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test1Path.Post.Summary)
-	assert.Equal(t, "API endpoint for github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test1Path.Post.Description)
+	assert.Equal(t, "github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1_1", test1Path.Post.Summary)
+	assert.Equal(t, "API endpoint for github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1_1", test1Path.Post.Description)
 
 	postParams := test1Path.Post.Parameters
 	assert.Len(t, postParams, 2, "POST should have 2 parameters")
@@ -358,8 +358,8 @@ func TestOpenApiV3_Add(t *testing.T) {
 	assert.NotNil(t, test2Path, "Path /test2/{appId} should exist")
 
 	assert.NotNil(t, test2Path.Get, "GET method should exist for /test2/{appId}")
-	assert.Equal(t, "github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test2Path.Get.Summary)
-	assert.Equal(t, "API endpoint for github.com.caiflower.common-tools.web.common.goai.CreateResourceReq", test2Path.Get.Description)
+	assert.Equal(t, "github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1_2", test2Path.Get.Summary)
+	assert.Equal(t, "API endpoint for github_com_caiflower_common_tools_web_common_goai_TestOpenApiV3_Add_func1_2", test2Path.Get.Description)
 
 	getParams := test2Path.Get.Parameters
 	assert.Len(t, getParams, 2, "GET should have 2 parameters")
