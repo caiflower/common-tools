@@ -256,7 +256,13 @@ func (c *Cluster) Start() error {
 		// 开始心跳
 		go c.heartbeat()
 	case modeSingle:
-		c.signLeader(c.GetMyNode(), 0)
+		defer func() {
+			// sign leader
+			c.signLeader(c.GetMyNode(), 0)
+			// sent follower event
+			c.createEvent(eventNameSignFollower, c.curNode.name)
+		}()
+
 	case modeRedis:
 		c.redisClusterStartUp()
 	default:
@@ -859,10 +865,6 @@ func (c *Cluster) signLeader(node *Node, term int) bool {
 		c.createEvent(eventNameSignFollower, node.name)
 	}
 
-	if c.config.Mode == modeSingle {
-		c.createEvent(eventNameSignFollower, node.name)
-	}
-
 	c.lostLeaderTime = time.Time{}
 	c.leaderNode = node
 	c.leaderName = node.name
@@ -878,16 +880,18 @@ func (c *Cluster) releaseWithNodeName(name string) {
 		c.sate = follower
 	}
 
-	if c.GetLeaderName() == name {
-		c.lostLeaderTime = time.Now()
-		if c.leaderName == c.GetMyName() {
-			c.createEvent(eventNameStopMaster, "")
-		} else {
-			c.createEvent(eventNameReleaseMaster, "")
-		}
-		c.leaderNode = nil
-		c.leaderName = ""
+	if c.GetLeaderName() != name {
+		return
 	}
+
+	c.lostLeaderTime = time.Now()
+	if c.leaderName == c.GetMyName() {
+		c.createEvent(eventNameUnsignMaster, "")
+	} else {
+		c.createEvent(eventNameUnsignFollower, "")
+	}
+	c.leaderNode = nil
+	c.leaderName = ""
 }
 
 func (c *Cluster) releaseLeader() {
@@ -900,13 +904,15 @@ func (c *Cluster) releaseLeader() {
 }
 
 func (c *Cluster) releaseLeaderNoLock() {
-	if c.leaderNode != nil {
-		c.lostLeaderTime = time.Now()
-		if c.leaderName == c.GetMyName() {
-			c.createEvent(eventNameStopMaster, "")
-		} else {
-			c.createEvent(eventNameReleaseMaster, "")
-		}
+	if c.leaderNode == nil {
+		return
+	}
+
+	c.lostLeaderTime = time.Now()
+	if c.leaderName == c.GetMyName() {
+		c.createEvent(eventNameUnsignMaster, "")
+	} else {
+		c.createEvent(eventNameUnsignFollower, "")
 	}
 	c.leaderNode = nil
 	c.leaderName = ""
@@ -961,7 +967,7 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
-					jobTracker.OnNewLeader(ev.leaderName)
+					jobTracker.OnStartedFollowing(ev.leaderName)
 					return true
 				})
 			case eventNameSignMaster:
@@ -971,8 +977,8 @@ func (c *Cluster) consumeEvent() {
 					jobTracker.OnStartedLeading()
 					return true
 				})
-			case eventNameStopMaster:
-				c.logger.Debug("[cluster] %s stop master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			case eventNameUnsignMaster:
+				c.logger.Debug("[cluster] %s unsign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					jobTracker := value.(JobTracker)
 					jobTracker.OnStoppedLeading()
@@ -982,11 +988,11 @@ func (c *Cluster) consumeEvent() {
 				c.logger.Debug("[cluster] %s election start event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 			case eventNameElectionFinish:
 				c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-			case eventNameReleaseMaster:
-				c.logger.Debug("[cluster] %s release master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			case eventNameUnsignFollower:
+				c.logger.Debug("[cluster] %s unsign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 				c.jobTrackers.Range(func(key, value interface{}) bool {
 					tracker := value.(JobTracker)
-					tracker.OnReleaseMaster()
+					tracker.OnStoppedFollowing()
 					return true
 				})
 			case eventNameClose:

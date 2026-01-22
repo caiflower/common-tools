@@ -41,11 +41,11 @@ func (t *TestJobTracker) OnStoppedLeading() {
 	fmt.Println("leader stop")
 }
 
-func (t *TestJobTracker) OnReleaseMaster() {
+func (t *TestJobTracker) OnStoppedFollowing() {
 	fmt.Println("release master")
 }
 
-func (t *TestJobTracker) OnNewLeader(leaderName string) {
+func (t *TestJobTracker) OnStartedFollowing(leaderName string) {
 	fmt.Println("new leader", leaderName)
 }
 
@@ -240,9 +240,9 @@ func (t *TestCaller) OnStartedLeading() {
 
 }
 
-func (t *TestCaller) OnReleaseMaster() {}
+func (t *TestCaller) OnStoppedFollowing() {}
 
-func (t *TestCaller) OnNewLeader(leaderName string) {
+func (t *TestCaller) OnStartedFollowing(leaderName string) {
 
 }
 

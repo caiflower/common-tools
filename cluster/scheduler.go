@@ -30,19 +30,18 @@ type JobTracker interface {
 	OnStartedLeading()
 	// OnStoppedLeading is called when a LeaderElector client stops leading
 	OnStoppedLeading()
-	// OnReleaseMaster is called when a client release master
-	OnReleaseMaster()
-	// OnNewLeader is called when the client observes a leader that is
-	// not the previously observed leader. This includes the first observed
-	// leader when the client starts.
-	OnNewLeader(leaderName string)
+	// OnStartedFollowing is called when a LeaderElector client starts following
+	// leaderName is the name of leader
+	OnStartedFollowing(leaderName string)
+	// OnStartedFollowing is called when a LeaderElector client stops following
+	OnStoppedFollowing()
 }
 
 type Caller interface {
 	OnStartedLeading()
 	OnStoppedLeading()
-	OnReleaseMaster()
-	OnNewLeader(leaderName string)
+	OnStartedFollowing(leaderName string)
+	OnStoppedFollowing()
 	MasterCall()
 	SlaverCall(leaderName string)
 }
@@ -50,12 +49,12 @@ type Caller interface {
 type DefaultCaller struct {
 }
 
-func (dc *DefaultCaller) OnStartedLeading()             {}
-func (dc *DefaultCaller) OnStoppedLeading()             {}
-func (dc *DefaultCaller) OnReleaseMaster()              {}
-func (dc *DefaultCaller) OnNewLeader(leaderName string) {}
-func (dc *DefaultCaller) MasterCall()                   {}
-func (dc *DefaultCaller) SlaverCall(leaderName string)  {}
+func (dc *DefaultCaller) OnStartedLeading()                    {}
+func (dc *DefaultCaller) OnStoppedLeading()                    {}
+func (dc *DefaultCaller) OnStoppedFollowing()                  {}
+func (dc *DefaultCaller) OnStartedFollowing(leaderName string) {}
+func (dc *DefaultCaller) MasterCall()                          {}
+func (dc *DefaultCaller) SlaverCall(leaderName string)         {}
 
 const (
 	statusStopped uint32 = iota
@@ -130,7 +129,7 @@ func (t *DefaultJobTracker) OnStoppedLeading() {
 	}
 }
 
-func (t *DefaultJobTracker) OnReleaseMaster() {
+func (t *DefaultJobTracker) OnStoppedFollowing() {
 	if !atomic.CompareAndSwapUint32(&t.status, statusRunning, statusStopped) {
 		return
 	}
@@ -140,11 +139,11 @@ func (t *DefaultJobTracker) OnReleaseMaster() {
 		t.workerCancel = nil
 	}
 	for _, caller := range t.callers {
-		go caller.OnReleaseMaster()
+		go caller.OnStoppedFollowing()
 	}
 }
 
-func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
+func (t *DefaultJobTracker) OnStartedFollowing(leaderName string) {
 	if !atomic.CompareAndSwapUint32(&t.status, statusStopped, statusRunning) {
 		return
 	}
@@ -153,7 +152,7 @@ func (t *DefaultJobTracker) OnNewLeader(leaderName string) {
 	t.workerCtx = ctx
 	t.workerCancel = cancel
 	for _, caller := range t.callers {
-		go caller.OnNewLeader(leaderName)
+		go caller.OnStartedFollowing(leaderName)
 	}
 
 	go func(ctx context.Context) {
