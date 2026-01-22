@@ -22,8 +22,6 @@ import (
 	"reflect"
 	"time"
 
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
-
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -37,24 +35,24 @@ const (
 type RedisClient interface {
 	GetRedis() redis.Cmdable
 	AddHook(hook redis.Hook)
-	Set(k string, v interface{}) error
-	SetPeriod(k string, v interface{}, period time.Duration) error
-	SetNX(k string, v interface{}) error
-	SetNXPeriod(k string, v interface{}, period time.Duration) error
-	SetEx(k string, v interface{}) error
-	SetEXPeriod(k string, v interface{}, period time.Duration) error
-	MSet(values ...interface{}) error
-	MSetNX(values ...interface{}) error
-	Get(k string, v interface{}) error
-	GetString(k string) (string, error)
-	HSet(key string, value ...interface{}) error
-	HGet(key string, field string, v interface{}) error
-	HGetString(key string, field string) (string, error)
-	HGetAll(key string) (map[string]string, error)
-	HDel(key string, field string) error
-	Del(k ...string) error
-	Expire(k string, period time.Duration) (bool, error)
-	Exist(k ...string) (bool, error)
+	Set(ctx context.Context, k string, v interface{}) error
+	SetPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
+	SetNX(ctx context.Context, k string, v interface{}) error
+	SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
+	SetEx(ctx context.Context, k string, v interface{}) error
+	SetEXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
+	MSet(ctx context.Context, values ...interface{}) error
+	MSetNX(ctx context.Context, values ...interface{}) error
+	Get(ctx context.Context, k string, v interface{}) error
+	GetString(ctx context.Context, k string) (string, error)
+	HSet(ctx context.Context, key string, value ...interface{}) error
+	HGet(ctx context.Context, key string, field string, v interface{}) error
+	HGetString(ctx context.Context, key string, field string) (string, error)
+	HGetAll(ctx context.Context, key string) (map[string]string, error)
+	HDel(ctx context.Context, key string, field string) error
+	Del(ctx context.Context, k ...string) error
+	Expire(ctx context.Context, k string, period time.Duration) (bool, error)
+	Exist(ctx context.Context, k ...string) (bool, error)
 	GetKey(k string) string // get key with keyPrefix
 }
 
@@ -210,96 +208,96 @@ func (c *redisClient) AddHook(hook redis.Hook) {
 	}
 }
 
-func (c *redisClient) Set(k string, v interface{}) error {
-	return c.SetPeriod(k, v, 0)
+func (c *redisClient) Set(ctx context.Context, k string, v interface{}) error {
+	return c.SetPeriod(ctx, k, v, 0)
 }
 
-func (c *redisClient) SetPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().Set(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
+func (c *redisClient) SetPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
+	return c.GetRedis().Set(ctx, c.GetKey(k), encodingObject(v), period).Err()
 }
 
-func (c *redisClient) SetNX(k string, v interface{}) error {
-	return c.SetNXPeriod(k, v, 0)
+func (c *redisClient) SetNX(ctx context.Context, k string, v interface{}) error {
+	return c.SetNXPeriod(ctx, k, v, 0)
 }
 
-func (c *redisClient) SetNXPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetNX(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
+func (c *redisClient) SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
+	return c.GetRedis().SetNX(ctx, c.GetKey(k), encodingObject(v), period).Err()
 }
 
-func (c *redisClient) SetEx(k string, v interface{}) error {
-	return c.SetEXPeriod(k, v, 0)
+func (c *redisClient) SetEx(ctx context.Context, k string, v interface{}) error {
+	return c.SetEXPeriod(ctx, k, v, 0)
 }
 
-func (c *redisClient) SetEXPeriod(k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetEX(GetContext(), c.GetKey(k), encodingObject(v), period).Err()
+func (c *redisClient) SetEXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
+	return c.GetRedis().SetEX(ctx, c.GetKey(k), encodingObject(v), period).Err()
 }
 
-func (c *redisClient) Get(k string, v interface{}) error {
-	if bytes, err := c.GetRedis().Get(GetContext(), c.GetKey(k)).Bytes(); err != nil {
+func (c *redisClient) Get(ctx context.Context, k string, v interface{}) error {
+	if bytes, err := c.GetRedis().Get(ctx, c.GetKey(k)).Bytes(); err != nil {
 		return err
 	} else {
 		return tools.Unmarshal(bytes, v)
 	}
 }
 
-func (c *redisClient) GetString(k string) (string, error) {
-	return c.GetRedis().Get(GetContext(), c.GetKey(k)).Result()
+func (c *redisClient) GetString(ctx context.Context, k string) (string, error) {
+	return c.GetRedis().Get(ctx, c.GetKey(k)).Result()
 }
 
-func (c *redisClient) Del(k ...string) error {
+func (c *redisClient) Del(ctx context.Context, k ...string) error {
 	var keys []string
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	return c.GetRedis().Del(GetContext(), keys...).Err()
+	return c.GetRedis().Del(ctx, keys...).Err()
 }
 
-func (c *redisClient) Exist(k ...string) (bool, error) {
+func (c *redisClient) Exist(ctx context.Context, k ...string) (bool, error) {
 	var keys []string
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	if v, err := c.GetRedis().Exists(GetContext(), keys...).Result(); err != nil {
+	if v, err := c.GetRedis().Exists(ctx, keys...).Result(); err != nil {
 		return false, err
 	} else {
 		return v == 1, nil
 	}
 }
 
-func (c *redisClient) Expire(k string, period time.Duration) (bool, error) {
-	return c.GetRedis().Expire(GetContext(), c.GetKey(k), period).Result()
+func (c *redisClient) Expire(ctx context.Context, k string, period time.Duration) (bool, error) {
+	return c.GetRedis().Expire(ctx, c.GetKey(k), period).Result()
 }
 
-func (c *redisClient) MSet(values ...interface{}) error {
-	return c.GetRedis().MSet(GetContext(), c.encodingValues(true, values...)).Err()
+func (c *redisClient) MSet(ctx context.Context, values ...interface{}) error {
+	return c.GetRedis().MSet(ctx, c.encodingValues(true, values...)).Err()
 }
 
-func (c *redisClient) MSetNX(values ...interface{}) error {
-	return c.GetRedis().MSetNX(GetContext(), c.encodingValues(true, values...)).Err()
+func (c *redisClient) MSetNX(ctx context.Context, values ...interface{}) error {
+	return c.GetRedis().MSetNX(ctx, c.encodingValues(true, values...)).Err()
 }
 
-func (c *redisClient) HSet(key string, values ...interface{}) error {
-	return c.GetRedis().HSet(GetContext(), c.GetKey(key), c.encodingValues(false, values...)).Err()
+func (c *redisClient) HSet(ctx context.Context, key string, values ...interface{}) error {
+	return c.GetRedis().HSet(ctx, c.GetKey(key), c.encodingValues(false, values...)).Err()
 }
 
-func (c *redisClient) HGet(key string, field string, v interface{}) error {
-	if bytes, err := c.GetRedis().HGet(GetContext(), c.GetKey(key), field).Bytes(); err != nil {
+func (c *redisClient) HGet(ctx context.Context, key string, field string, v interface{}) error {
+	if bytes, err := c.GetRedis().HGet(ctx, c.GetKey(key), field).Bytes(); err != nil {
 		return err
 	} else {
 		return tools.Unmarshal(bytes, v)
 	}
 }
 
-func (c *redisClient) HGetString(key string, field string) (string, error) {
-	return c.GetRedis().HGet(GetContext(), c.GetKey(key), field).Result()
+func (c *redisClient) HGetString(ctx context.Context, key string, field string) (string, error) {
+	return c.GetRedis().HGet(ctx, c.GetKey(key), field).Result()
 }
 
-func (c *redisClient) HGetAll(key string) (map[string]string, error) {
-	return c.GetRedis().HGetAll(GetContext(), c.GetKey(key)).Result()
+func (c *redisClient) HGetAll(ctx context.Context, key string) (map[string]string, error) {
+	return c.GetRedis().HGetAll(ctx, c.GetKey(key)).Result()
 }
 
-func (c *redisClient) HDel(key string, field string) error {
-	return c.GetRedis().HDel(GetContext(), c.GetKey(key), field).Err()
+func (c *redisClient) HDel(ctx context.Context, key string, field string) error {
+	return c.GetRedis().HDel(ctx, c.GetKey(key), field).Err()
 }
 
 func (c *redisClient) GetKey(origin string) string {
@@ -310,6 +308,6 @@ func (c *redisClient) GetKey(origin string) string {
 }
 
 // GetContext getContext with traceId
-func GetContext() context.Context {
-	return context.WithValue(golocalv1.GetContext(), "traceId", golocalv1.GetTraceID())
-}
+//func ctx context.Context {
+//	return context.WithValue(golocalv1.ctx, "traceId", golocalv1.GetTraceID())
+//}

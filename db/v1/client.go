@@ -26,6 +26,7 @@ import (
 	"time"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
+	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/schema"
 
 	"github.com/caiflower/common-tools/global"
@@ -39,22 +40,22 @@ import (
 const traceId = "traceId"
 
 type IDB interface {
-	GetDB() *bun.DB                                                          // 获取数据库连接，无事物
-	GetTx(tx *bun.Tx) bun.IDB                                                // 获取数据库连接，如果tx=nil，那么获取的是无事物的连接，否者返回tx。
-	Begin() (*bun.Tx, context.CancelFunc, error)                             // 获取一个连接，并且开始事务
-	Close()                                                                  // 关闭DB
-	GetSelect(model interface{}) *bun.SelectQuery                            // 获得通用处理器：查询
-	GetInsert(model interface{}, tx *bun.Tx) *bun.InsertQuery                // 获得通用处理器：写入
-	GetUpdate(model interface{}, tx *bun.Tx) *bun.UpdateQuery                // 获得通用处理器：更新
-	GetDelete(model interface{}, tx *bun.Tx) *bun.DeleteQuery                // 获得通用处理器：删除
-	GetSoftDelete(model interface{}, tx *bun.Tx) *bun.UpdateQuery            // 获得通用处理器：逻辑删除
-	Insert(data interface{}, tx *bun.Tx) (int64, error)                      // 通用处理：插入数据(单条及批量处理，批量太大时不要使用)
-	SoftDelete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) // 通用处理：逻辑删除(id可以是单个也可以是数组)
-	Delete(model interface{}, tx *bun.Tx, id interface{}) (int64, error)     // 通用处理：物理删除(id可以是单个也可以是数组)
-	QueryPage(result interface{}, filter Filter) (int, error)                // 通用处理：根据条件查询
-	QueryAll(result interface{}) (int, error)                                // 通用处理：查询全量
-	GetRowsAffected(result sql.Result, err error) (int64, error)             // 通用处理：获取执行结果影响的记录数量
-	ParseErr(err error) error                                                // 单个数据操作，消化ErrNoRows
+	GetDB() *bun.DB                                                                               // 获取数据库连接，无事物
+	GetTx(tx *bun.Tx) bun.IDB                                                                     // 获取数据库连接，如果tx=nil，那么获取的是无事物的连接，否者返回tx。
+	Begin(ctx context.Context) (*bun.Tx, context.CancelFunc, error)                               // 获取一个连接，并且开始事务
+	Close()                                                                                       // 关闭DB
+	GetSelect(model interface{}) *bun.SelectQuery                                                 // 获得通用处理器：查询
+	GetInsert(model interface{}, tx *bun.Tx) *bun.InsertQuery                                     // 获得通用处理器：写入
+	GetUpdate(model interface{}, tx *bun.Tx) *bun.UpdateQuery                                     // 获得通用处理器：更新
+	GetDelete(model interface{}, tx *bun.Tx) *bun.DeleteQuery                                     // 获得通用处理器：删除
+	GetSoftDelete(model interface{}, tx *bun.Tx) *bun.UpdateQuery                                 // 获得通用处理器：逻辑删除
+	Insert(ctx context.Context, data interface{}, tx *bun.Tx) (int64, error)                      // 通用处理：插入数据(单条及批量处理，批量太大时不要使用)
+	SoftDelete(ctx context.Context, model interface{}, tx *bun.Tx, id interface{}) (int64, error) // 通用处理：逻辑删除(id可以是单个也可以是数组)
+	Delete(ctx context.Context, model interface{}, tx *bun.Tx, id interface{}) (int64, error)     // 通用处理：物理删除(id可以是单个也可以是数组)
+	QueryPage(ctx context.Context, result interface{}, filter Filter) (int, error)                // 通用处理：根据条件查询
+	QueryAll(ctx context.Context, result interface{}) (int, error)                                // 通用处理：查询全量
+	GetRowsAffected(result sql.Result, err error) (int64, error)                                  // 通用处理：获取执行结果影响的记录数量
+	ParseErr(err error) error                                                                     // 单个数据操作，消化ErrNoRows
 }
 
 type Filter interface {
@@ -81,6 +82,11 @@ func NewDBClient(config Config) (c *Client, err error) {
 		if err != nil {
 			return nil, err
 		}
+	case "pgsql":
+		c, err = createPgsqlClient(&config)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("unsupported dialect %s", config.Dialect)
 	}
@@ -95,7 +101,7 @@ func NewDBClient(config Config) (c *Client, err error) {
 	}
 
 	if config.EnableMetric {
-		ctx, cancelFunc := context.WithCancel(GetContext())
+		ctx, cancelFunc := context.WithCancel(context.Background())
 		c.cancel = cancelFunc
 		once.Do(func() {
 			startMetric(ctx, c.DB, &config)
@@ -139,6 +145,33 @@ func createMysqlClient(config *Config) (*Client, error) {
 	return &Client{DB: bunDB, config: config}, nil
 }
 
+func createPgsqlClient(config *Config) (*Client, error) {
+	password := config.Password
+	if config.EnablePasswordEncrypt {
+		_tmpPassword, err := tools.AesDecryptRawBase64(password)
+		if err != nil {
+			return nil, err
+		}
+		password = _tmpPassword
+	}
+	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
+		config.User, config.Password, config.Url, config.DbName)
+	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+
+	// See "Important settings" section.
+	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
+	db.SetMaxOpenConns(config.MaxOpen)
+	db.SetMaxIdleConns(config.MaxIdle)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelFunc()
+	if err := db.PingContext(ctx); err != nil {
+		return nil, errors.New("connect to db timeout")
+	}
+
+	bunDB := bun.NewDB(db, mysqldialect.New())
+	return &Client{DB: bunDB, config: config}, nil
+}
+
 func (c *Client) GetDB() *bun.DB {
 	return c.DB
 }
@@ -150,8 +183,8 @@ func (c *Client) GetTx(tx *bun.Tx) bun.IDB {
 	return tx
 }
 
-func (c *Client) Begin() (*bun.Tx, context.CancelFunc, error) {
-	ctx, cancel := context.WithTimeout(GetContext(), c.config.TransactionTimeout)
+func (c *Client) Begin(ctx context.Context) (*bun.Tx, context.CancelFunc, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.config.TransactionTimeout)
 	tx, err := c.DB.BeginTx(ctx, nil)
 	if err != nil {
 		cancel()
@@ -191,45 +224,45 @@ func (c *Client) GetSoftDelete(model interface{}, tx *bun.Tx) *bun.UpdateQuery {
 	return c.GetTx(tx).NewUpdate().Model(model).Set("update_time=current_timestamp").Set("status=-1")
 }
 
-func (c *Client) Insert(data interface{}, tx *bun.Tx) (int64, error) {
-	return c.GetRowsAffected(c.GetTx(tx).NewInsert().Model(data).Exec(GetContext()))
+func (c *Client) Insert(ctx context.Context, data interface{}, tx *bun.Tx) (int64, error) {
+	return c.GetRowsAffected(c.GetTx(tx).NewInsert().Model(data).Exec(ctx))
 }
 
-func (c *Client) SoftDelete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
+func (c *Client) SoftDelete(ctx context.Context, model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
 	handler := c.GetSoftDelete(model, tx)
 	if reflect.TypeOf(id).Kind() == reflect.Slice {
 		handler.Where("id in (?)", bun.In(id))
 	} else {
 		handler.Where("id=?", id)
 	}
-	return c.GetRowsAffected(handler.Exec(GetContext()))
+	return c.GetRowsAffected(handler.Exec(ctx))
 }
 
-func (c *Client) Delete(model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
+func (c *Client) Delete(ctx context.Context, model interface{}, tx *bun.Tx, id interface{}) (int64, error) {
 	handler := c.GetDelete(model, tx)
 	if reflect.TypeOf(id).Kind() == reflect.Slice {
 		handler.Where("id in (?)", bun.In(id))
 	} else {
 		handler.Where("id=?", id)
 	}
-	return c.GetRowsAffected(handler.Exec(GetContext()))
+	return c.GetRowsAffected(handler.Exec(ctx))
 }
 
-func (c *Client) QueryAll(result interface{}) (int, error) {
-	return c.GetSelect(result).Order("id desc").ScanAndCount(GetContext(), result)
+func (c *Client) QueryAll(ctx context.Context, result interface{}) (int, error) {
+	return c.GetSelect(result).Order("id desc").ScanAndCount(ctx, result)
 }
 
-func (c *Client) QueryPage(result interface{}, filter Filter) (int, error) {
+func (c *Client) QueryPage(ctx context.Context, result interface{}, filter Filter) (int, error) {
 	if filter != nil {
 		offset, limit, disable := filter.GetPage()
 		if !disable {
-			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(GetContext(), result)
+			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(ctx, result)
 		}
 
-		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(GetContext(), result)
+		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(ctx, result)
 	}
 
-	return c.QueryAll(result)
+	return c.QueryAll(ctx, result)
 }
 
 func (c *Client) GetRowsAffected(result sql.Result, err error) (int64, error) {
@@ -270,6 +303,6 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 }
 
 // GetContext getContext with traceId
-func GetContext() context.Context {
-	return context.WithValue(golocalv1.GetContext(), traceId, golocalv1.GetTraceID())
-}
+//func GetContext() context.Context {
+//	return context.WithValue(golocalv1.GetContext(), traceId, golocalv1.GetTraceID())
+//}

@@ -54,18 +54,18 @@ type Config struct {
 
 type IClickHouseDB interface {
 	GetDB() *ch.DB
-	GetSelect(model interface{}) *ch.SelectQuery // 获得通用处理器：查询
-	GetInsert(model interface{}) *ch.InsertQuery // 获得通用处理器：写入
+	GetSelect(model interface{}) *ch.SelectQuery           // 获得通用处理器：查询
+	GetInsert(model interface{}) *ch.InsertQuery           // 获得通用处理器：写入
+	GetCreateTable(model interface{}) *ch.CreateTableQuery // 创建表
 
-	Insert(data interface{}) (int64, error)                       // 新增
-	QueryAll(result interface{}) (int, error)                     // 查询所有
-	QueryPage(result interface{}, filter DataFilter) (int, error) //通用处理：分页查询
+	Insert(ctx context.Context, data interface{}) (int64, error)                       // 新增
+	QueryAll(ctx context.Context, result interface{}) (int, error)                     // 查询所有
+	QueryPage(ctx context.Context, result interface{}, filter DataFilter) (int, error) //通用处理：分页查询
+	TruncateTable(ctx context.Context, model interface{}) error                        // 清空表
+	DropTable(ctx context.Context, model interface{}) error                            // 删除表
+	GetRowsAffected(result sql.Result, err error) (int64, error)                       // 获取受影响的行数
 
-	TruncateTable(model interface{}) error                       // 清空表
-	DropTable(model interface{}) error                           // 删除表
-	GetCreateTable(model interface{}) *ch.CreateTableQuery       // 创建表
-	GetRowsAffected(result sql.Result, err error) (int64, error) // 获取受影响的行数
-	Close()                                                      // 关闭
+	Close() // 关闭
 }
 
 type DataFilter interface {
@@ -153,13 +153,13 @@ func (c *Client) GetInsert(model interface{}) *ch.InsertQuery {
 	return c.db.NewInsert().Model(model)
 }
 
-func (c *Client) TruncateTable(model interface{}) error {
-	_, err := c.db.NewTruncateTable().Model(model).Exec(context.TODO())
+func (c *Client) TruncateTable(ctx context.Context, model interface{}) error {
+	_, err := c.db.NewTruncateTable().Model(model).Exec(ctx)
 	return err
 }
 
-func (c *Client) DropTable(model interface{}) error {
-	_, err := c.db.NewDropTable().Model(model).Exec(context.TODO())
+func (c *Client) DropTable(ctx context.Context, model interface{}) error {
+	_, err := c.db.NewDropTable().Model(model).Exec(ctx)
 	return err
 }
 
@@ -167,17 +167,17 @@ func (c *Client) GetCreateTable(model interface{}) *ch.CreateTableQuery {
 	return c.db.NewCreateTable().Model(model)
 }
 
-func (c *Client) QueryAll(result interface{}) (int, error) {
-	return c.GetSelect(result).ScanAndCount(context.TODO(), result)
+func (c *Client) QueryAll(ctx context.Context, result interface{}) (int, error) {
+	return c.GetSelect(result).ScanAndCount(ctx, result)
 }
 
-func (c *Client) QueryPage(result interface{}, filter DataFilter) (int, error) {
+func (c *Client) QueryPage(ctx context.Context, result interface{}, filter DataFilter) (int, error) {
 	offset, limit, disable := filter.GetPage()
 
 	// 禁用分页
 	if disable {
 		count := 0
-		err := filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Scan(context.Background(), result)
+		err := filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Scan(ctx, result)
 		v := reflect.ValueOf(result)
 		if v.Kind() == reflect.Ptr {
 			v = v.Elem()
@@ -189,11 +189,11 @@ func (c *Client) QueryPage(result interface{}, filter DataFilter) (int, error) {
 	}
 
 	// 分页
-	return filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Offset(offset).Limit(limit).ScanAndCount(context.Background(), result)
+	return filter.Filter(c.GetDB()).Order(filter.GetOrders()...).Offset(offset).Limit(limit).ScanAndCount(ctx, result)
 }
 
-func (c *Client) Insert(data interface{}) (int64, error) {
-	return c.GetRowsAffected(c.GetInsert(data).Exec(context.TODO()))
+func (c *Client) Insert(ctx context.Context, data interface{}) (int64, error) {
+	return c.GetRowsAffected(c.GetInsert(data).Exec(ctx))
 }
 
 func (c *Client) GetRowsAffected(result sql.Result, err error) (int64, error) {

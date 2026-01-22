@@ -22,8 +22,10 @@ require (
 	github.com/prometheus/client_golang v1.12.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.10.0
-	github.com/uptrace/bun v1.0.19
+	github.com/uptrace/bun v1.0.25
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
+	github.com/uptrace/bun/dialect/pgdialect v1.0.25
+	github.com/uptrace/bun/driver/pgdriver v1.0.25
 	github.com/uptrace/go-clickhouse v0.2.9
 	github.com/uptrace/uptrace-go v1.14.0
 	github.com/xdg-go/scram v1.1.2
@@ -103,4 +105,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20230822172742-b8732ec3820d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230822172742-b8732ec3820d // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	mellium.im/sasl v0.2.1 // indirect
 )

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package dbv1
+package dbv1
 
 import (
 	"github.com/caiflower/common-tools/pkg/logger"

@@ -17,6 +17,7 @@
 package v1
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -77,7 +78,9 @@ func TestNewClient(t *testing.T) {
 		OsVersion:  "CentOS Linux release 7.2.1512 (Core)",
 		CreateTime: time.Now(),
 	})
-	if cnt, err := client.Insert(&hosts); err != nil {
+	todo := context.TODO()
+
+	if cnt, err := client.Insert(todo, &hosts); err != nil {
 		panic(err)
 	} else {
 		fmt.Printf("insert cnt = %d\n", cnt)
@@ -85,7 +88,7 @@ func TestNewClient(t *testing.T) {
 
 	// queryPage
 	var hostPage []Host
-	cnt, err := client.QueryPage(&hostPage, &TestDataFiler{})
+	cnt, err := client.QueryPage(todo, &hostPage, &TestDataFiler{})
 	if err != nil {
 		return
 	}

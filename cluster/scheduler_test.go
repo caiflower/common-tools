@@ -190,7 +190,11 @@ func TestClusterJobTracker(t *testing.T) {
 
 	cluster3.Start()
 
-	time.Sleep(15 * time.Second)
+	for {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
 
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
@@ -218,7 +222,11 @@ func TestClusterJobTracker(t *testing.T) {
 	default:
 	}
 
-	time.Sleep(20 * time.Second)
+	for {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
 
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())

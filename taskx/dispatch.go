@@ -106,8 +106,10 @@ func SubmitTask(task *Task) error {
 func (t *taskDispatcher) SubmitTask(task *Task) error {
 	tx := dbv1.NewBatchTx(t.TaskDao.GetDB())
 	taskBean, subtaskBeans := task.convert2Bean()
+	ctx := golocalv1.GetContext()
+
 	tx.Add(func(tx *bun.Tx) error {
-		_, err := t.TaskDao.Insert(taskBean, tx)
+		_, err := t.TaskDao.Insert(ctx, taskBean, tx)
 		return err
 	})
 
@@ -119,7 +121,7 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	}
 
 	tx.Add(func(tx *bun.Tx) error {
-		_, err := t.SubtaskDao.Insert(&subtaskBeans, tx)
+		_, err := t.SubtaskDao.Insert(ctx, &subtaskBeans, tx)
 		return err
 	})
 
@@ -139,11 +141,12 @@ func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 
 func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 	taskBean, subtaskBeans := task.convert2Bean()
-	_, err := t.TaskDao.Insert(taskBean, tx)
+	ctx := golocalv1.GetContext()
+	_, err := t.TaskDao.Insert(ctx, taskBean, tx)
 	if err != nil {
 		return err
 	}
-	_, err = t.SubtaskDao.Insert(&subtaskBeans, tx)
+	_, err = t.SubtaskDao.Insert(ctx, &subtaskBeans, tx)
 	if err != nil {
 		return err
 	}

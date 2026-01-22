@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
@@ -63,7 +64,7 @@ func TestNewDBClient(t *testing.T) {
 	}
 
 	var containerRegistry []ContainerRegistry
-	count, err := client.QueryAll(&containerRegistry)
+	count, err := client.QueryAll(golocalv1.GetContext(), &containerRegistry)
 	if err != nil {
 		panic(err)
 	}
@@ -102,7 +103,7 @@ func TestTransactionTimeout(t *testing.T) {
 		t.Skip()
 	}
 
-	tx, cancel, err := client.Begin()
+	tx, cancel, err := client.Begin(golocalv1.GetContext())
 	if err != nil {
 		return
 	}
@@ -125,7 +126,7 @@ func TestTransactionTimeout(t *testing.T) {
 	//// 超时
 	time.Sleep(transactionTimeout + time.Second)
 
-	_, err = client.Insert(&containerRegistry, tx)
+	_, err = client.Insert(golocalv1.GetContext(), &containerRegistry, tx)
 	if err != nil && errors.Is(err, sql.ErrTxDone) {
 		logger.Info("test transaction timeout successfully")
 	} else {

@@ -42,7 +42,7 @@ func (c *Cluster) redisFighting() {
 	key := c.config.RedisDiscovery.DataPath + "/Election"
 
 	logger.Debug("[cluster-redis] redisFighting")
-	err := c.Redis.SetNXPeriod(key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod)
+	err := c.Redis.SetNXPeriod(context.TODO(), key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod)
 	if err != nil {
 		c.logger.Error("[cluster-redis] fighting failed. Error: %v", err)
 	}
@@ -52,7 +52,7 @@ func (c *Cluster) redisSyncLeader() {
 	key := c.config.RedisDiscovery.DataPath + "/Election"
 
 	fn := func() {
-		leaderName, err := c.Redis.GetString(key)
+		leaderName, err := c.Redis.GetString(context.TODO(), key)
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				c.releaseLeader()
@@ -91,7 +91,7 @@ func (c *Cluster) redisWatchDog() {
 	ctx, cancel := context.WithCancel(c.ctx)
 
 	fn := func() {
-		leaderName, err := c.Redis.GetString(key)
+		leaderName, err := c.Redis.GetString(context.TODO(), key)
 		if err != nil {
 			logger.Error("[cluster-redis] get lease failed. Error: %v", err)
 			c.releaseLeader()
@@ -105,7 +105,7 @@ func (c *Cluster) redisWatchDog() {
 			return
 		}
 
-		err = c.Redis.SetPeriod(key, leaderName, c.config.RedisDiscovery.ElectionPeriod)
+		err = c.Redis.SetPeriod(ctx, key, leaderName, c.config.RedisDiscovery.ElectionPeriod)
 		if err != nil {
 			logger.Error("[cluster-redis] set lease failed. Error: %v", err)
 		}
