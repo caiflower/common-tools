@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/caiflower/common-tools/pkg/tools"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/mysqldialect"
@@ -20,22 +22,25 @@ import (
 	"github.com/uptrace/bun/schema"
 )
 
+// 使用例子 //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -dsn 'mysql:root:root@tcp(127.0.0.1:3306)/test_db?' -tables test_table
+
 type options struct {
-	Dialect    string
-	Host       string
-	Port       string
-	User       string
-	Password   string
-	DBName     string
-	Schema     string
-	Charset    string
-	Tables     []string
-	StructOut  string
-	DaoOut     string
-	Package    string
-	StructName string
-	Plural     bool
-	DSN        string
+	Dialect   string
+	Host      string
+	Port      string
+	User      string
+	Password  string
+	DBName    string
+	Schema    string
+	Charset   string
+	Tables    []string
+	StructOut string
+	DaoOut    string
+	Plural    bool
+	DSN       string
+	Timeout   int
+	Keyword   string
+	// FilterDisableZeroValue bool
 }
 
 type columnMeta struct {
@@ -85,10 +90,11 @@ func parseOptions() options {
 	flag.StringVar(&opt.DBName, "db", "", "数据库名（必填）")
 	flag.StringVar(&opt.Schema, "schema", "", "数据库schema，postgres默认public，mysql可留空")
 	flag.StringVar(&opt.Charset, "charset", "utf8mb4", "字符集(mysql)")
-	flag.StringVar(&opt.StructOut, "struct_out", "", "Model 输出目录路径, 留空与DaoOut相同")
 	flag.StringVar(&opt.DaoOut, "dao_out", "./dao", "Dao 输出目录路径")
-	flag.StringVar(&opt.StructName, "struct_name", "", "单表时可指定结构体名称，留空则由表名自动转换")
 	flag.BoolVar(&opt.Plural, "plural", false, "保留复数表名，默认关闭（与bun一致）")
+	flag.IntVar(&opt.Timeout, "timeout", 10, "执行超时时间")
+	flag.StringVar(&opt.Keyword, "keyword", "id", "关键字，设置之后不遵循驼峰命名规则，用逗号分隔。 例如：id,uuid")
+	// flag.BoolVar(&opt.FilterDisableZeroValue, "fiter_disable_zero_value", false, "保留复数表名，默认关闭（与bun一致）")
 	tables := flag.String("tables", "", "待生成的表名，多个以逗号分隔（必填）")
 	flag.Parse()
 
@@ -163,7 +169,8 @@ func inferDBNameFromDSN(dialect, dsn string) string {
 }
 
 func run(opts options) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second*time.Duration(opts.Timeout))
+	defer cancel()
 	db, err := connectDB(ctx, opts)
 	if err != nil {
 		return err
@@ -177,18 +184,15 @@ func run(opts options) error {
 		})
 	}
 
-	structPkg := opts.Package
-	if structPkg == "" {
-		structPkg = filepath.Base(filepath.Clean(opts.StructOut))
-	}
+	structPkg := filepath.Base(filepath.Clean(opts.StructOut))
 
 	for _, tbl := range opts.Tables {
 		cols, err := fetchColumns(ctx, db, opts, tbl)
 		if err != nil {
 			return fmt.Errorf("fetch columns for %s: %w", tbl, err)
 		}
-		tmeta := buildTableMeta(tbl, cols, opts.StructName)
-		content := renderCombinedFile(structPkg, []tableMeta{tmeta})
+		tmeta := buildTableMeta(tbl, cols)
+		content := renderCombinedFile(opts, structPkg, []tableMeta{tmeta})
 		outPath := filepath.Join(opts.StructOut, fmt.Sprintf("%s.go", tbl))
 		if err := writeFormatted(outPath, content); err != nil {
 			return fmt.Errorf("write merged file %s: %w", outPath, err)
@@ -233,7 +237,7 @@ func connectDB(ctx context.Context, opt options) (*bun.DB, error) {
 func fetchColumns(ctx context.Context, db *bun.DB, opt options, table string) ([]columnMeta, error) {
 	switch opt.Dialect {
 	case "mysql":
-		cols, err := fetchMySQLColumns(ctx, db, opt.DBName, table)
+		cols, err := fetchMySQLColumns(ctx, db, opt.DBName, table, strings.Split(opt.Keyword, ","))
 		if err != nil {
 			return nil, err
 		}
@@ -242,7 +246,7 @@ func fetchColumns(ctx context.Context, db *bun.DB, opt options, table string) ([
 		}
 		return cols, nil
 	case "postgres":
-		cols, err := fetchPostgresColumns(ctx, db, opt.Schema, table)
+		cols, err := fetchPostgresColumns(ctx, db, opt.Schema, table, strings.Split(opt.Keyword, ","))
 		if err != nil {
 			return nil, err
 		}
@@ -266,7 +270,7 @@ type mysqlColumnRow struct {
 	ColumnComment sql.NullString `bun:"column_comment"`
 }
 
-func fetchMySQLColumns(ctx context.Context, db *bun.DB, schema, table string) ([]columnMeta, error) {
+func fetchMySQLColumns(ctx context.Context, db *bun.DB, schema, table string, keywords []string) ([]columnMeta, error) {
 	var rows []mysqlColumnRow
 	err := db.NewSelect().
 		TableExpr("information_schema.COLUMNS").
@@ -298,7 +302,7 @@ func fetchMySQLColumns(ctx context.Context, db *bun.DB, schema, table string) ([
 			ColumnComment:  r.ColumnComment,
 			OrigColumnType: r.ColumnType,
 		}
-		fillGoType(&m, "mysql")
+		fillGoType(&m, "mysql", keywords)
 		result = append(result, m)
 	}
 	return result, nil
@@ -316,7 +320,7 @@ type pgColumnRow struct {
 	IsPrimary     bool           `bun:"is_primary"`
 }
 
-func fetchPostgresColumns(ctx context.Context, db *bun.DB, schema, table string) ([]columnMeta, error) {
+func fetchPostgresColumns(ctx context.Context, db *bun.DB, schema, table string, keywords []string) ([]columnMeta, error) {
 	var rows []pgColumnRow
 	err := db.NewSelect().
 		TableExpr("information_schema.columns AS c").
@@ -359,7 +363,7 @@ func fetchPostgresColumns(ctx context.Context, db *bun.DB, schema, table string)
 			ColumnComment:  sql.NullString{},
 			OrigColumnType: r.UdtName.String,
 		}
-		fillGoType(&m, "postgres")
+		fillGoType(&m, "postgres", keywords)
 		result = append(result, m)
 	}
 	return result, nil
@@ -372,7 +376,7 @@ func normalizeMySQLDSN(dsn string) string {
 	return dsn
 }
 
-func fillGoType(m *columnMeta, dialect string) {
+func fillGoType(m *columnMeta, dialect string, keywords []string) {
 	colType := strings.ToLower(m.ColumnType)
 	dataType := strings.ToLower(m.DataType)
 
@@ -444,8 +448,8 @@ func fillGoType(m *columnMeta, dialect string) {
 			}
 		}
 	}
-	m.GoName = toCamel(m.ColumnName)
-	m.JSONTag = toLowerCamel(m.ColumnName)
+	m.GoName, _ = toCamel(m.ColumnName, keywords)
+	m.JSONTag = toLowerCamel(m.ColumnName, keywords)
 	m.BunTag = buildBunTag(m)
 	if strings.HasPrefix(m.GoType, "sql.") {
 		m.NeedSQLPkg = true
@@ -477,13 +481,9 @@ func buildBunTag(m *columnMeta) string {
 	return strings.Join(parts, ",")
 }
 
-func buildTableMeta(table string, cols []columnMeta, overrideStruct string) tableMeta {
+func buildTableMeta(table string, cols []columnMeta) tableMeta {
 	t := tableMeta{TableName: table}
-	if overrideStruct != "" && len(cols) == 1 {
-		t.StructName = overrideStruct
-	} else {
-		t.StructName = toCamel(table)
-	}
+	t.StructName, _ = toCamel(table, []string{})
 	t.Columns = cols
 	for _, c := range cols {
 		if c.IsPrimary && !t.HasPrimary {
@@ -494,10 +494,10 @@ func buildTableMeta(table string, cols []columnMeta, overrideStruct string) tabl
 	return t
 }
 
-func renderCombinedFile(pkg string, tables []tableMeta) string {
+func renderCombinedFile(opts options, pkg string, tables []tableMeta) string {
 	imports := collectImports(tables, true)
 	body := renderStructBlocks(tables)
-	body += "\n" + renderDaoBlocks(tables)
+	body += "\n" + renderDaoBlocks(opts, tables)
 	return renderFile(pkg, imports, body)
 }
 
@@ -507,9 +507,9 @@ func renderStructFile(pkg string, tables []tableMeta) string {
 	return renderFile(pkg, imports, body)
 }
 
-func renderDaoFile(pkg string, tables []tableMeta) string {
+func renderDaoFile(opts options, pkg string, tables []tableMeta) string {
 	imports := collectImports(tables, true)
-	body := renderDaoBlocks(tables)
+	body := renderDaoBlocks(opts, tables)
 	return renderFile(pkg, imports, body)
 }
 
@@ -526,9 +526,11 @@ func collectImports(tables []tableMeta, includeDAO bool) map[string]struct{} {
 				imports["encoding/json"] = struct{}{}
 			}
 		}
+		if t.HasPrimary {
+			imports["context"] = struct{}{}
+		}
 	}
 	if includeDAO {
-		imports["context"] = struct{}{}
 		imports["github.com/caiflower/common-tools/db/v1"] = struct{}{}
 	}
 	return imports
@@ -575,7 +577,7 @@ func renderStructBlocks(tables []tableMeta) string {
 	return b.String()
 }
 
-func renderDaoBlocks(tables []tableMeta) string {
+func renderDaoBlocks(opts options, tables []tableMeta) string {
 	var b strings.Builder
 	for _, t := range tables {
 		daoName := t.StructName + "DAO"
@@ -662,25 +664,37 @@ func writeFormatted(path, content string) error {
 	return os.WriteFile(path, formatted, 0o644)
 }
 
-func toCamel(s string) string {
+func toCamel(s string, keywords []string) (string, bool) {
 	parts := strings.FieldsFunc(s, func(r rune) bool {
 		return r == '_' || r == '-' || r == ' ' || r == '.'
 	})
+	onlyKeyword := false
+
 	for i, p := range parts {
 		if p == "" {
 			continue
 		}
+		if tools.StringSliceContains(keywords, strings.ToLower(p)) {
+			parts[i] = strings.ToUpper(p)
+			if len(parts) == 1 {
+				onlyKeyword = true
+			}
+			continue
+		}
 		parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
 	}
-	return strings.Join(parts, "")
+	return strings.Join(parts, ""), onlyKeyword
 }
 
-func toLowerCamel(s string) string {
-	camel := toCamel(s)
+func toLowerCamel(s string, keywords []string) string {
+	camel, onlyKeyword := toCamel(s, keywords)
 	if camel == "" {
 		return ""
 	}
-	return strings.ToLower(camel[:1]) + camel[1:]
+	if !onlyKeyword {
+		return strings.ToLower(camel[:1]) + camel[1:]
+	}
+	return strings.ToLower(camel)
 }
 
 func exitUsage(msg string) {

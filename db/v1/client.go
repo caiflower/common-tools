@@ -249,17 +249,17 @@ func (c *Client) Delete(ctx context.Context, model interface{}, tx *bun.Tx, id i
 }
 
 func (c *Client) QueryAll(ctx context.Context, result interface{}) (int, error) {
-	return c.GetSelect(result).Order("id desc").ScanAndCount(ctx, result)
+	return c.GetSelect(result).Order("id desc").ScanAndCount(GetContextWithTraceID(ctx), result)
 }
 
 func (c *Client) QueryPage(ctx context.Context, result interface{}, filter Filter) (int, error) {
 	if filter != nil {
 		offset, limit, disable := filter.GetPage()
 		if !disable {
-			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(ctx, result)
+			return filter.Filter(c.GetDB()).Model(result).Offset(offset).Limit(limit).ScanAndCount(GetContextWithTraceID(ctx), result)
 		}
 
-		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(ctx, result)
+		return filter.Filter(c.GetDB()).Model(result).ScanAndCount(GetContextWithTraceID(ctx), result)
 	}
 
 	return c.QueryAll(ctx, result)
@@ -303,6 +303,6 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 }
 
 // GetContext getContext with traceId
-//func GetContext() context.Context {
-//	return context.WithValue(golocalv1.GetContext(), traceId, golocalv1.GetTraceID())
-//}
+func GetContextWithTraceID(ctx context.Context) context.Context {
+	return context.WithValue(ctx, traceId, golocalv1.GetTraceID())
+}
