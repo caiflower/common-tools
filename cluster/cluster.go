@@ -89,7 +89,7 @@ const (
 type Config struct {
 	Mode    string `yaml:"mode" default:"cluster" json:"mode"`
 	Timeout int    `yaml:"timeout" default:"10" json:"timeout"`
-	Enable  string `yaml:"enable" default:"false" json:"enable"`
+	Enable  string `yaml:"enable" default:"true" json:"enable"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string
@@ -146,9 +146,6 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 10
 	}
-	if config.Enable == "" {
-		config.Enable = "True"
-	}
 	if logger == nil {
 		return nil, errors.New("logger required")
 	}
@@ -174,6 +171,10 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		events:       make(chan *event, 20),
 		jobTrackers:  &sync.Map{},
 		localFuncs:   make(map[string]func(data interface{}) (interface{}, error)),
+	}
+
+	if !cluster.IsEnable() {
+		return cluster, nil
 	}
 
 	// 初始化节点信息
@@ -216,8 +217,7 @@ func (c *Cluster) Start() error {
 	defer c.lock.Unlock()
 
 	// 只允许启动一次
-	enable, _ := strconv.ParseBool(c.config.Enable)
-	if !enable || (c.sate > _init && c.sate != closed) {
+	if !c.IsEnable() || (c.sate > _init && c.sate != closed) {
 		return nil
 	}
 	if c.GetMyNode() == nil {
@@ -281,7 +281,7 @@ func (c *Cluster) Start() error {
 }
 
 func (c *Cluster) Close() {
-	if c.IsClosed() {
+	if c.IsClosed() || !c.IsEnable() {
 		return
 	}
 
@@ -492,10 +492,14 @@ func (c *Cluster) loadNodes() {
 		}
 	}
 
-	enable, _ := strconv.ParseBool(c.config.Enable)
-	if enable {
+	if c.IsEnable() {
 		c.logger.Info("[cluster] loadNodes success, nodes = %+v, addresses: %+v", c.GetAllNodeNames(), addresses)
 	}
+}
+
+func (c *Cluster) IsEnable() bool {
+	enable, _ := strconv.ParseBool(c.config.Enable)
+	return enable
 }
 
 func (c *Cluster) enableReplicasDiscovery() bool {

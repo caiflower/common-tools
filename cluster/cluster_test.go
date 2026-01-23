@@ -22,14 +22,15 @@ import (
 	"time"
 
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 )
 
 func common() (cluster1, cluster2, cluster3 *Cluster) {
-	c1 := Config{Enable: "true"}
-	c2 := Config{Enable: "true"}
-	c3 := Config{Enable: "true"}
+	c1 := Config{}
+	c2 := Config{}
+	c3 := Config{}
 
 	c1.Nodes = append(c1.Nodes,
 		&struct {
@@ -326,4 +327,13 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
 	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 	return cluster1, cluster2, cluster3
+}
+
+func TestDisable(t *testing.T) {
+	c1 := Config{Enable: "false"}
+	c, err := NewCluster(c1)
+	assert.Nil(t, err, "new cluster err expected nil")
+	err = c.Start()
+	assert.Nil(t, err, "start cluster err expected nil")
+	c.Close()
 }

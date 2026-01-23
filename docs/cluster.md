@@ -12,7 +12,8 @@
 - **故障恢复**：主节点宕机后自动重新选举
 - **远程调用**：支持跨节点的函数调用（同步/异步）
 - **任务调度**：基于集群状态的任务调度器
-- **事件监听**：监听集群状态变化事件
+- **Kubernetes 支持**：支持通过 ReplicasDiscovery 自动发现 K8s 集群节点
+- **动态扩缩容**：支持运行时动态重新加载节点列表
 
 ## 快速开始
 
@@ -54,7 +55,7 @@ func main() {
     }
     
     // 启动集群
-    c.StartUp()
+    c.Start()
     
     // 等待集群就绪
     for !c.IsReady() {
@@ -88,7 +89,7 @@ if err != nil {
     panic(err)
 }
 
-c.StartUp()
+c.Start()
 ```
 
 ### 3. Redis 模式
@@ -113,6 +114,7 @@ config := cluster.Config{
     Mode:   "redis",
     Enable: "true",
     RedisDiscovery: cluster.RedisDiscovery{
+        BeanName:           "",  // 留空则使用 IoC 自动注入
         DataPath:           "/cluster/election",
         ElectionInterval:   5 * time.Second,  // 选举/续约间隔
         ElectionPeriod:     10 * time.Second, // 租期时长
@@ -136,7 +138,31 @@ if err != nil {
 }
 
 c.Redis = redisClient
-c.StartUp()
+c.Start()
+```
+
+### 4. Kubernetes 模式（自动节点发现）
+
+在 Kubernetes 环境中，可以使用 ReplicasDiscovery 自动发现集群节点：
+
+```go
+config := cluster.Config{
+    Mode:    "cluster",
+    Timeout: 10,
+    Enable:  "true",
+    ReplicasDiscovery: cluster.ReplicasDiscovery{
+        DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",  // 域名模式，{suf} 会被替换为序号
+        Port:         8080,      // 服务端口
+        Replicas:     3,         // 副本数（可选，默认从环境变量读取）
+    },
+}
+
+c, err := cluster.NewCluster(config)
+if err != nil {
+    panic(err)
+}
+
+c.Start()
 ```
 
 ## 核心接口
@@ -146,36 +172,37 @@ c.StartUp()
 ```go
 type ICluster interface {
     // 生命周期管理
-    StartUp()                          // 启动集群
-    Close()                            // 关闭集群
+    Name() string                          // 获取集群名称
+    Start() error                          // 启动集群
+    Close()                                // 关闭集群
     
     // 状态查询
-    IsFighting() bool                  // 是否正在选举
-    IsClose() bool                     // 是否已关闭
-    IsReady() bool                     // 是否就绪
-    IsLeader() bool                    // 当前节点是否是主节点
-    IsCandidate() bool                 // 当前节点是否是候选人
-    IsFollower() bool                  // 当前节点是否是从节点
+    IsFighting() bool                      // 是否正在选举
+    IsClose() bool                         // 是否已关闭
+    IsReady() bool                         // 是否就绪
+    IsLeader() bool                        // 当前节点是否是主节点
+    IsCandidate() bool                     // 当前节点是否是候选人
+    IsFollower() bool                      // 当前节点是否是从节点
     
     // 节点信息
-    GetLeaderNode() *Node              // 获取主节点
-    GetLeaderName() string             // 获取主节点名称
-    GetMyNode() *Node                  // 获取本节点
-    GetMyName() string                 // 获取本节点名称
-    GetMyTerm() int                    // 获取当前任期
-    GetMyAddress() string              // 获取本节点通信地址
-    GetNodeByName(name string) *Node   // 根据名称获取节点
+    GetLeaderNode() *Node                  // 获取主节点
+    GetLeaderName() string                 // 获取主节点名称
+    GetMyNode() *Node                      // 获取本节点
+    GetMyName() string                     // 获取本节点名称
+    GetMyTerm() int                        // 获取当前任期
+    GetMyAddress() string                  // 获取本节点通信地址
+    GetNodeByName(name string) *Node       // 根据名称获取节点
     
     // 节点统计
-    GetAllNodeNames() []string         // 获取所有节点名称
-    GetAllNodeCount() int              // 获取所有节点数量
-    GetAliveNodeNames() []string       // 获取存活节点名称
-    GetAliveNodeCount() int            // 获取存活节点数量
-    GetLostNodeNames() []string        // 获取失联节点名称
+    GetAllNodeNames() []string             // 获取所有节点名称
+    GetAllNodeCount() int                  // 获取所有节点数量
+    GetAliveNodeNames() []string           // 获取存活节点名称
+    GetAliveNodeCount() int                // 获取存活节点数量
+    GetLostNodeNames() []string            // 获取失联节点名称
     
     // 任务调度
-    AddJobTracker(v JobTracker)        // 添加任务调度器
-    RemoveJobTracker(v JobTracker)     // 移除任务调度器
+    AddJobTracker(v JobTracker) error      // 添加任务调度器
+    RemoveJobTracker(v JobTracker)         // 移除任务调度器
     
     // 远程调用
     RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error))
@@ -247,6 +274,25 @@ if err != nil {
 }
 ```
 
+### 忽略集群未就绪
+
+在某些场景下，你可能希望在集群未就绪时也能发起调用：
+
+```go
+funcSpec := cluster.NewFuncSpec("node2", "processData", "data", 3*time.Second)
+funcSpec.IgnoreNotReady()  // 忽略集群未就绪状态
+```
+
+### 自定义属性
+
+FuncSpec 支持设置和获取自定义属性：
+
+```go
+funcSpec := cluster.NewFuncSpec("node2", "processData", "data", 3*time.Second)
+funcSpec.SetAttribute("customKey", "customValue")
+value := funcSpec.GetAttribute("customKey")
+```
+
 ## 任务调度器
 
 任务调度器允许在集群状态变化时执行特定逻辑。
@@ -276,15 +322,15 @@ func (t *MyJobTracker) OnStoppedLeading() {
     // 停止主节点任务
 }
 
-// 当主节点变更时调用
-func (t *MyJobTracker) OnNewLeader(leaderName string) {
-    fmt.Printf("新的主节点是: %s\n", leaderName)
+// 当节点开始跟随主节点时调用
+func (t *MyJobTracker) OnStartedFollowing(leaderName string) {
+    fmt.Printf("开始跟随主节点: %s\n", leaderName)
     // 执行从节点任务
 }
 
-// 当失去主节点连接时调用
-func (t *MyJobTracker) OnReleaseMaster() {
-    fmt.Println("与主节点失联")
+// 当节点停止跟随主节点时调用
+func (t *MyJobTracker) OnStoppedFollowing() {
+    fmt.Println("停止跟随主节点")
 }
 
 // 注册到集群
@@ -317,20 +363,36 @@ func (c *MyCaller) OnStartedLeading() {
     fmt.Println("成为主节点回调")
 }
 
-func (c *MyCaller) OnNewLeader(leaderName string) {
-    fmt.Printf("新主节点: %s\n", leaderName)
+func (c *MyCaller) OnStoppedLeading() {
+    fmt.Println("失去主节点身份回调")
+}
+
+func (c *MyCaller) OnStartedFollowing(leaderName string) {
+    fmt.Printf("开始跟随主节点: %s\n", leaderName)
+}
+
+func (c *MyCaller) OnStoppedFollowing() {
+    fmt.Println("停止跟随主节点")
 }
 
 // 创建调度器
 caller := &MyCaller{}
 tracker := cluster.NewDefaultJobTracker(
     10,      // 定时任务间隔（秒）
-    c,       // 集群实例
     caller,  // 回调实现
 )
 
-// 启动调度器
-tracker.Start()
+// 注册到集群
+c.AddJobTracker(tracker)
+```
+
+### 关闭 DefaultJobTracker
+
+DefaultJobTracker 实现了 `Close()` 方法，可以在关闭时清理资源：
+
+```go
+tracker := cluster.NewDefaultJobTracker(10, caller)
+defer tracker.Close()  // 优雅关闭
 ```
 
 ## 配置详解
@@ -341,7 +403,7 @@ tracker.Start()
 type Config struct {
     Mode    string  // 模式: "cluster", "single", "redis"
     Timeout int     // 心跳超时时间（秒），默认 10
-    Enable  string  // 是否启用集群: "true" 或 "false"
+    Enable  string  // 是否启用集群: "true" 或 "false"，默认 "false"
     
     // 节点配置列表
     Nodes []*struct {
@@ -353,6 +415,9 @@ type Config struct {
     
     // Redis 模式配置
     RedisDiscovery RedisDiscovery
+    
+    // Kubernetes 自动发现配置
+    ReplicasDiscovery ReplicasDiscovery
 }
 ```
 
@@ -360,11 +425,35 @@ type Config struct {
 
 ```go
 type RedisDiscovery struct {
-    BeanName           string        // Redis Bean 名称（IoC注入用）
+    BeanName           string        // Redis Bean 名称（IoC注入用），为空则自动注入
     DataPath           string        // Redis 存储路径
     ElectionInterval   time.Duration // 选举/续约间隔（默认 15s）
     ElectionPeriod     time.Duration // 租期时长（默认 30s）
     SyncLeaderInterval time.Duration // 同步主节点间隔（默认 10s）
+}
+```
+
+### ReplicasDiscovery 配置
+
+```go
+type ReplicasDiscovery struct {
+    DomainPatten string  // 域名模式，{suf} 会被替换为序号
+    Port         int     // 服务端口，默认 8081
+    Replicas     int     // 副本数（可选，默认从环境变量读取）
+}
+```
+
+**使用示例**：
+
+```go
+// 在 Kubernetes 环境中，假设有一个 StatefulSet，服务名为 my-service
+// Pod 域名格式为：my-service-0.my-namespace.svc.cluster.local
+// 可以使用以下配置自动发现节点：
+
+config.ReplicasDiscovery = cluster.ReplicasDiscovery{
+    DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",
+    Port:         8080,
+    Replicas:     3,  // 可选，不填则从环境变量读取
 }
 ```
 
@@ -375,13 +464,43 @@ type RedisDiscovery struct {
 - `StartUp`: 集群启动
 - `SignMaster`: 成为主节点
 - `SignFollower`: 成为从节点
-- `StopMaster`: 停止主节点身份
-- `ReleaseMaster`: 释放主节点
+- `UnsignMaster`: 失去主节点身份
+- `UnsignFollower`: 失去从节点身份
 - `ElectionStart`: 选举开始
 - `ElectionFinish`: 选举结束
 - `Close`: 集群关闭
 
 这些事件会触发 JobTracker 的相应回调方法。
+
+## 动态扩缩容
+
+集群支持运行时动态重新加载节点列表，适用于 Kubernetes 等动态环境。
+
+### 自动扩缩容
+
+当使用 `ReplicasDiscovery` 配置时，集群会自动处理扩缩容：
+
+```go
+config.ReplicasDiscovery = cluster.ReplicasDiscovery{
+    DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",
+    Port:         8080,
+}
+```
+
+- **启动时**：集群会自动连接所有副本节点
+- **关闭时**：集群会通知其他节点重新加载节点列表
+- **扩容时**：新节点启动后会通知现有节点重新加载
+
+### 手动重新加载节点
+
+你也可以手动触发节点重新加载：
+
+```go
+// 调用内置的远程函数重新加载节点
+_, err := c.CallFunc(
+    cluster.NewFuncSpec("node2", "cluster.ReloadAllNodes", 3, 2*time.Second),
+)
+```
 
 ## 最佳实践
 
@@ -411,8 +530,8 @@ config.RedisDiscovery.SyncLeaderInterval = 3 * time.Second // 3秒同步一次
 ```go
 import "github.com/caiflower/common-tools/global/env"
 
-// 自动根据 IP 或 DNS 识别当前节点
 // 框架会自动调用 env.GetLocalDNS() 和 env.GetLocalHostIP()
+// 无需手动配置 Local 字段
 ```
 
 ### 4. 优雅关闭
@@ -427,7 +546,7 @@ import (
 
 func main() {
     c, _ := cluster.NewCluster(config)
-    c.StartUp()
+    c.Start()
     
     // 注册到全局资源管理器
     global.DefaultResourceManger.Add(c)
@@ -449,12 +568,26 @@ func main() {
 - 注意超时时间设置，避免长时间阻塞
 - 异步调用需要定期检查结果或设置合理的超时
 - 传递的参数必须可序列化（建议使用基本类型、结构体）
+- 使用 `IgnoreNotReady()` 可以在集群未就绪时发起调用
 
 ### 6. 任务调度建议
 
 - `MasterCall` 适合执行只需要主节点执行的任务（如定时清理、报表生成）
 - `SlaverCall` 适合执行需要所有节点执行的任务（如健康检查、数据同步）
 - 避免在回调中执行耗时过长的操作，建议使用 goroutine
+- 记得在关闭时调用 `tracker.Close()` 清理资源
+
+### 7. Kubernetes 部署建议
+
+```go
+// 使用 ReplicasDiscovery 自动发现节点
+config.ReplicasDiscovery = cluster.ReplicasDiscovery{
+    DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",
+    Port:         8080,
+}
+
+// 不要手动配置 Nodes 字段，让框架自动发现
+```
 
 ## 常见问题
 
@@ -519,6 +652,31 @@ go func() {
 }()
 ```
 
+### Q6: Kubernetes 环境下如何配置？
+
+使用 `ReplicasDiscovery` 配置自动发现：
+
+```go
+config.ReplicasDiscovery = cluster.ReplicasDiscovery{
+    DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",
+    Port:         8080,
+}
+```
+
+确保：
+1. 使用 StatefulSet 部署
+2. 创建 Headless Service
+3. Pod 域名格式正确
+
+### Q7: 如何实现动态扩缩容？
+
+使用 `ReplicasDiscovery` 配置后，扩缩容会自动处理：
+
+```go
+// 扩容：增加副本数，新 Pod 启动后会自动加入集群
+// 缩容：减少副本数，Pod 关闭时会通知其他节点重新加载
+```
+
 ## 示例代码
 
 ### 完整示例：带任务调度的集群
@@ -545,6 +703,14 @@ func (c *BusinessCaller) OnStartedLeading() {
 
 func (c *BusinessCaller) OnStoppedLeading() {
     fmt.Printf("[%s] 我失去了主节点身份\n", c.name)
+}
+
+func (c *BusinessCaller) OnStartedFollowing(leaderName string) {
+    fmt.Printf("[%s] 开始跟随主节点: %s\n", c.name, leaderName)
+}
+
+func (c *BusinessCaller) OnStoppedFollowing() {
+    fmt.Printf("[%s] 停止跟随主节点\n", c.name)
 }
 
 func (c *BusinessCaller) MasterCall() {
@@ -580,18 +746,17 @@ func main() {
     }
     
     // 创建集群
-    c, err := cluster.NewClusterWithArgs(config, logger.DefaultLogger())
+    c, err := cluster.NewCluster(config)
     if err != nil {
         panic(err)
     }
     
     // 创建业务调度器
     caller := &BusinessCaller{name: "node1"}
-    tracker := cluster.NewDefaultJobTracker(5, c, caller)  // 每5秒执行一次
-    
-    // 启动集群和调度器
-    c.StartUp()
-    tracker.Start()
+    tracker := cluster.NewDefaultJobTracker(5, caller)  // 每5秒执行一次
+    // 注册到集群
+    c.AddJobTracker(tracker)
+    global.DefaultResourceManger.AddDaemon(c)
     
     // 注册远程调用函数
     c.RegisterFunc("hello", func(data interface{}) (interface{}, error) {
@@ -623,6 +788,44 @@ func main() {
 }
 ```
 
+### Kubernetes 部署示例
+
+```go
+package main
+
+import (
+    "github.com/caiflower/common-tools/cluster"
+    "github.com/caiflower/common-tools/pkg/logger"
+)
+
+func main() {
+    // 使用 ReplicasDiscovery 自动发现节点
+    config := cluster.Config{
+        Mode:    "cluster",
+        Timeout: 10,
+        Enable:  "true",
+        ReplicasDiscovery: cluster.ReplicasDiscovery{
+            DomainPatten: "my-service-{suf}.my-namespace.svc.cluster.local",
+            Port:         8080,
+        },
+    }
+    
+    c, err := cluster.NewCluster(config)
+    if err != nil {
+        panic(err)
+    }
+    
+    c.Start()
+    
+    // 等待集群就绪
+    for !c.IsReady() {
+        time.Sleep(time.Second)
+    }
+    
+    fmt.Printf("集群就绪，主节点: %s\n", c.GetLeaderName())
+}
+```
+
 ## 总结
 
 `cluster` 包提供了完整的分布式集群管理能力，适用于需要高可用、主从选举的场景。通过简单的配置即可实现：
@@ -632,5 +835,7 @@ func main() {
 ✅ 跨节点远程调用  
 ✅ 灵活的任务调度  
 ✅ 多种部署模式  
+✅ Kubernetes 自动发现  
+✅ 动态扩缩容支持  
 
 建议根据实际部署环境选择合适的集群模式，并合理配置超时参数以保证系统稳定性。
