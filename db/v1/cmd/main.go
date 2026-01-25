@@ -682,6 +682,7 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 	var b strings.Builder
 	for _, t := range tables {
 		daoName := strings.ToLower(t.StructName[:1]) + t.StructName[1:] + "DAO"
+		daoName1 := t.StructName + "DAO"
 		hasStatus := false
 		for _, c := range t.Columns {
 			if c.ColumnName == "status" {
@@ -694,12 +695,15 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		b.WriteString(interfaceContent)
 		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
 
-		b.WriteString(fmt.Sprintf("// New%s \n", daoName))
-		b.WriteString(fmt.Sprintf("func New%s(db *dbv1.Client) *%s {\n\treturn &%s{Client: db}\n}\n\n", daoName, daoName, daoName))
+		b.WriteString(fmt.Sprintf("// New%sWithClient new client with db client \n", daoName1))
+		b.WriteString(fmt.Sprintf("func New%sWithClient(db *dbv1.Client) %s {\n\treturn &%s{Client: db}\n}\n\n", daoName1, daoName1, daoName))
 
-		b.WriteString(fmt.Sprintf("// Insert insert a new record\n"))
-		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error) {\n", daoName, t.StructName))
-		b.WriteString("\treturn d.Client.Insert(ctx, data, tx)\n}\n\n")
+		b.WriteString(fmt.Sprintf("// New%s new client \n", daoName1))
+		b.WriteString(fmt.Sprintf("func New%s() %s {\n\treturn &%s{}\n}\n\n", daoName1, daoName1, daoName))
+
+		b.WriteString(fmt.Sprintf("// Insert create a new record\n"))
+		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
+		b.WriteString("\treturn d.Client.Insert(ctx, data, tx...)\n}\n\n")
 
 		if t.HasPrimary {
 			pkType := t.PrimaryCol.GoType
@@ -714,19 +718,19 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 			b.WriteString("\treturn model, err\n}\n\n")
 
 			b.WriteString(fmt.Sprintf("// UpdateByID update record by id\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) UpdateByID(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error) {\n", daoName, t.StructName))
-			b.WriteString(fmt.Sprintf("\treturn d.Client.GetRowsAffected(d.Client.GetUpdate(data, tx).Where(\"%s = ?\", data.%s).Exec(ctx))\n", t.PrimaryCol.ColumnName, t.PrimaryCol.GoName))
+			b.WriteString(fmt.Sprintf("func (d *%s) UpdateByID(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
+			b.WriteString(fmt.Sprintf("\treturn d.Client.GetRowsAffected(d.Client.GetUpdate(data, tx...).Where(\"%s = ?\", data.%s).Exec(ctx))\n", t.PrimaryCol.ColumnName, t.PrimaryCol.GoName))
 			b.WriteString("}\n\n")
 
 			b.WriteString(fmt.Sprintf("// DeleteByID physically delete record by id\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) DeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error) {\n", daoName, pkType))
-			b.WriteString(fmt.Sprintf("\treturn d.Client.Delete(ctx, new(model.%s), tx, id)\n", t.StructName))
+			b.WriteString(fmt.Sprintf("func (d *%s) DeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkType))
+			b.WriteString(fmt.Sprintf("\treturn d.Client.Delete(ctx, new(model.%s), id, tx...)\n", t.StructName))
 			b.WriteString("}\n\n")
 
 			if hasStatus {
 				b.WriteString(fmt.Sprintf("// SoftDeleteByID logically delete record by id (set status=-1)\n"))
-				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error) {\n", daoName, pkType))
-				b.WriteString(fmt.Sprintf("\treturn d.Client.SoftDelete(ctx, new(model.%s), tx, id)\n", t.StructName))
+				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkType))
+				b.WriteString(fmt.Sprintf("\treturn d.Client.SoftDelete(ctx, new(model.%s), id, tx...)\n", t.StructName))
 				b.WriteString("}\n\n")
 			}
 		}
@@ -752,13 +756,13 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 		}
 
 		b.WriteString(fmt.Sprintf("type %s interface {\n", daoName))
-		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error)\n", t.StructName))
+		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
 		if hasPrimary {
 			b.WriteString(fmt.Sprintf("\tGetByID(ctx context.Context, id %s) (*model.%s, error)\n", pkType, t.StructName))
-			b.WriteString(fmt.Sprintf("\tUpdateByID(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error)\n", t.StructName))
-			b.WriteString(fmt.Sprintf("\tDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error)\n", pkType))
+			b.WriteString(fmt.Sprintf("\tUpdateByID(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
+			b.WriteString(fmt.Sprintf("\tDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkType))
 			if hasStatus {
-				b.WriteString(fmt.Sprintf("\tSoftDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error)\n", pkType))
+				b.WriteString(fmt.Sprintf("\tSoftDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkType))
 			}
 		}
 		b.WriteString("}\n\n")

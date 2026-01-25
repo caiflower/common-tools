@@ -30,7 +30,7 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/taskx/dao"
+	taskxdao "github.com/caiflower/common-tools/taskx/dao"
 	"github.com/uptrace/bun"
 )
 
@@ -47,7 +47,7 @@ type taskDispatcher struct {
 	Cluster                cluster.ICluster     `autowired:""`
 	TaskDao                *taskxdao.TaskDao    `autowired:""`
 	SubtaskDao             *taskxdao.SubtaskDao `autowired:""`
-	DBClient               dbv1.IDB             `autowired:""`
+	DBClient               dbv1.DB              `autowired:""`
 	TaskReceiver           *taskReceiver        `autowired:""`
 	cfg                    *Config
 	running                bool

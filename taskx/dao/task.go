@@ -53,7 +53,7 @@ func (t *Task) IsFinished() bool {
 }
 
 type TaskDao struct {
-	dbv1.IDB `autowired:""`
+	dbv1.DB `autowired:""`
 }
 
 func (d *TaskDao) GetByTaskState(taskState []string, id int) ([]*Task, error) {

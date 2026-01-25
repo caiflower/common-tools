@@ -27,7 +27,7 @@ import (
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/taskx/dao"
+	taskxdao "github.com/caiflower/common-tools/taskx/dao"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -240,10 +240,10 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	}
 
 	taskDao := &taskxdao.TaskDao{
-		IDB: client,
+		DB: client,
 	}
 	subtaskDao := &taskxdao.SubtaskDao{
-		IDB: client,
+		DB: client,
 	}
 	cfg := &Config{
 		RemoteCallTimout:     time.Second * 3,

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package taskxdao
+package taskxdao
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func (t *Subtask) RollbackFinished() bool {
 }
 
 type SubtaskDao struct {
-	dbv1.IDB `autowired:""`
+	dbv1.DB `autowired:""`
 }
 
 func (d *SubtaskDao) GetSubtasksByTaskId(taskId string) ([]*Subtask, map[string]*Subtask, error) {
