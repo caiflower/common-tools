@@ -22,7 +22,7 @@ import (
 	"github.com/uptrace/bun/schema"
 )
 
-// 使用例子 //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -dsn 'mysql:root:root@tcp(127.0.0.1:3306)/test_db?' -tables test_table
+// 使用例子 //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -dsn 'mysql:root:root@tcp(127.0.0.1:3306)/test_db' pkg "github.com/caiflower/common-tools/dao" -tables test_table -dao_out ./dao
 
 type options struct {
 	Dialect   string
@@ -40,6 +40,7 @@ type options struct {
 	DSN       string
 	Timeout   int
 	Keyword   string
+	Pkg       string
 	// FilterDisableZeroValue bool
 }
 
@@ -91,6 +92,7 @@ func parseOptions() options {
 	flag.StringVar(&opt.Schema, "schema", "", "数据库schema，postgres默认public，mysql可留空")
 	flag.StringVar(&opt.Charset, "charset", "utf8mb4", "字符集(mysql)")
 	flag.StringVar(&opt.DaoOut, "dao_out", "./dao", "Dao 输出目录路径")
+	flag.StringVar(&opt.Pkg, "pkg", "", "Dao 包路径 (例如: github.com/caiflower/common-tools/dao)")
 	flag.BoolVar(&opt.Plural, "plural", false, "保留复数表名，默认关闭（与bun一致）")
 	flag.IntVar(&opt.Timeout, "timeout", 10, "执行超时时间")
 	flag.StringVar(&opt.Keyword, "keyword", "id", "关键字，设置之后不遵循驼峰命名规则，用逗号分隔。 例如：id,uuid")
@@ -123,8 +125,8 @@ func parseOptions() options {
 	if opt.Schema == "" && opt.Dialect == "postgres" {
 		opt.Schema = "public"
 	}
-	if opt.StructOut == "" {
-		opt.StructOut = opt.DaoOut
+	if opt.Pkg == "" {
+		exitUsage("pkg 不能为空")
 	}
 	opt.Dialect = strings.ToLower(opt.Dialect)
 	return opt
@@ -184,20 +186,39 @@ func run(opts options) error {
 		})
 	}
 
-	structPkg := filepath.Base(filepath.Clean(opts.StructOut))
+	daoPkgName := getPkgName(opts.Pkg)
+	if daoPkgName == "" {
+		daoPkgName = filepath.Base(filepath.Clean(opts.DaoOut))
+	}
 
+	modelOutDir := filepath.Join(opts.DaoOut, "model")
+
+	var allTables []tableMeta
 	for _, tbl := range opts.Tables {
 		cols, err := fetchColumns(ctx, db, opts, tbl)
 		if err != nil {
 			return fmt.Errorf("fetch columns for %s: %w", tbl, err)
 		}
 		tmeta := buildTableMeta(tbl, cols)
-		content := renderCombinedFile(opts, structPkg, []tableMeta{tmeta})
-		outPath := filepath.Join(opts.StructOut, fmt.Sprintf("%s.go", tbl))
-		if err := writeFormatted(outPath, content); err != nil {
-			return fmt.Errorf("write merged file %s: %w", outPath, err)
+		allTables = append(allTables, tmeta)
+
+		// Generate model file in model subdirectory
+		modelContent := renderModelFile("model", []tableMeta{tmeta})
+		modelPath := filepath.Join(modelOutDir, fmt.Sprintf("%s.go", tbl))
+		if err := writeFormatted(modelPath, modelContent); err != nil {
+			return fmt.Errorf("write model file %s: %w", modelPath, err)
+		}
+
+		// Generate dao file only if it doesn't exist
+		daoPath := filepath.Join(opts.DaoOut, fmt.Sprintf("%s.go", tbl))
+		if _, err := os.Stat(daoPath); os.IsNotExist(err) {
+			daoContent := renderDaoFile(opts, daoPkgName, opts.Pkg, []tableMeta{tmeta})
+			if err := writeFormatted(daoPath, daoContent); err != nil {
+				return fmt.Errorf("write dao file %s: %w", daoPath, err)
+			}
 		}
 	}
+
 	return nil
 }
 
@@ -494,23 +515,16 @@ func buildTableMeta(table string, cols []columnMeta) tableMeta {
 	return t
 }
 
-func renderCombinedFile(opts options, pkg string, tables []tableMeta) string {
-	imports := collectImports(tables, true)
-	body := renderStructBlocks(tables)
-	body += "\n" + renderDaoBlocks(opts, tables)
-	return renderFile(pkg, imports, body)
-}
-
-func renderStructFile(pkg string, tables []tableMeta) string {
+func renderModelFile(pkg string, tables []tableMeta) string {
 	imports := collectImports(tables, false)
 	body := renderStructBlocks(tables)
-	return renderFile(pkg, imports, body)
+	return renderModelFileWithMarker(pkg, imports, body)
 }
 
-func renderDaoFile(opts options, pkg string, tables []tableMeta) string {
-	imports := collectImports(tables, true)
+func renderDaoFile(opts options, pkgName string, fullPkg string, tables []tableMeta) string {
+	imports := collectDaoImports(tables, fullPkg+"/model")
 	body := renderDaoBlocks(opts, tables)
-	return renderFile(pkg, imports, body)
+	return renderFile(pkgName, imports, body)
 }
 
 func collectImports(tables []tableMeta, includeDAO bool) map[string]struct{} {
@@ -526,9 +540,6 @@ func collectImports(tables []tableMeta, includeDAO bool) map[string]struct{} {
 				imports["encoding/json"] = struct{}{}
 			}
 		}
-		if t.HasPrimary {
-			imports["context"] = struct{}{}
-		}
 	}
 	if includeDAO {
 		imports["github.com/caiflower/common-tools/db/v1"] = struct{}{}
@@ -536,7 +547,47 @@ func collectImports(tables []tableMeta, includeDAO bool) map[string]struct{} {
 	return imports
 }
 
-func renderFile(pkg string, imports map[string]struct{}, body string) string {
+func collectDaoImports(tables []tableMeta, modelPkg string) map[string]struct{} {
+	imports := map[string]struct{}{
+		"github.com/caiflower/common-tools/db/v1": {},
+		"github.com/uptrace/bun":                  {},
+		modelPkg:                                  {},
+	}
+	for _, t := range tables {
+		for _, c := range t.Columns {
+			if c.NeedJSONRaw {
+				imports["encoding/json"] = struct{}{}
+			}
+		}
+		if t.HasPrimary {
+			imports["context"] = struct{}{}
+		}
+	}
+	return imports
+}
+
+func renderFile(pkgName string, imports map[string]struct{}, body string) string {
+	var importList []string
+	for imp := range imports {
+		importList = append(importList, imp)
+	}
+	sort.Strings(importList)
+
+	var b strings.Builder
+	b.WriteString("package " + pkgName + "\n\n")
+
+	if len(importList) > 0 {
+		b.WriteString("import (\n")
+		for _, imp := range importList {
+			b.WriteString(fmt.Sprintf("\t\"%s\"\n", imp))
+		}
+		b.WriteString(")\n\n")
+	}
+	b.WriteString(body)
+	return b.String()
+}
+
+func renderModelFileWithMarker(pkg string, imports map[string]struct{}, body string) string {
 	var importList []string
 	for imp := range imports {
 		importList = append(importList, imp)
@@ -573,14 +624,7 @@ func renderStructBlocks(tables []tableMeta) string {
 				c.GoName, c.GoType, c.BunTag, c.JSONTag, comment))
 		}
 		b.WriteString("}\n\n")
-	}
-	return b.String()
-}
 
-func renderDaoBlocks(opts options, tables []tableMeta) string {
-	var b strings.Builder
-	for _, t := range tables {
-		daoName := t.StructName + "DAO"
 		filterName := t.StructName + "Filter"
 		hasStatus := false
 		hasID := false
@@ -592,8 +636,6 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 				hasID = true
 			}
 		}
-		//b.WriteString(fmt.Sprintf("// %s\n", daoName))
-		b.WriteString(fmt.Sprintf("type %s struct {\n\t*dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
 
 		b.WriteString(fmt.Sprintf("type %s struct {\n", filterName))
 		b.WriteString("\tPage int `json:\"page\"`\n")
@@ -632,9 +674,32 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		}
 		b.WriteString("\t}\n\treturn q\n")
 		b.WriteString("}\n\n")
+	}
+	return b.String()
+}
+
+func renderDaoBlocks(opts options, tables []tableMeta) string {
+	var b strings.Builder
+	for _, t := range tables {
+		daoName := strings.ToLower(t.StructName[:1]) + t.StructName[1:] + "DAO"
+		hasStatus := false
+		for _, c := range t.Columns {
+			if c.ColumnName == "status" {
+				hasStatus = true
+			}
+		}
+
+		// Generate interface file
+		interfaceContent := renderInterfaceFile(tables, t.HasPrimary)
+		b.WriteString(interfaceContent)
+		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
 
 		b.WriteString(fmt.Sprintf("// New%s \n", daoName))
-		b.WriteString(fmt.Sprintf("func New%s(db *dbv1.Client) *%s {\n\treturn &%s{db}\n}\n\n", daoName, daoName, daoName))
+		b.WriteString(fmt.Sprintf("func New%s(db *dbv1.Client) *%s {\n\treturn &%s{Client: db}\n}\n\n", daoName, daoName, daoName))
+
+		b.WriteString(fmt.Sprintf("// Insert insert a new record\n"))
+		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error) {\n", daoName, t.StructName))
+		b.WriteString("\treturn d.Client.Insert(ctx, data, tx)\n}\n\n")
 
 		if t.HasPrimary {
 			pkType := t.PrimaryCol.GoType
@@ -642,14 +707,63 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 				pkType = strings.TrimPrefix(pkType, "*")
 			}
 			b.WriteString(fmt.Sprintf("// GetByID get by id, return nil if not found\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) GetByID(ctx context.Context, id %s) (*%s, error) {\n", daoName, pkType, t.StructName))
-			b.WriteString(fmt.Sprintf("\tmodel := new(%s)\n", t.StructName))
-			b.WriteString(fmt.Sprintf("\terr := d.GetSelect(model).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
-			b.WriteString("\tif d.ParseErr(err) == nil {\n\t\treturn nil, nil\n\t}\n")
+			b.WriteString(fmt.Sprintf("func (d *%s) GetByID(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkType, t.StructName))
+			b.WriteString(fmt.Sprintf("\tmodel := new(model.%s)\n", t.StructName))
+			b.WriteString(fmt.Sprintf("\terr := d.Client.GetSelect(model).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
+			b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn nil, nil\n\t}\n")
 			b.WriteString("\treturn model, err\n}\n\n")
+
+			b.WriteString(fmt.Sprintf("// UpdateByID update record by id\n"))
+			b.WriteString(fmt.Sprintf("func (d *%s) UpdateByID(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error) {\n", daoName, t.StructName))
+			b.WriteString(fmt.Sprintf("\treturn d.Client.GetRowsAffected(d.Client.GetUpdate(data, tx).Where(\"%s = ?\", data.%s).Exec(ctx))\n", t.PrimaryCol.ColumnName, t.PrimaryCol.GoName))
+			b.WriteString("}\n\n")
+
+			b.WriteString(fmt.Sprintf("// DeleteByID physically delete record by id\n"))
+			b.WriteString(fmt.Sprintf("func (d *%s) DeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error) {\n", daoName, pkType))
+			b.WriteString(fmt.Sprintf("\treturn d.Client.Delete(ctx, new(model.%s), tx, id)\n", t.StructName))
+			b.WriteString("}\n\n")
+
+			if hasStatus {
+				b.WriteString(fmt.Sprintf("// SoftDeleteByID logically delete record by id (set status=-1)\n"))
+				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error) {\n", daoName, pkType))
+				b.WriteString(fmt.Sprintf("\treturn d.Client.SoftDelete(ctx, new(model.%s), tx, id)\n", t.StructName))
+				b.WriteString("}\n\n")
+			}
 		}
 
 	}
+	return b.String()
+}
+
+func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
+	var b strings.Builder
+	for _, t := range tables {
+		daoName := t.StructName + "DAO"
+		pkType := t.PrimaryCol.GoType
+		if strings.HasPrefix(pkType, "*") {
+			pkType = strings.TrimPrefix(pkType, "*")
+		}
+		hasStatus := false
+		for _, c := range t.Columns {
+			if c.ColumnName == "status" {
+				hasStatus = true
+				break
+			}
+		}
+
+		b.WriteString(fmt.Sprintf("type %s interface {\n", daoName))
+		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error)\n", t.StructName))
+		if hasPrimary {
+			b.WriteString(fmt.Sprintf("\tGetByID(ctx context.Context, id %s) (*model.%s, error)\n", pkType, t.StructName))
+			b.WriteString(fmt.Sprintf("\tUpdateByID(ctx context.Context, data *model.%s, tx *bun.Tx) (int64, error)\n", t.StructName))
+			b.WriteString(fmt.Sprintf("\tDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error)\n", pkType))
+			if hasStatus {
+				b.WriteString(fmt.Sprintf("\tSoftDeleteByID(ctx context.Context, id %s, tx *bun.Tx) (int64, error)\n", pkType))
+			}
+		}
+		b.WriteString("}\n\n")
+	}
+
 	return b.String()
 }
 
@@ -701,4 +815,15 @@ func exitUsage(msg string) {
 	_, _ = fmt.Fprintf(os.Stderr, "error: %s\n", msg)
 	flag.Usage()
 	os.Exit(2)
+}
+
+func getPkgName(pkgPath string) string {
+	if pkgPath == "" {
+		return ""
+	}
+	parts := strings.Split(pkgPath, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
 }
