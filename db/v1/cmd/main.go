@@ -701,6 +701,10 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		b.WriteString(fmt.Sprintf("// New%s new client \n", daoName1))
 		b.WriteString(fmt.Sprintf("func New%s() %s {\n\treturn &%s{}\n}\n\n", daoName1, daoName1, daoName))
 
+		b.WriteString(fmt.Sprintf("// GetClient get the db client\n"))
+		b.WriteString(fmt.Sprintf("func (d *%s) GetClient() (dbv1.DB) {\n", daoName))
+		b.WriteString("\treturn d.Client\n}\n\n")
+
 		b.WriteString(fmt.Sprintf("// Insert create a new record\n"))
 		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
 		b.WriteString("\treturn d.Client.Insert(ctx, data, tx...)\n}\n\n")
@@ -756,6 +760,7 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 		}
 
 		b.WriteString(fmt.Sprintf("type %s interface {\n", daoName))
+		b.WriteString(fmt.Sprintf("\tGetClient() dbv1.DB\n"))
 		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
 		if hasPrimary {
 			b.WriteString(fmt.Sprintf("\tGetByID(ctx context.Context, id %s) (*model.%s, error)\n", pkType, t.StructName))
