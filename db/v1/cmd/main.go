@@ -552,15 +552,13 @@ func collectDaoImports(tables []tableMeta, modelPkg string) map[string]struct{} 
 		"github.com/caiflower/common-tools/db/v1": {},
 		"github.com/uptrace/bun":                  {},
 		modelPkg:                                  {},
+		"context":                                 {},
 	}
 	for _, t := range tables {
 		for _, c := range t.Columns {
 			if c.NeedJSONRaw {
 				imports["encoding/json"] = struct{}{}
 			}
-		}
-		if t.HasPrimary {
-			imports["context"] = struct{}{}
 		}
 	}
 	return imports
@@ -709,31 +707,36 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
 		b.WriteString("\treturn d.Client.Insert(ctx, data, tx...)\n}\n\n")
 
+		b.WriteString(fmt.Sprintf("// QueryPage query by page\n"))
+		b.WriteString(fmt.Sprintf("func (d *%s) QueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error) {\n", daoName, t.StructName, t.StructName))
+		b.WriteString(fmt.Sprintf("\tres = make([]model.%s, 0)\n\tcnt, err = d.Client.QueryPage(ctx, &res, filter)\n\treturn\n}\n\n", t.StructName))
+
 		if t.HasPrimary {
 			pkType := t.PrimaryCol.GoType
+			pkName := t.PrimaryCol.GoName
 			if strings.HasPrefix(pkType, "*") {
 				pkType = strings.TrimPrefix(pkType, "*")
 			}
-			b.WriteString(fmt.Sprintf("// GetByID get by id, return nil if not found\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) GetByID(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkType, t.StructName))
+			b.WriteString(fmt.Sprintf("// GetBy%s get by primaryKey, return nil if not found\n", pkName))
+			b.WriteString(fmt.Sprintf("func (d *%s) GetBy%s(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkName, pkType, t.StructName))
 			b.WriteString(fmt.Sprintf("\tmodel := new(model.%s)\n", t.StructName))
 			b.WriteString(fmt.Sprintf("\terr := d.Client.GetSelect(model).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
 			b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn nil, nil\n\t}\n")
 			b.WriteString("\treturn model, err\n}\n\n")
 
-			b.WriteString(fmt.Sprintf("// UpdateByID update record by id\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) UpdateByID(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
+			b.WriteString(fmt.Sprintf("// UpdateBy%s update record primaryKey\n", pkName))
+			b.WriteString(fmt.Sprintf("func (d *%s) UpdateBy%s(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, t.StructName))
 			b.WriteString(fmt.Sprintf("\treturn d.Client.GetRowsAffected(d.Client.GetUpdate(data, tx...).Where(\"%s = ?\", data.%s).Exec(ctx))\n", t.PrimaryCol.ColumnName, t.PrimaryCol.GoName))
 			b.WriteString("}\n\n")
 
-			b.WriteString(fmt.Sprintf("// DeleteByID physically delete record by id\n"))
-			b.WriteString(fmt.Sprintf("func (d *%s) DeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkType))
+			b.WriteString(fmt.Sprintf("// DeleteBy%s physically delete record by primaryKey\n", pkName))
+			b.WriteString(fmt.Sprintf("func (d *%s) DeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
 			b.WriteString(fmt.Sprintf("\treturn d.Client.Delete(ctx, new(model.%s), id, tx...)\n", t.StructName))
 			b.WriteString("}\n\n")
 
 			if hasStatus {
-				b.WriteString(fmt.Sprintf("// SoftDeleteByID logically delete record by id (set status=-1)\n"))
-				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkType))
+				b.WriteString(fmt.Sprintf("// SoftDeleteBy%s logically delete record by primaryKey (set status=-1)\n", pkName))
+				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
 				b.WriteString(fmt.Sprintf("\treturn d.Client.SoftDelete(ctx, new(model.%s), id, tx...)\n", t.StructName))
 				b.WriteString("}\n\n")
 			}
@@ -762,6 +765,7 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 		b.WriteString(fmt.Sprintf("type %s interface {\n", daoName))
 		b.WriteString(fmt.Sprintf("\tGetClient() dbv1.DB\n"))
 		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
+		b.WriteString(fmt.Sprintf("\tQueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error)\n", t.StructName, t.StructName))
 		if hasPrimary {
 			b.WriteString(fmt.Sprintf("\tGetByID(ctx context.Context, id %s) (*model.%s, error)\n", pkType, t.StructName))
 			b.WriteString(fmt.Sprintf("\tUpdateByID(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
