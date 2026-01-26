@@ -682,6 +682,7 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		daoName := strings.ToLower(t.StructName[:1]) + t.StructName[1:] + "DAO"
 		daoName1 := t.StructName + "DAO"
 		hasStatus := false
+		tableNameConst := "TableNameOf" + t.StructName
 		for _, c := range t.Columns {
 			if c.ColumnName == "status" {
 				hasStatus = true
@@ -691,6 +692,8 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		// Generate interface file
 		interfaceContent := renderInterfaceFile(tables, t.HasPrimary)
 		b.WriteString(interfaceContent)
+
+		b.WriteString(fmt.Sprintf("const %s = \"%s\"\n\n", tableNameConst, t.TableName))
 		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
 
 		b.WriteString(fmt.Sprintf("// New%sWithClient new client with db client \n", daoName1))
@@ -731,14 +734,16 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 
 			b.WriteString(fmt.Sprintf("// DeleteBy%s physically delete record by primaryKey\n", pkName))
 			b.WriteString(fmt.Sprintf("func (d *%s) DeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
-			b.WriteString(fmt.Sprintf("\treturn d.Client.Delete(ctx, new(model.%s), id, tx...)\n", t.StructName))
-			b.WriteString("}\n\n")
+			b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewDelete().Table(%s).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
+			b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn 0, nil\n\t}\n")
+			b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 
 			if hasStatus {
 				b.WriteString(fmt.Sprintf("// SoftDeleteBy%s logically delete record by primaryKey (set status=-1)\n", pkName))
 				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
-				b.WriteString(fmt.Sprintf("\treturn d.Client.SoftDelete(ctx, new(model.%s), id, tx...)\n", t.StructName))
-				b.WriteString("}\n\n")
+				b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewUpdate().Table(%s).Set(\"status = ?\", -1).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
+				b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn 0, nil\n\t}\n")
+				b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 			}
 		}
 
