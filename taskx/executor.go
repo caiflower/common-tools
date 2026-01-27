@@ -35,19 +35,19 @@ type TaskData struct {
 
 type TaskExecutor interface {
 	Name() string
-	// FinishedTask When the `runAgain` parameter is set to `true`, the task will be rerun without consuming the `retryCount`.
+	// FinishedTask
 	// The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
 	// If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
 	// If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
-	FinishedTask(data *TaskData) (runAgain bool, err error)
-	FailedTask(data *TaskData) (runAgain bool, err error)
+	FinishedTask(data *TaskData) (err error)
+	FailedTask(data *TaskData) (err error)
 }
 
-// SubTaskExecutor When the `runAgain` parameter is set to `true`, the task will be rerun without consuming the `retryCount`.
+// SubTaskExecutor
 // The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
 // If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
 // If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
-type SubTaskExecutor func(data *TaskData) (runAgain bool, output interface{}, err error)
+type SubTaskExecutor func(data *TaskData) (output interface{}, err error)
 
 var _em = executorManager{taskExecutor: make(map[string]TaskExecutor), subtaskExecutor: make(map[string]map[string]SubTaskExecutor), rollbackTaskExecutor: make(map[string]SubTaskExecutor)}
 

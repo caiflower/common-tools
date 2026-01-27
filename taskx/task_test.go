@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
- package taskx
+package taskx
 
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTask(t *testing.T) {
@@ -50,16 +52,14 @@ func TestTask(t *testing.T) {
 		panic(err)
 	}
 
-	fmt.Printf("size = %v \n", myTask.Size())
-	fmt.Printf("order = %v \n", myTask.Order())
+	assert.Equal(t, 5, myTask.Size())
+	assert.Equal(t, 5, myTask.Order())
 	fmt.Println(myTask.Graph())
 
-	fmt.Println("begin")
-	doStream(myTask)
-	fmt.Println("finish")
+	doStream(t, myTask, 5, 0, []string{"stp1", "stp2", "stp3", "stp5", "stp4"})
 }
 
-func doStream(myTask *Task) {
+func doStream(t *testing.T, myTask *Task, order, idx int, taskName []string) {
 	tasks, _ := myTask.NextSubTasks()
 	if len(tasks) == 0 {
 		return
@@ -67,16 +67,18 @@ func doStream(myTask *Task) {
 
 	for _, v := range tasks {
 		// do something
-		v.SetTaskState(TaskRunning)
+		v.subtask.State = TaskRunning
 		fmt.Printf("task = %+v\n", v)
+		assert.Equal(t, taskName[idx], v.GetName())
+		idx++
 
 		// finish
-		v.GetTaskState()
-		_ = myTask.UpdateSubtaskState(v.GetTaskId(), TaskSucceeded)
+		_ = myTask.updateSubtaskState(v.GetID(), TaskSucceeded)
 	}
 
+	assert.Equal(t, order-len(tasks), myTask.Order())
 	fmt.Printf("size = %v \n", myTask.Size())
 	fmt.Printf("order = %v \n", myTask.Order())
 	fmt.Println(myTask.Graph())
-	doStream(myTask)
+	doStream(t, myTask, order-len(tasks), idx, taskName)
 }

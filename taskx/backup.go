@@ -14,34 +14,32 @@
  * limitations under the License.
  */
 
- package taskx
+package taskx
 
 import (
 	"context"
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
-	taskxdao "github.com/caiflower/common-tools/taskx/dao"
+	taskmodel "github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
 
 func (t *taskDispatcher) backupTask() {
-	var tasks []taskxdao.TaskBak
-	var subtasks []taskxdao.SubtaskBak
+	var tasks []taskmodel.TaskBak
+	var subtasks []taskmodel.SubtaskBak
 	tx := dbv1.NewBatchTx(t.DBClient.GetDB())
 
 	if err := t.DBClient.GetDB().NewSelect().Table("task").
-		Where("task_state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]TaskState{TaskFailed, TaskSucceeded}), t.cfg.BackupTaskAgeSeconds).
+		Where("state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]string{TaskFailed, TaskSucceeded}), t.cfg.BackupTaskAgeSeconds).
 		Order("id").Limit(100).
 		Scan(context.TODO(), &tasks); err != nil {
 		logger.Error("query task failed. err: %v", err)
 	}
 
 	taskIds := make([]string, 0)
-	taskPrimaryKey := make([]int, 0)
 	for _, task := range tasks {
-		taskPrimaryKey = append(taskPrimaryKey, task.Id)
-		taskIds = append(taskIds, task.TaskId)
+		taskIds = append(taskIds, task.ID)
 	}
 	if len(taskIds) == 0 {
 		return
@@ -53,8 +51,9 @@ func (t *taskDispatcher) backupTask() {
 	})
 
 	tx.Add(func(tx *bun.Tx) error {
-		_, err := tx.NewDelete().Table("task").Where("id IN (?)", bun.In(taskPrimaryKey)).Exec(context.Background())
-		return err
+		//_, err := tx.NewDelete().Table("task").Where("id IN (?)", bun.In(taskPrimaryKey)).Exec(context.Background())
+		//return err
+		return nil
 	})
 
 	tx.Add(func(tx *bun.Tx) error {

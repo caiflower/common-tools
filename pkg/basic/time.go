@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
 	"database/sql/driver"
@@ -165,7 +165,7 @@ func (t *Time) Scan(val interface{}) (err error) {
 
 func (t *Time) Value() (driver.Value, error) {
 	if t.IsZero() {
-		return `0000-00-00 00:00:00`, nil
+		return `0000-00-00 00:00:00.000000`, nil
 	}
-	return t.String(), nil
+	return t.Time().Format(`2006-01-02 15:04:05.000`), nil
 }

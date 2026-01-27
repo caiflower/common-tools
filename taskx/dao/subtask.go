@@ -1,106 +1,209 @@
-/*
- * Copyright 2024 caiflower Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package taskxdao
+package dao
 
 import (
 	"context"
+	"time"
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
-	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
 
-type SubtaskBak Subtask
-
-type Subtask struct {
-	Id            int
-	TaskId        string
-	SubtaskId     string
-	TaskName      string
-	Input         string
-	Output        string
-	TaskState     string
-	Worker        string
-	Retry         int
-	RetryInterval int
-	PreSubtaskId  string
-	Rollback      string
-	UpdateTime    basic.Time
-	Status        int
+type SubtaskDAO interface {
+	GetClient() dbv1.DB
+	Insert(ctx context.Context, data *model.Subtask, tx ...*bun.Tx) (int64, error)
+	BatchInsert(ctx context.Context, data []model.Subtask, tx ...*bun.Tx) (int64, error)
+	QueryPage(ctx context.Context, filter *model.SubtaskFilter) (res []model.Subtask, cnt int, err error)
+	GetByID(ctx context.Context, id string) (*model.Subtask, error)
+	DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
+	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
+	GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error)
+	SetWorkerAndState(ctx context.Context, subtaskID string, worker, state string, tx ...*bun.Tx) error
+	SetWorkerAndRollback(ctx context.Context, subtaskID string, worker, rollback string, tx ...*bun.Tx) error
+	GetSubtasksByIDs(ctx context.Context, subtaskIDs []string) ([]model.Subtask, error)
+	SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error
+	SetRollbackAndState(ctx context.Context, id string, rollback string, output string, tx ...*bun.Tx) error
+	SetRetry(ctx context.Context, subtaskID string, retry int8, tx ...*bun.Tx) error
 }
 
-func (t *Subtask) String() string {
-	return t.SubtaskId
+const TableNameOfSubtask = "subtask"
+
+type subtaskDAO struct {
+	Client *dbv1.Client `autowired:""`
 }
 
-func (t *Subtask) IsFinished() bool {
-	return t.TaskState == "Succeeded" || t.TaskState == "Failed"
+// NewSubtaskDAOWithClient new client with db client
+func NewSubtaskDAOWithClient(db *dbv1.Client) SubtaskDAO {
+	return &subtaskDAO{Client: db}
 }
 
-func (t *Subtask) RollbackFinished() bool {
-	return t.Rollback == "RollbackFailed" || t.Rollback == "RollbackSucceeded"
+// NewSubtaskDAO new client
+func NewSubtaskDAO() SubtaskDAO {
+	return &subtaskDAO{}
 }
 
-type SubtaskDao struct {
-	dbv1.DB `autowired:""`
+// GetClient get the db client
+func (d *subtaskDAO) GetClient() dbv1.DB {
+	return d.Client
 }
 
-func (d *SubtaskDao) GetSubtasksByTaskId(taskId string) ([]*Subtask, map[string]*Subtask, error) {
-	res := make([]*Subtask, 0)
-	err := d.GetSelect(&res).Where("task_id = ?", taskId).Scan(context.TODO(), &res)
-	if err != nil {
-		return nil, nil, err
+// Insert create a new record
+func (d *subtaskDAO) Insert(ctx context.Context, data *model.Subtask, tx ...*bun.Tx) (int64, error) {
+	return d.Client.Insert(ctx, data, tx...)
+}
+
+// BatchInsert batch createn
+func (d *subtaskDAO) BatchInsert(ctx context.Context, data []model.Subtask, tx ...*bun.Tx) (int64, error) {
+	if len(data) == 0 {
+		return 0, nil
 	}
-	subtaskMap := make(map[string]*Subtask)
-	for _, v := range res {
-		subtaskMap[v.SubtaskId] = v
+
+	pageNumber := 1
+	batch := 50
+	count := int64(0)
+	for {
+		canSplit, start, end := dbv1.SplitIndex(pageNumber, batch, len(data))
+		if !canSplit {
+			break
+		}
+		batchList := data[start:end]
+		cnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).Exec(ctx))
+		if err != nil {
+			return count, err
+		}
+		count += cnt
+		pageNumber++
 	}
-	return res, subtaskMap, nil
+	return count, nil
 }
 
-func (d *SubtaskDao) SetOutputAndTaskState(subtaskId, output, taskState string, tx *bun.Tx) (int64, error) {
-	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("task_state = ?", taskState).Set("output = ?", output)
-	return d.GetRowsAffected(update.Exec(context.TODO()))
-}
-
-func (d *SubtaskDao) SetWorkerAndTaskState(subtaskId string, worker string, taskState string, tx *bun.Tx) error {
-	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("worker = ?", worker).Set("task_state = ?", taskState)
-	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
-	return err
-}
-
-func (d *SubtaskDao) SetWorkerAndRollback(subtaskId, worker, rollback string, tx *bun.Tx) error {
-	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("worker = ?", worker).Set("rollback = ?", rollback)
-	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
-	return err
-}
-
-func (d *SubtaskDao) GetSubtasksBySubtaskIds(subtaskIds []string) ([]*Subtask, error) {
-	var subTasks []*Subtask
-	err := d.GetSelect(&subTasks).Where("subtask_id IN (?)", bun.In(subtaskIds)).Scan(context.TODO(), &subTasks)
-	return subTasks, err
-}
-
-func (d *SubtaskDao) SetRetry(subtaskId string, retry int, tx *bun.Tx) (err error) {
-	_, err = d.GetRowsAffected(d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("retry = ?", retry).Exec(context.TODO()))
+// QueryPage query by page
+func (d *subtaskDAO) QueryPage(ctx context.Context, filter *model.SubtaskFilter) (res []model.Subtask, cnt int, err error) {
+	res = make([]model.Subtask, 0)
+	cnt, err = d.Client.QueryPage(ctx, &res, filter)
 	return
 }
 
-func (d *SubtaskDao) SetRollbackAndTaskState(subtaskId, output, rollback string, tx *bun.Tx) (int64, error) {
-	update := d.GetUpdate(&Subtask{}, tx).Where("subtask_id = ?", subtaskId).Set("rollback = ?", rollback).Set("output = ?", output)
-	return d.GetRowsAffected(update.Exec(context.TODO()))
+// DeleteByID physically delete record by primaryKey
+func (d *subtaskDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
+	result, err := d.Client.DB.NewDelete().Table(TableNameOfSubtask).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// GetByID get by primaryKey, return nil if not found
+func (d *subtaskDAO) GetByID(ctx context.Context, id string) (*model.Subtask, error) {
+	m := new(model.Subtask)
+	err := d.Client.GetSelect(m).Where("id = ?", id).Limit(1).Scan(ctx)
+	if err != nil {
+		if d.Client.ParseErr(err) == nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return m, err
+}
+
+// SoftDeleteByID logically delete record by primaryKey (set status=-1)
+func (d *subtaskDAO) SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
+	result, err := d.Client.DB.NewUpdate().Table(TableNameOfSubtask).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (d *subtaskDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error) {
+	var subtasks []model.Subtask
+	err := d.Client.GetSelect(&subtasks).Where("task_id = ?", taskID).Scan(ctx, &subtasks)
+	if err != nil {
+		return nil, err
+	}
+	return subtasks, nil
+}
+
+func (d *subtaskDAO) SetWorkerAndState(ctx context.Context, id string, worker, state string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("worker = ?", worker).
+			Set("state = ?", state).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *subtaskDAO) SetWorkerAndRollback(ctx context.Context, id string, worker, rollback string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("worker = ?", worker).
+			Set("rollback = ?", rollback).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *subtaskDAO) GetSubtasksByIDs(ctx context.Context, ids []string) ([]model.Subtask, error) {
+	var subtasks []model.Subtask
+	if len(ids) == 0 {
+		return subtasks, nil
+	}
+	err := d.Client.GetSelect(&subtasks).Where("id IN (?)", bun.In(ids)).Scan(ctx, &subtasks)
+	if err != nil {
+		return nil, err
+	}
+	return subtasks, nil
+}
+
+func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("output = ?", output).
+			Set("state = ?", state).
+			Set("update_time = ?", time.Now()).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, output string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("rollback = ?", rollback).
+			Set("output = ?", output).
+			Set("update_time = ?", time.Now()).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("retry = ?", retry).
+			Set("update_time = ?", time.Now()).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
 }

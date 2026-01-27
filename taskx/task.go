@@ -24,19 +24,18 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
-	"github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/dominikbraun/graph"
 )
 
-type TaskState string
 type TaskRollbackState string
 
 const (
-	TaskPending        TaskState = "Pending"
-	TaskRunning        TaskState = "Running"
-	TaskSubtaskRunning TaskState = "SubtaskRunning"
-	TaskFailed         TaskState = "Failed"
-	TaskSucceeded      TaskState = "Succeeded"
+	TaskPending        = "Pending"
+	TaskRunning        = "Running"
+	TaskSubtaskRunning = "SubtaskRunning"
+	TaskFailed         = "Failed"
+	TaskSucceeded      = "Succeeded"
 
 	RollingBack       TaskRollbackState = "RollingBack"
 	RollbackSucceeded TaskRollbackState = "RollbackSucceeded"
@@ -44,68 +43,16 @@ const (
 	RollbackPending   TaskRollbackState = "RollbackPending"
 	NoneRollback      TaskRollbackState = "NoneRollback"
 
-	DefaultRetryCount  = 3
-	DefaultRetryTimout = 3
+	DefaultRetryCount    = 3
+	DefaultRetryInterval = 3
 )
 
-type ITask interface {
-	GetTaskId() string
-	GetTaskName() string
-	GetTaskState() TaskState
-	SetTaskState(state TaskState)
-	SetInput(content interface{}) *Task
-	GetInput() string
-	SetDescription(description string) *Task
-	GetDescription() string
-	UnmarshalInput(v interface{}) error
-	IsFinished() bool
-	SetRequestId(string string) *Task
-	SetRetry(retry int) *Task
-	SetRetryInterval(retryInterval int) *Task
-	SetUrgent() *Task
-
-	AddSubTask(Task *SubTask) error                          // add SubTask
-	AddDirectedEdge(src, dst *SubTask) error                 // add directedEdge
-	NextSubTasks() ([]*SubTask, bool)                        // get next pending subTasks
-	UpdateTaskState(state TaskState)                         // update Task state
-	UpdateSubtaskState(taskId string, state TaskState) error // update subtaskSate
-	Size() int                                               // directedEdge count
-	Order() int                                              // SubTask count
-	Graph() string                                           // graph
-}
-
-type ISubTask interface {
-	GetTaskId() string
-	GetTaskState() TaskState
-	SetTaskState(state TaskState)
-	GetTaskName() string
-	SetInput(input interface{}) *SubTask
-	GetInput() string
-	SetOutput(output interface{}) *SubTask
-	SetRetry(retry int) *SubTask
-	SetRetryInterval(retryInterval int) *SubTask
-	GetOutput() string
-	UnmarshalOutput(v interface{}) error
-	UnmarshalInput(v interface{}) error
-	SetAttribute(key string, v interface{})
-	GetAttribute(key string) interface{}
-	IsFinished() bool
-}
-
 var taskHash = func(c *SubTask) string {
-	return c.GetTaskId()
+	return c.GetID()
 }
 
 type Task struct {
-	taskName      string
-	input         string
-	description   string
-	taskId        string
-	taskState     TaskState
-	requestId     string
-	retry         int
-	retryInterval int
-	urgent        bool
+	task          model.Task
 	failedSubtask bool
 	subTasks      []*SubTask
 	subtaskMap    map[string]*SubTask
@@ -115,37 +62,34 @@ type Task struct {
 }
 
 type SubTask struct {
-	taskName      string
-	input         string
-	output        string
-	taskId        string
-	retry         int
-	rollback      string
-	retryInterval int
-	taskState     TaskState
-	attribute     map[string]interface{}
+	subtask   model.Subtask
+	attribute map[string]interface{}
 }
 
 func NewTask(taskName string) *Task {
 	return &Task{
-		taskId:        tools.GenerateId("task"),
-		taskName:      taskName,
-		taskState:     TaskPending,
-		subtaskMap:    make(map[string]*SubTask),
-		retry:         DefaultRetryCount,
-		g:             graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
-		retryInterval: DefaultRetryTimout,
+		task: model.Task{
+			ID:            tools.GenerateId("t"),
+			TaskName:      taskName,
+			State:         string(TaskPending),
+			Retry:         DefaultRetryCount,
+			RetryInterval: DefaultRetryInterval,
+		},
+		subtaskMap: make(map[string]*SubTask),
+		g:          graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
 	}
 }
 
 func NewSubtask(taskName string) *SubTask {
 	return &SubTask{
-		taskId:        tools.GenerateId("subtask"),
-		taskName:      taskName,
-		taskState:     TaskPending,
-		retry:         DefaultRetryCount,
-		retryInterval: DefaultRetryTimout,
-		rollback:      string(RollbackPending),
+		subtask: model.Subtask{
+			ID:            tools.GenerateId("st"),
+			TaskName:      taskName,
+			State:         string(TaskPending),
+			Retry:         DefaultRetryCount,
+			RetryInterval: DefaultRetryInterval,
+			Rollback:      string(RollbackPending),
+		},
 	}
 }
 
@@ -154,48 +98,38 @@ func NewSubTask(taskName string) *SubTask {
 	return NewSubtask(taskName)
 }
 
-func (t *SubTask) GetTaskId() string {
-	return t.taskId
+func (t *SubTask) GetID() string {
+	return t.subtask.ID
 }
 
-func (t *SubTask) GetTaskState() TaskState {
-	return t.taskState
+func (t *SubTask) GetState() string {
+	return t.subtask.State
 }
 
-func (t *SubTask) SetTaskState(state TaskState) {
-	t.taskState = state
-}
-
-func (t *SubTask) GetTaskName() string {
-	return t.taskName
+func (t *SubTask) GetName() string {
+	return t.subtask.TaskName
 }
 
 func (t *SubTask) UnmarshalInput(v interface{}) error {
-	return tools.DeByte([]byte(t.input), v)
+	return tools.DeByte([]byte(t.subtask.Input), v)
 }
 
 func (t *SubTask) GetInput() string {
-	return t.input
+	return t.subtask.Input
 }
 
 func (t *SubTask) SetInput(content interface{}) *SubTask {
 	_tmp, _ := tools.ToByte(content)
-	t.input = string(_tmp)
-	return t
-}
-
-func (t *SubTask) SetOutput(output interface{}) *SubTask {
-	_tmp, _ := tools.ToByte(output)
-	t.output = string(_tmp)
+	t.subtask.Input = string(_tmp)
 	return t
 }
 
 func (t *SubTask) GetOutput() string {
-	return t.output
+	return t.subtask.Output
 }
 
 func (t *SubTask) UnmarshalOutput(v interface{}) error {
-	return tools.DeByte([]byte(t.output), v)
+	return tools.DeByte([]byte(t.subtask.Output), v)
 }
 
 func (t *SubTask) SetAttribute(key string, v interface{}) {
@@ -207,91 +141,90 @@ func (t *SubTask) GetAttribute(key string) interface{} {
 }
 
 func (t *SubTask) IsFinished() bool {
-	return t.taskState == TaskFailed || t.taskState == TaskSucceeded
+	return t.subtask.State == TaskFailed || t.subtask.State == TaskSucceeded
 }
 
-func (t *SubTask) SetRetry(retry int) *SubTask {
-	t.retry = retry
+func (t *SubTask) SetRetry(retry int8) *SubTask {
+	t.subtask.Retry = retry
 	return t
 }
 
-func (t *SubTask) SetRetryInterval(retryTimeout int) *SubTask {
-	t.retryInterval = retryTimeout
+func (t *SubTask) SetRetryInterval(retryInterval int32) *SubTask {
+	t.subtask.RetryInterval = retryInterval
 	return t
 }
 
 func (t *SubTask) needRollback() bool {
-	return (t.taskState == TaskRunning || t.taskState == TaskSucceeded || t.taskState == TaskFailed) && (t.rollback == string(RollbackPending) || t.rollback == string(RollingBack))
+	return (t.subtask.State == TaskRunning ||
+		t.subtask.State == TaskSucceeded ||
+		t.subtask.State == TaskFailed) &&
+		(t.subtask.Rollback == string(RollbackPending) || t.subtask.Rollback == string(RollingBack))
 }
 
-func (t *Task) GetTaskId() string {
-	return t.taskId
+func (t *Task) GetID() string {
+	return t.task.ID
 }
 
 func (t *Task) GetTaskName() string {
-	return t.taskName
+	return t.task.TaskName
 }
 
 func (t *Task) GetInput() string {
-	return t.input
+	return t.task.Input
 }
 
 func (t *Task) SetInput(content interface{}) *Task {
 	_tmp, _ := tools.ToByte(content)
-	t.input = string(_tmp)
+	t.task.Input = string(_tmp)
 	return t
 }
 
-func (t *Task) SetTaskState(state TaskState) {
-	t.taskState = state
-}
-
-func (t *Task) GetTaskState() TaskState {
-	return t.taskState
+func (t *Task) GetTaskState() string {
+	return t.task.State
 }
 
 func (t *Task) SetDescription(description string) *Task {
-	t.description = description
+	t.task.Description = description
 	return t
 }
 
 func (t *Task) GetDescription() string {
-	return t.description
+	return t.task.Description
 }
 
 func (t *Task) UnmarshalInput(v interface{}) error {
-	return tools.DeByte([]byte(t.input), v)
+	return tools.DeByte([]byte(t.task.Input), v)
 }
 
 func (t *Task) AddSubTask(task *SubTask) error {
 	t.subTasks = append(t.subTasks, task)
-	t.subtaskMap[task.GetTaskId()] = task
+	t.subtaskMap[task.GetID()] = task
 	return t.g.AddVertex(task)
 }
 
 func (t *Task) AddDirectedEdge(src, dst *SubTask) error {
 	//t.isSort = false
-	return t.g.AddEdge(src.GetTaskId(), dst.GetTaskId())
+	return t.g.AddEdge(src.GetID(), dst.GetID())
 }
 
-func (t *Task) SetRequestId(requestId string) *Task {
-	t.requestId = requestId
+func (t *Task) SetRequestId(requestID string) *Task {
+	t.task.RequestID = requestID
 	return t
 }
 
-func (t *Task) SetRetry(retry int) *Task {
-	t.retry = retry
+func (t *Task) SetRetry(retry int8) *Task {
+	t.task.Retry = retry
 	return t
 }
 
-func (t *Task) SetRetryInterval(retryInterval int) *Task {
-	t.retryInterval = retryInterval
+func (t *Task) SetRetryInterval(retryInterval int32) *Task {
+	t.task.RetryInterval = retryInterval
 	return t
 }
 
 // SetUrgent handle task immediately
 func (t *Task) SetUrgent() *Task {
-	t.urgent = true
+	t.task.Urgent = true
 	return t
 }
 
@@ -312,7 +245,7 @@ func (t *Task) NextSubTasks() ([]*SubTask, bool) {
 	return res, false
 }
 
-func (t *Task) UpdateSubtaskState(taskId string, taskState TaskState) error {
+func (t *Task) updateSubtaskState(taskId string, taskState string) error {
 	subtask := t.subtaskMap[taskId]
 	if subtask == nil {
 		return fmt.Errorf("%s Task not found", taskId)
@@ -323,7 +256,7 @@ func (t *Task) UpdateSubtaskState(taskId string, taskState TaskState) error {
 		if err != nil {
 			return err
 		}
-		for _, v := range adjacencyMap[subtask.GetTaskId()] {
+		for _, v := range adjacencyMap[subtask.GetID()] {
 			if err = t.g.RemoveEdge(v.Source, v.Target); err != nil {
 				return err
 			}
@@ -333,29 +266,26 @@ func (t *Task) UpdateSubtaskState(taskId string, taskState TaskState) error {
 		if err != nil {
 			return err
 		}
-		for _, v := range predecessorMap[subtask.GetTaskId()] {
+		for _, v := range predecessorMap[subtask.GetID()] {
 			if err = t.g.RemoveEdge(v.Source, v.Target); err != nil {
 				return err
 			}
 		}
 
-		if err = t.g.RemoveVertex(subtask.GetTaskId()); err != nil {
+		if err = t.g.RemoveVertex(subtask.GetID()); err != nil {
 			return err
 		}
 	} else if taskState == TaskFailed {
 		t.failedSubtask = true
 	}
-	subtask.SetTaskState(taskState)
+
+	subtask.subtask.State = taskState
 
 	return nil
 }
 
-func (t *Task) UpdateTaskState(state TaskState) {
-	t.taskState = state
-}
-
 func (t *Task) IsFinished() bool {
-	return t.taskState == TaskFailed || t.taskState == TaskSucceeded
+	return t.task.State == TaskFailed || t.task.State == TaskSucceeded
 }
 
 func (t *Task) Size() int {
@@ -373,7 +303,7 @@ func (t *Task) Graph() string {
 	adjacencyMap, _ := t.g.AdjacencyMap()
 	sorts, _ := graph.TopologicalSort(t.g)
 	for _, v := range sorts {
-		buf.WriteString(fmt.Sprintf("[%s]", t.subtaskMap[v].GetTaskName()))
+		buf.WriteString(fmt.Sprintf("[%s]", t.subtaskMap[v].subtask.TaskName))
 		var edgeStr string
 		for _, edge := range adjacencyMap[v] {
 			if edgeStr == "" {
@@ -381,7 +311,7 @@ func (t *Task) Graph() string {
 			} else {
 				edgeStr += ","
 			}
-			edgeStr += t.subtaskMap[edge.Target].GetTaskName()
+			edgeStr += t.subtaskMap[edge.Target].subtask.TaskName
 		}
 		if edgeStr != "" {
 			edgeStr += "]"
@@ -394,27 +324,17 @@ func (t *Task) Graph() string {
 	return buf.String()
 }
 
-func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
+func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 	now := time.Now()
-	task := &taskxdao.Task{
-		TaskId:        t.taskId,
-		TaskName:      t.taskName,
-		RequestId:     t.requestId,
-		Input:         t.input,
-		Retry:         t.retry,
-		RetryInterval: t.retryInterval,
-		Urgent:        t.urgent,
-		TaskState:     string(t.taskState),
-		Description:   t.description,
-		CreateTime:    basic.Time(now),
-		UpdateTime:    basic.Time(now),
-		Status:        1,
-	}
+	task := &t.task
+	task.CreateTime = basic.Time(now)
+	task.UpdateTime = basic.Time(now)
+	task.Status = 1
 
 	predecessorMap, _ := t.g.PredecessorMap()
-	subtasks := make([]*taskxdao.Subtask, 0, len(t.subTasks))
+	subtasks := make([]model.Subtask, 0, len(t.subTasks))
 	for _, v := range t.subTasks {
-		m := predecessorMap[v.GetTaskId()]
+		m := predecessorMap[v.GetID()]
 		preSubtaskId := ""
 		for k, _ := range m {
 			if preSubtaskId != "" {
@@ -422,44 +342,24 @@ func (t *Task) convert2Bean() (*taskxdao.Task, []*taskxdao.Subtask) {
 			}
 			preSubtaskId += k
 		}
-		subtasks = append(subtasks, &taskxdao.Subtask{
-			TaskId:        t.GetTaskId(),
-			SubtaskId:     v.GetTaskId(),
-			TaskName:      v.taskName,
-			Input:         v.input,
-			Retry:         v.retry,
-			RetryInterval: v.retryInterval,
-			Rollback:      v.rollback,
-			TaskState:     string(v.taskState),
-			UpdateTime:    basic.Time(now),
-			PreSubtaskId:  preSubtaskId,
-			Status:        1,
-		})
+		subtask := v.subtask
+		subtask.TaskID = t.GetID()
+		subtask.UpdateTime = basic.Time(now)
+		subtask.PreSubtaskID = preSubtaskId
+		subtask.Status = 1
+		subtasks = append(subtasks, subtask)
 	}
 
 	return task, subtasks
 }
 
-func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*Task, error) {
-	t.taskId = task.TaskId
-	t.taskName = task.TaskName
-	t.requestId = task.RequestId
-	t.taskState = TaskState(task.TaskState)
-	t.description = task.Description
-	t.input = task.Input
-	t.retry = task.Retry
+func (t *Task) initByBean(task *model.Task, subtasks []model.Subtask) (*Task, error) {
+	t.task = *task
 	t.subtaskMap = make(map[string]*SubTask)
-	t.urgent = task.Urgent
-	t.retryInterval = task.RetryInterval
 	t.g = graph.New(taskHash, graph.Directed(), graph.PreventCycles())
 	for _, subtask := range subtasks {
 		st := &SubTask{
-			taskId:    subtask.SubtaskId,
-			taskName:  subtask.TaskName,
-			input:     subtask.Input,
-			output:    subtask.Output,
-			rollback:  subtask.Rollback,
-			taskState: TaskState(subtask.TaskState),
+			subtask: subtask,
 		}
 		err := t.AddSubTask(st)
 		if err != nil {
@@ -468,18 +368,18 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 	}
 
 	for _, subtask := range subtasks {
-		if subtask.PreSubtaskId == "" {
+		if subtask.PreSubtaskID == "" {
 			continue
 		}
-		for _, v := range strings.Split(subtask.PreSubtaskId, ",") {
+		for _, v := range strings.Split(subtask.PreSubtaskID, ",") {
 			subTask := t.subtaskMap[v]
-			subTask2 := t.subtaskMap[subtask.SubtaskId]
+			subTask2 := t.subtaskMap[subtask.ID]
 			err := t.AddDirectedEdge(subTask, subTask2)
 			if err != nil {
 				return nil, err
 			}
 		}
-		if subtask.TaskState == string(TaskFailed) {
+		if subtask.State == TaskFailed {
 			t.failedSubtask = true
 		}
 	}
@@ -490,7 +390,7 @@ func (t *Task) initByBean(task *taskxdao.Task, subtasks []*taskxdao.Subtask) (*T
 		}
 	} else {
 		for _, subtask := range subtasks {
-			if err := t.UpdateSubtaskState(subtask.SubtaskId, TaskState(subtask.TaskState)); err != nil {
+			if err := t.updateSubtaskState(subtask.ID, subtask.State); err != nil {
 				return nil, err
 			}
 		}
@@ -524,13 +424,13 @@ func (t *Task) rollbackSubtasks() error {
 			return err1
 		}
 		for _, v := range removeTmp {
-			for _, v1 := range adjacencyMap[v.taskId] {
+			for _, v1 := range adjacencyMap[v.GetID()] {
 				if err = t.g.RemoveEdge(v1.Source, v1.Target); err != nil {
 					return err
 				}
 			}
 
-			if err = t.g.RemoveVertex(v.taskId); err != nil {
+			if err = t.g.RemoveVertex(v.GetID()); err != nil {
 				return err
 			}
 		}

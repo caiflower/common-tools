@@ -1,95 +1,153 @@
-/*
- * Copyright 2024 caiflower Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package taskxdao
+package dao
 
 import (
 	"context"
+	"time"
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
-	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
 
-type TaskBak Task
-
-type Task struct {
-	Id            int
-	RequestId     string
-	TaskId        string
-	TaskName      string
-	Input         string
-	Output        string
-	Worker        string
-	Retry         int
-	RetryInterval int
-	Urgent        bool
-	TaskState     string
-	Description   string
-	CreateTime    basic.Time
-	UpdateTime    basic.Time
-	Status        int
+type TaskDAO interface {
+	GetClient() dbv1.DB
+	Insert(ctx context.Context, data *model.Task, tx ...*bun.Tx) (int64, error)
+	QueryPage(ctx context.Context, filter *model.TaskFilter) (res []model.Task, cnt int, err error)
+	GetByID(ctx context.Context, id string) (*model.Task, error)
+	DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
+	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
+	GetByIDs(ctx context.Context, taskIDs []string) ([]model.Task, error)
+	GetByTaskState(ctx context.Context, taskState []string) ([]model.Task, error)
+	SetWorkerAndTaskState(ctx context.Context, taskID string, worker, state string, tx ...*bun.Tx) error
+	SetOutputAndState(ctx context.Context, taskID string, output, state string, tx ...*bun.Tx) error
+	SetRetry(ctx context.Context, taskID string, retry int8, tx ...*bun.Tx) error
 }
 
-func (t *Task) String() string {
-	return t.TaskId
+const TableNameOfTask = "task"
+
+type taskDAO struct {
+	Client *dbv1.Client `autowired:""`
 }
 
-func (t *Task) IsFinished() bool {
-	return t.TaskState == "Succeeded" || t.TaskState == "Failed"
+// NewTaskDAOWithClient new client with db client
+func NewTaskDAOWithClient(db *dbv1.Client) TaskDAO {
+	return &taskDAO{Client: db}
 }
 
-type TaskDao struct {
-	dbv1.DB `autowired:""`
+// NewTaskDAO new client
+func NewTaskDAO() TaskDAO {
+	return &taskDAO{}
 }
 
-func (d *TaskDao) GetByTaskState(taskState []string, id int) ([]*Task, error) {
-	res := make([]*Task, 0)
-	err := d.GetSelect(&res).Where("task_state IN (?)", bun.In(taskState)).Where("id >= ?", id).Order("id asc").Scan(context.TODO(), &res)
+// GetClient get the db client
+func (d *taskDAO) GetClient() dbv1.DB {
+	return d.Client
+}
+
+// Insert create a new record
+func (d *taskDAO) Insert(ctx context.Context, data *model.Task, tx ...*bun.Tx) (int64, error) {
+	return d.Client.Insert(ctx, data, tx...)
+}
+
+// QueryPage query by page
+func (d *taskDAO) QueryPage(ctx context.Context, filter *model.TaskFilter) (res []model.Task, cnt int, err error) {
+	res = make([]model.Task, 0)
+	cnt, err = d.Client.QueryPage(ctx, &res, filter)
+	return
+}
+
+// DeleteByID physically delete record by primaryKey
+func (d *taskDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
+	result, err := d.Client.DB.NewDelete().Table(TableNameOfTask).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// GetByID get by primaryKey, return nil if not found
+func (d *taskDAO) GetByID(ctx context.Context, id string) (*model.Task, error) {
+	m := new(model.Task)
+	err := d.Client.GetSelect(m).Where("id = ?", id).Limit(1).Scan(ctx)
+	if err != nil {
+		if d.Client.ParseErr(err) == nil {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return m, err
+}
+
+// SoftDeleteByID logically delete record by primaryKey (set status=-1)
+func (d *taskDAO) SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
+	result, err := d.Client.DB.NewUpdate().Table(TableNameOfTask).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (d *taskDAO) GetByIDs(ctx context.Context, taskIDs []string) ([]model.Task, error) {
+	var tasks []model.Task
+	err := d.Client.GetSelect(&tasks).Where("id IN (?)", bun.In(taskIDs)).Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	return res, nil
+	return tasks, err
 }
 
-func (d *TaskDao) SetTaskState(taskId, taskState string, tx *bun.Tx) (int64, error) {
-	update := d.GetUpdate(&Task{}, tx).Where("task_id = ?", taskId).Set("task_state = ?", taskState)
-	return d.GetRowsAffected(update.Exec(context.TODO()))
+func (d *taskDAO) GetByTaskState(ctx context.Context, taskState []string) ([]model.Task, error) {
+	var res []model.Task
+	err := d.Client.DB.NewSelect().
+		Table(TableNameOfTask).
+		Where("state IN (?)", bun.In(taskState)).
+		Scan(ctx, &res)
+	if err != nil {
+		return nil, err
+	}
+	return res, err
 }
 
-func (d *TaskDao) SetWorkerAndTaskState(taskId string, worker string, taskState string, tx *bun.Tx) error {
-	update := d.GetUpdate(&Task{}, tx).Where("task_id = ?", taskId).Set("worker = ?", worker).Set("task_state = ?", taskState)
-	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
-	return err
+func (d *taskDAO) SetWorkerAndTaskState(ctx context.Context, id string, worker, state string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfTask).
+			Set("worker = ?", worker).
+			Set("state = ?", state).
+			Set("update_time = ?", time.Now()).
+			Where("id = ?", id).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (d *TaskDao) GetTasksByTaskIds(taskIds []string) ([]*Task, error) {
-	var res []*Task
-	err := d.GetSelect(&res).Where("task_id IN (?)", bun.In(taskIds)).Scan(context.TODO(), &res)
-	return res, d.ParseErr(err)
+func (d *taskDAO) SetOutputAndState(ctx context.Context, taskID string, output, state string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfTask).
+			Set("output = ?", output).
+			Set("state = ?", state).
+			Set("update_time = ?", time.Now()).
+			Where("id = ?", taskID).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (d *TaskDao) SetOutputAndTaskState(taskId, output, taskState string, tx *bun.Tx) error {
-	update := d.GetUpdate(&Task{}, tx).Where("task_id = (?)", taskId).Set("output = ?", output).Set("task_state = ?", taskState)
-	_, err := d.GetRowsAffected(update.Exec(context.TODO()))
-	return err
-}
-
-func (d *TaskDao) SetRetry(taskId string, retry int, tx *bun.Tx) (err error) {
-	_, err = d.GetRowsAffected(d.GetUpdate(&Task{}, tx).Where("task_id = ?", taskId).Set("retry = ?", retry).Exec(context.TODO()))
-	return
+func (d *taskDAO) SetRetry(ctx context.Context, taskID string, retry int8, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfTask).
+			Set("retry = ?", retry).
+			Where("id = ?", taskID).
+			Set("update_time = ?", time.Now()).
+			Exec(ctx))
+	if err != nil {
+		return err
+	}
+	return nil
 }

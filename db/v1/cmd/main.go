@@ -641,7 +641,11 @@ func renderStructBlocks(tables []tableMeta) string {
 		b.WriteString("\tDisablePage bool `json:\"disablePage\"`\n")
 		b.WriteString("\tOrders []string `json:\"orders,omitempty\"`\n\n")
 		for _, c := range t.Columns {
-			b.WriteString(fmt.Sprintf("\t%s *%s `json:\"%s,omitempty\"`\n", c.GoName, c.GoType, c.JSONTag))
+			if c.NeedTime {
+				b.WriteString(fmt.Sprintf("\t%s []%s `json:\"%s,omitempty\"`\n", c.GoName, c.GoType, c.JSONTag))
+			} else {
+				b.WriteString(fmt.Sprintf("\t%s []%s `json:\"%s,omitempty\"`\n", c.GoName, c.GoType, c.JSONTag))
+			}
 		}
 		b.WriteString("}\n\n")
 
@@ -652,18 +656,61 @@ func renderStructBlocks(tables []tableMeta) string {
 		b.WriteString("\treturn (page - 1) * size, size, false\n")
 		b.WriteString("}\n\n")
 
+		// Generate With methods for each field
+		for _, c := range t.Columns {
+			b.WriteString(fmt.Sprintf("func (f *%s) With%s(v ...%s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
+			b.WriteString(fmt.Sprintf("\tf.%s = v\n", c.GoName))
+			b.WriteString(fmt.Sprintf("\treturn f\n"))
+			b.WriteString("}\n\n")
+		}
+
+		// Generate WithPage method
+		b.WriteString(fmt.Sprintf("func (f *%s) WithPage(page int) *%s {\n", filterName, filterName))
+		b.WriteString("\tf.Page = page\n")
+		b.WriteString(fmt.Sprintf("\treturn f\n"))
+		b.WriteString("}\n\n")
+
+		// Generate WithPageSize method
+		b.WriteString(fmt.Sprintf("func (f *%s) WithPageSize(pageSize int) *%s {\n", filterName, filterName))
+		b.WriteString("\tf.PageSize = pageSize\n")
+		b.WriteString(fmt.Sprintf("\treturn f\n"))
+		b.WriteString("}\n\n")
+
+		// Generate WithDisablePage method
+		b.WriteString(fmt.Sprintf("func (f *%s) WithDisablePage(disable bool) *%s {\n", filterName, filterName))
+		b.WriteString("\tf.DisablePage = disable\n")
+		b.WriteString(fmt.Sprintf("\treturn f\n"))
+		b.WriteString("}\n\n")
+
+		// Generate WithOrders method
+		b.WriteString(fmt.Sprintf("func (f *%s) WithOrders(orders ...string) *%s {\n", filterName, filterName))
+		b.WriteString("\tf.Orders = orders\n")
+		b.WriteString(fmt.Sprintf("\treturn f\n"))
+		b.WriteString("}\n\n")
+
 		b.WriteString(fmt.Sprintf("func (f *%s) Filter(db bun.IDB) *bun.SelectQuery {\n", filterName))
 		b.WriteString("\tq := db.NewSelect()\n")
 		if hasStatus {
-			b.WriteString("\tif f.Status == nil {\n\t\tq.Where(\"status>0\")\n\t}\n")
+			b.WriteString("\tif len(f.Status) == 0 {\n\t\tq.Where(\"status>0\")\n\t}\n")
 		}
 		for _, c := range t.Columns {
 			field := "f." + c.GoName
-			switch c.GoType {
-			case "string":
-				b.WriteString(fmt.Sprintf("\tif %s != nil {\n\t\tq.Where(\"%s = ?\", *%s)\n\t}\n", field, c.ColumnName, field))
-			default:
-				b.WriteString(fmt.Sprintf("\tif %s != nil {\n\t\tq.Where(\"%s = ?\", *%s)\n\t}\n", field, c.ColumnName, field))
+			if c.NeedTime {
+				b.WriteString(fmt.Sprintf("\tif len(%s) > 0 {\n", field))
+				b.WriteString(fmt.Sprintf("\t\tif len(%s) == 1 {\n", field))
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s = ?\", %s[0].Time())\n", c.ColumnName, field))
+				b.WriteString(fmt.Sprintf("\t\t} else if len(%s) == 2 {\n", field))
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s BETWEEN ? AND ?\", %s[0].Time(), %s[1].Time())\n", c.ColumnName, field, field))
+				b.WriteString("\t\t}\n")
+				b.WriteString("\t}\n")
+			} else {
+				b.WriteString(fmt.Sprintf("\tif len(%s) > 0 {\n", field))
+				b.WriteString(fmt.Sprintf("\t\tif len(%s) == 1 {\n", field))
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s = ?\", %s[0])\n", c.ColumnName, field))
+				b.WriteString("\t\t} else {\n")
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s IN (?)\", bun.In(%s))\n", c.ColumnName, field))
+				b.WriteString("\t\t}\n")
+				b.WriteString("\t}\n")
 			}
 		}
 		b.WriteString("\tif len(f.Orders) > 0 {\n\t\tq.Order(f.Orders...)\n\t} else {\n")
@@ -696,21 +743,19 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		b.WriteString(fmt.Sprintf("const %s = \"%s\"\n\n", tableNameConst, t.TableName))
 		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
 
-		b.WriteString(fmt.Sprintf("// New%sWithClient new client with db client \n", daoName1))
 		b.WriteString(fmt.Sprintf("func New%sWithClient(db *dbv1.Client) %s {\n\treturn &%s{Client: db}\n}\n\n", daoName1, daoName1, daoName))
 
-		b.WriteString(fmt.Sprintf("// New%s new client \n", daoName1))
 		b.WriteString(fmt.Sprintf("func New%s() %s {\n\treturn &%s{}\n}\n\n", daoName1, daoName1, daoName))
 
-		b.WriteString(fmt.Sprintf("// GetClient get the db client\n"))
 		b.WriteString(fmt.Sprintf("func (d *%s) GetClient() (dbv1.DB) {\n", daoName))
 		b.WriteString("\treturn d.Client\n}\n\n")
 
-		b.WriteString(fmt.Sprintf("// Insert create a new record\n"))
 		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
 		b.WriteString("\treturn d.Client.Insert(ctx, data, tx...)\n}\n\n")
 
-		b.WriteString(fmt.Sprintf("// QueryPage query by page\n"))
+		b.WriteString(fmt.Sprintf("func (d *%s) BatchInsert(ctx context.Context, data []model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
+		b.WriteString("\t\tif len(data) == 0 {\n\t\treturn 0, nil\n\t}\n\n\tpageNumber := 1\n\tbatch := 50\n\tcount := int64(0)\n\tfor {\n\t\tcanSplit, start, end := dbv1.SplitIndex(pageNumber, batch, len(data))\n\t\tif !canSplit {\n\t\t\tbreak\n\t\t}\n\t\tbatchList := data[start:end]\n\t\tcnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).Exec(ctx))\n\t\tif err != nil {\n\t\t\treturn count, err\n\t\t}\n\t\tcount += cnt\n\t\tpageNumber++\n\t}\n\treturn count, nil\n}\n\n")
+
 		b.WriteString(fmt.Sprintf("func (d *%s) QueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error) {\n", daoName, t.StructName, t.StructName))
 		b.WriteString(fmt.Sprintf("\tres = make([]model.%s, 0)\n\tcnt, err = d.Client.QueryPage(ctx, &res, filter)\n\treturn\n}\n\n", t.StructName))
 
@@ -720,29 +765,23 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 			if strings.HasPrefix(pkType, "*") {
 				pkType = strings.TrimPrefix(pkType, "*")
 			}
-			b.WriteString(fmt.Sprintf("// GetBy%s get by primaryKey, return nil if not found\n", pkName))
-			b.WriteString(fmt.Sprintf("func (d *%s) GetBy%s(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkName, pkType, t.StructName))
-			b.WriteString(fmt.Sprintf("\tmodel := new(model.%s)\n", t.StructName))
-			b.WriteString(fmt.Sprintf("\terr := d.Client.GetSelect(model).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
-			b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn nil, nil\n\t}\n")
-			b.WriteString("\treturn model, err\n}\n\n")
 
-			b.WriteString(fmt.Sprintf("// UpdateBy%s update record primaryKey\n", pkName))
-			b.WriteString(fmt.Sprintf("func (d *%s) UpdateBy%s(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, t.StructName))
-			b.WriteString(fmt.Sprintf("\treturn d.Client.GetRowsAffected(d.Client.GetUpdate(data, tx...).Where(\"%s = ?\", data.%s).Exec(ctx))\n", t.PrimaryCol.ColumnName, t.PrimaryCol.GoName))
-			b.WriteString("}\n\n")
-
-			b.WriteString(fmt.Sprintf("// DeleteBy%s physically delete record by primaryKey\n", pkName))
 			b.WriteString(fmt.Sprintf("func (d *%s) DeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
 			b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewDelete().Table(%s).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
-			b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn 0, nil\n\t}\n")
+			b.WriteString("\tif err != nil {\n\t\treturn 0, err\n\t}\n")
 			b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 
 			if hasStatus {
-				b.WriteString(fmt.Sprintf("// SoftDeleteBy%s logically delete record by primaryKey (set status=-1)\n", pkName))
+				b.WriteString(fmt.Sprintf("// GetBy%s get by primaryKey, return nil if not found\n", pkName))
+				b.WriteString(fmt.Sprintf("func (d *%s) GetBy%s(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkName, pkType, t.StructName))
+				b.WriteString(fmt.Sprintf("\tm := new(model.%s)\n", t.StructName))
+				b.WriteString(fmt.Sprintf("\terr := d.Client.GetSelect(m).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
+				b.WriteString("\tif err != nil {\n\t\tif d.Client.ParseErr(err) == nil {\n\t\t\treturn nil, nil\n\t\t}\n\t\treturn nil, err\n\t}\n")
+				b.WriteString("\treturn m, err\n}\n\n")
+
 				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
 				b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewUpdate().Table(%s).Set(\"status = ?\", -1).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
-				b.WriteString("\tif d.Client.ParseErr(err) == nil {\n\t\treturn 0, nil\n\t}\n")
+				b.WriteString("\tif err != nil {\n\t\treturn 0, err\n\t}\n")
 				b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 			}
 		}
@@ -756,6 +795,7 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 	for _, t := range tables {
 		daoName := t.StructName + "DAO"
 		pkType := t.PrimaryCol.GoType
+		pkName := t.PrimaryCol.GoName
 		if strings.HasPrefix(pkType, "*") {
 			pkType = strings.TrimPrefix(pkType, "*")
 		}
@@ -770,13 +810,13 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 		b.WriteString(fmt.Sprintf("type %s interface {\n", daoName))
 		b.WriteString(fmt.Sprintf("\tGetClient() dbv1.DB\n"))
 		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
+		b.WriteString(fmt.Sprintf("\tBatchInsert(ctx context.Context, data []model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
 		b.WriteString(fmt.Sprintf("\tQueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error)\n", t.StructName, t.StructName))
 		if hasPrimary {
-			b.WriteString(fmt.Sprintf("\tGetByID(ctx context.Context, id %s) (*model.%s, error)\n", pkType, t.StructName))
-			b.WriteString(fmt.Sprintf("\tUpdateByID(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
-			b.WriteString(fmt.Sprintf("\tDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkType))
+			b.WriteString(fmt.Sprintf("\tGetBy%s(ctx context.Context, id %s) (*model.%s, error)\n", pkName, pkType, t.StructName))
+			b.WriteString(fmt.Sprintf("\tDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkName, pkType))
 			if hasStatus {
-				b.WriteString(fmt.Sprintf("\tSoftDeleteByID(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkType))
+				b.WriteString(fmt.Sprintf("\tSoftDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkName, pkType))
 			}
 		}
 		b.WriteString("}\n\n")

@@ -48,34 +48,47 @@ func NewInFlight() *InFlight {
 // Insert inserts the entry to the current list of inflight requests.
 // Returns false when the key already exists.
 func (db *InFlight) Insert(entry Idempotent) bool {
+	return db.InsertString(entry.String())
+}
+
+// InsertString inserts the string key to the current list of inflight requests.
+// Returns false when the key already exists.
+func (db *InFlight) InsertString(key string) bool {
 	db.mux.Lock()
 	defer db.mux.Unlock()
 
-	hash := entry.String()
-
-	_, ok := db.inFlight[hash]
+	_, ok := db.inFlight[key]
 	if ok {
 		return false
 	}
 
-	db.inFlight[hash] = true
+	db.inFlight[key] = true
 	return true
 }
 
 // Delete removes the entry from the inFlight entries map.
 // It doesn't return anything, and will do nothing if the specified key doesn't exist.
 func (db *InFlight) Delete(h Idempotent) {
+	db.DeleteString(h.String())
+}
+
+// DeleteString removes the string key from the inFlight entries map.
+// It doesn't return anything, and will do nothing if the specified key doesn't exist.
+func (db *InFlight) DeleteString(key string) {
 	db.mux.Lock()
 	defer db.mux.Unlock()
 
-	delete(db.inFlight, h.String())
+	delete(db.inFlight, key)
 }
 
 func (db *InFlight) InFlight(h Idempotent) bool {
+	return db.InFlightString(h.String())
+}
+
+func (db *InFlight) InFlightString(key string) bool {
 	db.mux.Lock()
 	defer db.mux.Unlock()
-	hash := h.String()
 
-	_, ok := db.inFlight[hash]
+	_, ok := db.inFlight[key]
 	return ok
 }

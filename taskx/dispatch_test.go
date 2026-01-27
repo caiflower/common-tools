@@ -17,9 +17,9 @@
 package taskx
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -27,14 +27,27 @@ import (
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
-	taskxdao "github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	taskDemoName           = "taskDemo"
+	taskRollbackName       = "taskRollbackDemo"
+	taskNameOfNonRetryable = "NonRetryable"
+
+	stepOne   = "stepOne"
+	stepTwo   = "stepTwo"
+	stepThree = "stepThree"
+	stepFour  = "stepFour"
+	stepFive  = "stepFive"
+)
+
 func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
-	c1 := cluster.Config{Enable: "true"}
-	c2 := cluster.Config{Enable: "true"}
-	c3 := cluster.Config{Enable: "true"}
+	c1 := cluster.Config{}
+	c2 := cluster.Config{}
+	c3 := cluster.Config{}
 
 	c1.Nodes = append(c1.Nodes,
 		&struct {
@@ -147,76 +160,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		panic(err)
 	}
 
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 	return cluster1, cluster2, cluster3
-}
-
-const (
-	taskName               = "taskDemo"
-	taskRollbackName       = "taskRollbackDemo"
-	taskNameOfNonRetryable = "NonRetryable"
-
-	stepOne   = "stepOne"
-	stepTwo   = "stepTwo"
-	stepThree = "stepThree"
-	stepFour  = "stepFour"
-	stepFive  = "stepFive"
-)
-
-type TaskDemo struct {
-}
-
-func (t *TaskDemo) Name() string {
-	return taskName
-}
-
-func (t *TaskDemo) FinishedTask(data *TaskData) (retry bool, err error) {
-	return false, nil
-}
-func (t *TaskDemo) FailedTask(data *TaskData) (retry bool, err error) {
-	return false, nil
-}
-
-func (t *TaskDemo) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
-	return t, map[string]SubTaskExecutor{
-		stepOne:   t.StepOne,
-		stepTwo:   t.StepTwo,
-		stepThree: t.StepThree,
-		stepFour:  t.StepFour,
-		stepFive:  t.StepFive,
-	}
-}
-
-func (t *TaskDemo) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second)
-	return false, data.Input, err
-}
-
-func (t *TaskDemo) StepOneRollback(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second)
-	return false, data.Input, err
-}
-
-func (t *TaskDemo) StepTwo(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second)
-	return false, data.Input, nil
-}
-
-func (t *TaskDemo) StepThree(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second)
-	return false, data.Input, err
-}
-
-func (t *TaskDemo) StepFour(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second * 2)
-	return false, data.Input, err
-}
-
-func (t *TaskDemo) StepFive(data *TaskData) (retry bool, output interface{}, err error) {
-	time.Sleep(time.Second)
-	return false, data.Input, err
 }
 
 func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver, err error) {
@@ -239,14 +183,12 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		return
 	}
 
-	taskDao := &taskxdao.TaskDao{
-		DB: client,
-	}
-	subtaskDao := &taskxdao.SubtaskDao{
-		DB: client,
-	}
+	taskDao := dao.NewTaskDAOWithClient(client)
+	taskBakDao := dao.NewTaskBakDAOWithClient(client)
+	subtaskDao := dao.NewSubtaskDAOWithClient(client)
+	subtaskBakDao := dao.NewSubtaskBakDAOWithClient(client)
 	cfg := &Config{
-		RemoteCallTimout:     time.Second * 3,
+		RemoteCallTimeout:    time.Second * 3,
 		BackupTaskAgeSeconds: 120,
 	}
 
@@ -295,7 +237,9 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	dispatcher1 = &taskDispatcher{
 		Cluster:                cluster1,
 		TaskDao:                taskDao,
+		TaskBakDao:             taskBakDao,
 		SubtaskDao:             subtaskDao,
+		SubtaskBakDao:          subtaskBakDao,
 		DBClient:               client,
 		cfg:                    cfg,
 		TaskReceiver:           receiver1,
@@ -326,13 +270,13 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	return
 }
 
-func submitTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
+func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	var (
 		requestId   = "traceId"
 		description = "description"
 	)
 
-	task := NewTask(taskName).SetRequestId(requestId).SetDescription(description).SetUrgent()
+	task := NewTask(taskDemoName).SetRequestId(requestId).SetDescription(description).SetUrgent()
 	one := NewSubtask(stepOne).SetInput(stepOne)
 	two := NewSubtask(stepTwo).SetInput(stepTwo)
 	three := NewSubtask(stepThree).SetInput(stepThree)
@@ -387,42 +331,46 @@ func submitTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	}
 
 	var (
-		dbTask       *taskxdao.Task
-		dbSubTasks   []*taskxdao.Subtask
-		dbSubTaskMap map[string]*taskxdao.Subtask
+		dbTask       *model.Task
+		dbSubTasks   []model.Subtask
+		dbSubTaskMap map[string]*model.Subtask
 	)
+
+	dbSubTaskMap = make(map[string]*model.Subtask)
 	for {
-		dbTasks, _ := dispatcher1.TaskDao.GetTasksByTaskIds([]string{task.GetTaskId()})
-		if dbTasks[0].IsFinished() {
-			dbTask = dbTasks[0]
-			dbSubTasks, dbSubTaskMap, _ = dispatcher1.SubtaskDao.GetSubtasksByTaskId(task.GetTaskId())
+		dbTask, _ = dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if isFinished(dbTask.State) {
+			dbSubTasks, _ = dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+			for i, subTask := range dbSubTasks {
+				dbSubTaskMap[subTask.ID] = &dbSubTasks[i]
+			}
 			break
 		}
 		time.Sleep(time.Second * 2)
 	}
 
-	assert.Equal(t, requestId, dbTask.RequestId, "check requestId failed")
+	assert.Equal(t, requestId, dbTask.RequestID, "check requestId failed")
 	assert.Equal(t, description, dbTask.Description, "check description failed")
 	for _, v := range dbSubTasks {
-		assert.Equal(t, true, v.IsFinished(), "check subtask finished failed")
+		assert.Equal(t, true, isFinished(v.State), "check subtask finished failed")
 		output := Output{}
 		_ = json.Unmarshal([]byte(v.Output), &output)
 		assert.Equal(t, v.TaskName, output.Output, "check subtask output failed")
 	}
 
-	dbOne := dbSubTaskMap[one.GetTaskId()]
-	dbTwo := dbSubTaskMap[two.GetTaskId()]
-	dbThree := dbSubTaskMap[three.GetTaskId()]
-	dbFour := dbSubTaskMap[four.GetTaskId()]
-	dbFive := dbSubTaskMap[five.GetTaskId()]
+	dbOne := dbSubTaskMap[one.GetID()]
+	dbTwo := dbSubTaskMap[two.GetID()]
+	dbThree := dbSubTaskMap[three.GetID()]
+	dbFour := dbSubTaskMap[four.GetID()]
+	dbFive := dbSubTaskMap[five.GetID()]
 
 	// check preSubtaskId
-	assert.Equal(t, dbOne.PreSubtaskId, "", "check preSubtaskId failed")
-	assert.Equal(t, dbTwo.PreSubtaskId, one.GetTaskId(), "check preSubtaskId failed")
-	assert.Equal(t, dbThree.PreSubtaskId, two.GetTaskId(), "check preSubtaskId failed")
-	assert.Equal(t, dbFour.PreSubtaskId, two.GetTaskId(), "check preSubtaskId failed")
-	assert.Contains(t, dbFive.PreSubtaskId, three.GetTaskId(), "check preSubtaskId failed")
-	assert.Contains(t, dbFive.PreSubtaskId, four.GetTaskId(), "check preSubtaskId failed")
+	assert.Equal(t, dbOne.PreSubtaskID, "", "check preSubtaskId failed")
+	assert.Equal(t, dbTwo.PreSubtaskID, one.GetID(), "check preSubtaskId failed")
+	assert.Equal(t, dbThree.PreSubtaskID, two.GetID(), "check preSubtaskId failed")
+	assert.Equal(t, dbFour.PreSubtaskID, two.GetID(), "check preSubtaskId failed")
+	assert.Contains(t, dbFive.PreSubtaskID, three.GetID(), "check preSubtaskId failed")
+	assert.Contains(t, dbFive.PreSubtaskID, four.GetID(), "check preSubtaskId failed")
 
 	// check finish time
 	assert.Equal(t, true, dbOne.UpdateTime.Time().Sub(dbTwo.UpdateTime.Time()) <= 0, "check finishTime failed")
@@ -431,7 +379,64 @@ func submitTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	assert.Equal(t, true, dbThree.UpdateTime.Time().Sub(dbFive.UpdateTime.Time()) <= 0, "check finishTime failed")
 	assert.Equal(t, true, dbFour.UpdateTime.Time().Sub(dbFive.UpdateTime.Time()) <= 0, "check finishTime failed")
 
-	return task.GetTaskId()
+	outputs, err := dispatcher1.GetTaskOutput(task.GetID())
+	assert.Nil(t, err, "check task output failed")
+	assert.Equal(t, 6, len(outputs), "check task output failed")
+	assert.Equal(t, stepOne, outputs[stepOne].Output, "check task output failed")
+	assert.Equal(t, stepTwo, outputs[stepTwo].Output, "check task output failed")
+	assert.Equal(t, stepThree, outputs[stepThree].Output, "check task output failed")
+	assert.Equal(t, stepFour, outputs[stepFour].Output, "check task output failed")
+	assert.Equal(t, stepFive, outputs[stepFive].Output, "check task output failed")
+
+	return task.GetID()
+}
+
+type TaskDemo struct {
+}
+
+func (t *TaskDemo) Name() string {
+	return taskDemoName
+}
+
+func (t *TaskDemo) FinishedTask(data *TaskData) (err error) {
+	return nil
+}
+func (t *TaskDemo) FailedTask(data *TaskData) (err error) {
+	return nil
+}
+
+func (t *TaskDemo) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
+	return t, map[string]SubTaskExecutor{
+		stepOne:   t.StepOne,
+		stepTwo:   t.StepTwo,
+		stepThree: t.StepThree,
+		stepFour:  t.StepFour,
+		stepFive:  t.StepFive,
+	}
+}
+
+func (t *TaskDemo) StepOne(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
+}
+
+func (t *TaskDemo) StepOneRollback(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
+}
+
+func (t *TaskDemo) StepTwo(data *TaskData) (output interface{}, err error) {
+	return data.Input, nil
+}
+
+func (t *TaskDemo) StepThree(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
+}
+
+func (t *TaskDemo) StepFour(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
+}
+
+func (t *TaskDemo) StepFive(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
 }
 
 type TaskRollbackDemo struct {
@@ -441,11 +446,11 @@ func (t *TaskRollbackDemo) Name() string {
 	return taskRollbackName
 }
 
-func (t *TaskRollbackDemo) FinishedTask(data *TaskData) (retry bool, err error) {
-	return false, nil
+func (t *TaskRollbackDemo) FinishedTask(data *TaskData) (err error) {
+	return nil
 }
-func (t *TaskRollbackDemo) FailedTask(data *TaskData) (retry bool, err error) {
-	return false, errors.New("FailedTask")
+func (t *TaskRollbackDemo) FailedTask(data *TaskData) (err error) {
+	return errors.New("FailedTask")
 }
 
 func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
@@ -462,43 +467,42 @@ func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]S
 		}
 }
 
-func (t *TaskRollbackDemo) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
-	logger.Info("step one")
-	return false, data.Input, err
+func (t *TaskRollbackDemo) StepOne(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
 }
 
-func (t *TaskRollbackDemo) StepOneRollback(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, data.Input, err
+func (t *TaskRollbackDemo) StepOneRollback(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
 }
 
-func (t *TaskRollbackDemo) StepTwo(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, "", nil
+func (t *TaskRollbackDemo) StepTwo(data *TaskData) (output interface{}, err error) {
+	return "", nil
 }
 
-func (t *TaskRollbackDemo) StepTwoRollback(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, data.Input + " rollback", err
+func (t *TaskRollbackDemo) StepTwoRollback(data *TaskData) (output interface{}, err error) {
+	return data.Input + " rollback", err
 }
 
-func (t *TaskRollbackDemo) StepThree(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, data.Input, err
+func (t *TaskRollbackDemo) StepThree(data *TaskData) (output interface{}, err error) {
+	return data.Input, err
 }
 
-func (t *TaskRollbackDemo) StepThreeRollback(data *TaskData) (retry bool, output interface{}, err error) {
+func (t *TaskRollbackDemo) StepThreeRollback(data *TaskData) (output interface{}, err error) {
 	time.Sleep(2 * time.Second)
-	return false, data.Input + " rollback", err
+	return data.Input + " rollback", err
 }
 
-func (t *TaskRollbackDemo) StepFour(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, data.Input, errors.New("test rollback err")
+func (t *TaskRollbackDemo) StepFour(data *TaskData) (output interface{}, err error) {
+	return data.Input, errors.New("test rollback err")
 }
 
-func (t *TaskRollbackDemo) StepFourRollback(data *TaskData) (retry bool, output interface{}, err error) {
+func (t *TaskRollbackDemo) StepFourRollback(data *TaskData) (output interface{}, err error) {
 	time.Sleep(1 * time.Second)
-	return false, data.Input + " rollback", err
+	return data.Input + " rollback", err
 }
 
-func (t *TaskRollbackDemo) StepFive(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, data.Input, nil
+func (t *TaskRollbackDemo) StepFive(data *TaskData) (output interface{}, err error) {
+	return data.Input, nil
 }
 
 func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
@@ -522,30 +526,35 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	_ = dispatcher1.SubmitTask(task)
 
 	var (
-		dbSubTaskMap map[string]*taskxdao.Subtask
+		dbSubTaskMap map[string]*model.Subtask
 	)
+
+	dbSubTaskMap = make(map[string]*model.Subtask)
 	for {
-		dbTasks, _ := dispatcher1.TaskDao.GetTasksByTaskIds([]string{task.GetTaskId()})
-		if dbTasks[0].IsFinished() {
-			_, dbSubTaskMap, _ = dispatcher1.SubtaskDao.GetSubtasksByTaskId(task.GetTaskId())
+		dbTask, _ := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if isFinished(dbTask.State) {
+			dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+			for i, v := range dbSubTasks {
+				dbSubTaskMap[v.ID] = &dbSubTasks[i]
+			}
 			break
 		}
 		time.Sleep(time.Second * 2)
 	}
 
-	dbTwo := dbSubTaskMap[two.GetTaskId()]
-	dbThree := dbSubTaskMap[three.GetTaskId()]
-	dbFour := dbSubTaskMap[four.GetTaskId()]
-	dbFive := dbSubTaskMap[five.GetTaskId()]
+	dbTwo := dbSubTaskMap[two.GetID()]
+	dbThree := dbSubTaskMap[three.GetID()]
+	dbFour := dbSubTaskMap[four.GetID()]
+	dbFive := dbSubTaskMap[five.GetID()]
 
 	// check preSubtaskId
-	assert.Equal(t, true, dbTwo.RollbackFinished(), "check rollback finished failed")
-	assert.Equal(t, true, dbThree.RollbackFinished(), "check rollback finished failed")
-	assert.Equal(t, true, dbFour.RollbackFinished(), "check rollback finished failed")
+	assert.Equal(t, true, isRollbackFinished(dbTwo.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, isRollbackFinished(dbFour.Rollback), "check rollback finished failed")
 
-	assert.Equal(t, string(TaskFailed), dbFour.TaskState, "check subtask state failed")
-	assert.Equal(t, 0, dbFour.Retry, "check subtask retryCount failed")
-	assert.Equal(t, false, dbFive.IsFinished(), "check subtask finish state failed")
+	assert.Equal(t, string(TaskFailed), dbFour.State, "check subtask state failed")
+	assert.Equal(t, int8(0), dbFour.Retry, "check subtask retryCount failed")
+	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
 
 	// check finish time
 	assert.Equal(t, true, dbTwo.UpdateTime.Time().Sub(dbThree.UpdateTime.Time()) >= 0, "check finishTime failed")
@@ -561,15 +570,15 @@ func (t *TaskNonRetryable) Name() string {
 	return taskNameOfNonRetryable
 }
 
-func (t *TaskNonRetryable) FinishedTask(data *TaskData) (retry bool, err error) {
-	return false, nil
+func (t *TaskNonRetryable) FinishedTask(data *TaskData) (err error) {
+	return nil
 }
-func (t *TaskNonRetryable) FailedTask(data *TaskData) (retry bool, err error) {
-	return false, errors.New("FailedTask")
+func (t *TaskNonRetryable) FailedTask(data *TaskData) (err error) {
+	return errors.New("FailedTask")
 }
 
-func (t *TaskNonRetryable) StepOne(data *TaskData) (retry bool, output interface{}, err error) {
-	return false, nil, ErrNonRetryable
+func (t *TaskNonRetryable) StepOne(data *TaskData) (output interface{}, err error) {
+	return nil, ErrNonRetryable
 }
 
 func (t *TaskNonRetryable) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
@@ -585,21 +594,19 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 
 	_ = dispatcher1.SubmitTask(task)
 
-	var (
-		dbSubTaskMap map[string]*taskxdao.Subtask
-	)
+	var dbOne model.Subtask
 	for {
-		dbTasks, _ := dispatcher1.TaskDao.GetTasksByTaskIds([]string{task.GetTaskId()})
-		if dbTasks[0].IsFinished() {
-			_, dbSubTaskMap, _ = dispatcher1.SubtaskDao.GetSubtasksByTaskId(task.GetTaskId())
+		dbTask, _ := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if isFinished(dbTask.State) {
+			subTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+			dbOne = subTasks[0]
 			break
 		}
 		time.Sleep(time.Second * 2)
 	}
 
-	dbOne := dbSubTaskMap[one.GetTaskId()]
-	assert.Equal(t, string(TaskFailed), dbOne.TaskState, "check task state failed")
-	assert.Equal(t, DefaultRetryCount, dbOne.Retry, "check task retryCount failed")
+	assert.Equal(t, TaskFailed, dbOne.State, "check task state failed")
+	assert.Equal(t, int8(DefaultRetryCount), dbOne.Retry, "check task retryCount failed")
 }
 
 func TestDisPatch(t *testing.T) {
@@ -627,31 +634,19 @@ func TestDisPatch(t *testing.T) {
 	tracker1 := cluster.NewDefaultJobTracker(5, dispatcher1)
 	tracker2 := cluster.NewDefaultJobTracker(5, dispatcher2)
 	tracker3 := cluster.NewDefaultJobTracker(5, dispatcher3)
-	defer tracker1.Close()
-	defer tracker2.Close()
-	defer tracker3.Close()
 
 	_ = cluster1.AddJobTracker(tracker1)
 	_ = cluster2.AddJobTracker(tracker2)
 	_ = cluster3.AddJobTracker(tracker3)
-	go cluster1.Start()
-	go cluster2.Start()
-	go cluster3.Start()
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
 	defer cluster1.Close()
 	defer cluster2.Close()
 	defer cluster3.Close()
 
 	// 提交一个任务
-	taskId := submitTaskAndCheck(t, dispatcher1)
-
-	outputMap, err := dispatcher1.GetTaskOutput(taskId)
-	if err != nil {
-		return
-	}
-
-	for k, output := range outputMap {
-		logger.Info("k = %s, output = %v \n", k, output)
-	}
+	_ = submitDemoTaskAndCheck(t, dispatcher1)
 
 	//提交一个回滚任务
 	submitRollbackTaskAndCheck(t, dispatcher1)
