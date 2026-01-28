@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package nio
+package nio
 
 import (
 	"bytes"
@@ -81,7 +81,7 @@ func NewClient(config *Config, handler *Handler) *Client {
 }
 
 func (c *Client) Connect() error {
-	c.logger.Info("[client] Connect to server %s ...", c.addr)
+	c.logger.Trace("[client] Connect to server %s ...", c.addr)
 
 	// 连接
 	connection, err := net.DialTimeout("tcp", c.addr, time.Duration(c.timeout)*time.Second)

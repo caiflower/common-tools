@@ -16,6 +16,7 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/json-iterator/go v1.1.12
+	github.com/mattn/go-sqlite3 v1.14.14
 	github.com/modern-go/reflect2 v1.0.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/petermattis/goid v0.0.0-20260113132338-7c7de50cc741
@@ -25,6 +26,7 @@ require (
 	github.com/uptrace/bun v1.0.25
 	github.com/uptrace/bun/dialect/mysqldialect v1.0.19
 	github.com/uptrace/bun/dialect/pgdialect v1.0.25
+	github.com/uptrace/bun/dialect/sqlitedialect v1.0.25
 	github.com/uptrace/bun/driver/pgdriver v1.0.25
 	github.com/uptrace/go-clickhouse v0.2.9
 	github.com/uptrace/uptrace-go v1.14.0

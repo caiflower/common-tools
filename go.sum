@@ -1313,6 +1313,7 @@ github.com/mattn/go-runewidth v0.0.2/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzp
 github.com/mattn/go-shellwords v1.0.3/go.mod h1:3xCvwCdWdlDJUrvuMn7Wuy9eWs4pE8vqg+NOMyg4B2o=
 github.com/mattn/go-shellwords v1.0.6/go.mod h1:3xCvwCdWdlDJUrvuMn7Wuy9eWs4pE8vqg+NOMyg4B2o=
 github.com/mattn/go-shellwords v1.0.12/go.mod h1:EZzvwXDESEeg03EKmM+RmDnNOPKG4lLtQsUlTZDWQ8Y=
+github.com/mattn/go-sqlite3 v1.14.14 h1:qZgc/Rwetq+MtyE18WhzjokPD93dNqLGNT3QJuLvBGw=
 github.com/mattn/go-sqlite3 v1.14.14/go.mod h1:NyWgC/yNuGj7Q9rpYnZvas74GogHl5/Z4A/KQRfk6bU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 h1:I0XW9+e1XWDxdcEniV4rQAIOPUGDq67JSCiRCgGCZLI=
@@ -1616,6 +1617,8 @@ github.com/uptrace/bun/dialect/mysqldialect v1.0.19 h1:gvqWtQa09wsBt2RcAlHPwBswX
 github.com/uptrace/bun/dialect/mysqldialect v1.0.19/go.mod h1:YSUPlO5W8hoSoJJngZx1zqesE9E4QIL9waK/SRnu0dc=
 github.com/uptrace/bun/dialect/pgdialect v1.0.25 h1:hZfa21M6eoLK2/kHdRWV1NJPMCDgNQhkrCxXuyxaNdc=
 github.com/uptrace/bun/dialect/pgdialect v1.0.25/go.mod h1:2k9mhyRXlDYBPhWY0CyqU1eoLimt1owWZP3bc2ygTEg=
+github.com/uptrace/bun/dialect/sqlitedialect v1.0.25 h1:xhmLnrst6tYPp9fjepbqo0Z3ZwDfWgp6xQwtyWDeR2g=
+github.com/uptrace/bun/dialect/sqlitedialect v1.0.25/go.mod h1:DhnJfCwE4xgTbR/UTLDdZAhShIYp/+hhOLNrufpCEQ8=
 github.com/uptrace/bun/driver/pgdriver v1.0.25 h1:WmCrjlb3VwQTN4tyMmDdeRZQXw8uNkofPQW8xFonLv8=
 github.com/uptrace/bun/driver/pgdriver v1.0.25/go.mod h1:rD2QVYcNSMH+tNh5kSv6ZG6HRy+DUeUhx0OKYonxplE=
 github.com/uptrace/go-clickhouse v0.2.9 h1:eRL1CoCqvE02RaTQn2YFxnSxECn4ICZZf5cFBNukk7Y=

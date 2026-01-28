@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
 	"database/sql/driver"

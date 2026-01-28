@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -164,12 +166,18 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 }
 
 func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver, err error) {
+	//config := dbv1.Config{
+	//	Url:      "mysql-primary.app.svc.cluster.local:3306",
+	//	User:     "test-user",
+	//	Password: "test-user",
+	//	DbName:   "task_test",
+	//	Debug:    true,
+	//}
+
 	config := dbv1.Config{
-		Url:      "mysql-primary.app.svc.cluster.local:3306",
-		User:     "test-user",
-		Password: "test-user",
-		DbName:   "task_test",
-		Debug:    true,
+		Dialect: "sqlite",
+		Url:     "file:./app.db?cache=shared&_fk=1&mode=rwc&journal_mode=WAL",
+		Debug:   true,
 	}
 
 	l := logger.Config{
@@ -181,6 +189,16 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	client, err := dbv1.NewDBClient(config)
 	if err != nil {
 		return
+	}
+
+	if config.Dialect == "sqlite" {
+		file, _ := os.Open("./dao/table-sqlite.sql")
+		defer file.Close()
+		sql, _ := io.ReadAll(file)
+		_, err = client.DB.ExecContext(context.TODO(), string(sql))
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	taskDao := dao.NewTaskDAOWithClient(client)
@@ -276,30 +294,30 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 		description = "description"
 	)
 
-	task := NewTask(taskDemoName).SetRequestId(requestId).SetDescription(description).SetUrgent()
+	task := NewTask(taskDemoName).SetRequestID(requestId).SetDescription(description).SetUrgent()
 	one := NewSubtask(stepOne).SetInput(stepOne)
 	two := NewSubtask(stepTwo).SetInput(stepTwo)
 	three := NewSubtask(stepThree).SetInput(stepThree)
 	four := NewSubtask(stepFour).SetInput(stepFour)
 	five := NewSubtask(stepFive).SetInput(stepFive)
 
-	err := task.AddSubTask(one)
+	err := task.AddSubtask(one)
 	if err != nil {
 		panic(err)
 	}
-	err = task.AddSubTask(two)
+	err = task.AddSubtask(two)
 	if err != nil {
 		panic(err)
 	}
-	err = task.AddSubTask(three)
+	err = task.AddSubtask(three)
 	if err != nil {
 		panic(err)
 	}
-	err = task.AddSubTask(four)
+	err = task.AddSubtask(four)
 	if err != nil {
 		panic(err)
 	}
-	err = task.AddSubTask(five)
+	err = task.AddSubtask(five)
 	if err != nil {
 		panic(err)
 	}
@@ -338,7 +356,10 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 
 	dbSubTaskMap = make(map[string]*model.Subtask)
 	for {
-		dbTask, _ = dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		dbTask, err = dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil {
+			panic(err)
+		}
 		if isFinished(dbTask.State) {
 			dbSubTasks, _ = dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
 			for i, subTask := range dbSubTasks {
@@ -373,11 +394,11 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	assert.Contains(t, dbFive.PreSubtaskID, four.GetID(), "check preSubtaskId failed")
 
 	// check finish time
-	assert.Equal(t, true, dbOne.UpdateTime.Time().Sub(dbTwo.UpdateTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.UpdateTime.Time().Sub(dbThree.UpdateTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.UpdateTime.Time().Sub(dbFour.UpdateTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbThree.UpdateTime.Time().Sub(dbFive.UpdateTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbFour.UpdateTime.Time().Sub(dbFive.UpdateTime.Time()) <= 0, "check finishTime failed")
+	assert.Equal(t, true, dbOne.LastRunTime.Time().Sub(dbTwo.LastRunTime.Time()) <= 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) <= 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) <= 0, "check finishTime failed")
+	assert.Equal(t, true, dbThree.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
+	assert.Equal(t, true, dbFour.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
 
 	outputs, err := dispatcher1.GetTaskOutput(task.GetID())
 	assert.Nil(t, err, "check task output failed")
@@ -450,7 +471,7 @@ func (t *TaskRollbackDemo) FinishedTask(data *TaskData) (err error) {
 	return nil
 }
 func (t *TaskRollbackDemo) FailedTask(data *TaskData) (err error) {
-	return errors.New("FailedTask")
+	return nil
 }
 
 func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
@@ -464,6 +485,7 @@ func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]S
 			stepTwo:   t.StepTwoRollback,
 			stepThree: t.StepThreeRollback,
 			stepFour:  t.StepFourRollback,
+			stepFive:  t.StepFourRollback,
 		}
 }
 
@@ -513,11 +535,11 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	four := NewSubtask(stepFour).SetInput(stepFour)
 	five := NewSubtask(stepFive).SetInput(stepFive)
 
-	_ = task.AddSubTask(one)
-	_ = task.AddSubTask(two)
-	_ = task.AddSubTask(three)
-	_ = task.AddSubTask(four)
-	_ = task.AddSubTask(five)
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddSubtask(four)
+	_ = task.AddSubtask(five)
 	_ = task.AddDirectedEdge(one, two)
 	_ = task.AddDirectedEdge(two, three)
 	_ = task.AddDirectedEdge(two, four)
@@ -531,7 +553,10 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 
 	dbSubTaskMap = make(map[string]*model.Subtask)
 	for {
-		dbTask, _ := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil {
+			panic(err)
+		}
 		if isFinished(dbTask.State) {
 			dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
 			for i, v := range dbSubTasks {
@@ -542,6 +567,7 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 		time.Sleep(time.Second * 2)
 	}
 
+	dbOne := dbSubTaskMap[one.GetID()]
 	dbTwo := dbSubTaskMap[two.GetID()]
 	dbThree := dbSubTaskMap[three.GetID()]
 	dbFour := dbSubTaskMap[four.GetID()]
@@ -551,14 +577,16 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	assert.Equal(t, true, isRollbackFinished(dbTwo.Rollback), "check rollback finished failed")
 	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "check rollback finished failed")
 	assert.Equal(t, true, isRollbackFinished(dbFour.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, TaskRollbackState(dbOne.Rollback) == NoneRollback, "check noneRollback rollback failed")
+	assert.Equal(t, true, TaskRollbackState(dbFive.Rollback) == RollbackPending, "check rollbackPending rollback failed")
 
-	assert.Equal(t, string(TaskFailed), dbFour.State, "check subtask state failed")
+	assert.Equal(t, TaskFailed, dbFour.State, "check subtask state failed")
 	assert.Equal(t, int8(0), dbFour.Retry, "check subtask retryCount failed")
 	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
 
 	// check finish time
-	assert.Equal(t, true, dbTwo.UpdateTime.Time().Sub(dbThree.UpdateTime.Time()) >= 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.UpdateTime.Time().Sub(dbFour.UpdateTime.Time()) >= 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) > 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
 
 	return
 }
@@ -590,13 +618,16 @@ func (t *TaskNonRetryable) GetExecutor() (TaskExecutor, map[string]SubTaskExecut
 func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	task := NewTask(taskNameOfNonRetryable).SetUrgent()
 	one := NewSubtask(stepOne).SetInput(stepOne)
-	_ = task.AddSubTask(one)
+	_ = task.AddSubtask(one)
 
 	_ = dispatcher1.SubmitTask(task)
 
 	var dbOne model.Subtask
 	for {
-		dbTask, _ := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil {
+			panic(err)
+		}
 		if isFinished(dbTask.State) {
 			subTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
 			dbOne = subTasks[0]
@@ -653,4 +684,6 @@ func TestDisPatch(t *testing.T) {
 
 	// test NonRetryable Task
 	submitNonRetryTaskAndCheck(t, dispatcher1)
+
+	os.Remove("./app.db")
 }

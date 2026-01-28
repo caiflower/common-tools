@@ -20,7 +20,7 @@ type SubtaskBak struct {
 	Retry         int8       `bun:"retry" json:"retry"`                  // 剩余重试次数
 	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"` // 重试间隔(秒)
 	Rollback      string     `bun:"rollback" json:"rollback"`            // 回滚策略
-	UpdateTime    basic.Time `bun:"update_time" json:"updateTime"`       // 更新时间
+	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
 	Status        int8       `bun:"status" json:"status"`                // 子任务状态(0:禁用, 1:启用)
 }
 
@@ -41,7 +41,7 @@ type SubtaskBakFilter struct {
 	Retry         []int8       `json:"retry,omitempty"`
 	RetryInterval []int32      `json:"retryInterval,omitempty"`
 	Rollback      []string     `json:"rollback,omitempty"`
-	UpdateTime    []basic.Time `json:"updateTime,omitempty"`
+	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
 	Status        []int8       `json:"status,omitempty"`
 }
 
@@ -115,8 +115,8 @@ func (f *SubtaskBakFilter) WithRollback(v ...string) *SubtaskBakFilter {
 	return f
 }
 
-func (f *SubtaskBakFilter) WithUpdateTime(v ...basic.Time) *SubtaskBakFilter {
-	f.UpdateTime = v
+func (f *SubtaskBakFilter) WithLastRunTime(v ...basic.Time) *SubtaskBakFilter {
+	f.LastRunTime = v
 	return f
 }
 
@@ -227,11 +227,11 @@ func (f *SubtaskBakFilter) Filter(db bun.IDB) *bun.SelectQuery {
 			q.Where("rollback IN (?)", bun.In(f.Rollback))
 		}
 	}
-	if len(f.UpdateTime) > 0 {
-		if len(f.UpdateTime) == 1 {
-			q.Where("update_time = ?", f.UpdateTime[0].Time())
-		} else if len(f.UpdateTime) == 2 {
-			q.Where("update_time BETWEEN ? AND ?", f.UpdateTime[0].Time(), f.UpdateTime[1].Time())
+	if len(f.LastRunTime) > 0 {
+		if len(f.LastRunTime) == 1 {
+			q.Where("last_run_time = ?", f.LastRunTime[0].Time())
+		} else if len(f.LastRunTime) == 2 {
+			q.Where("last_run_time BETWEEN ? AND ?", f.LastRunTime[0].Time(), f.LastRunTime[1].Time())
 		}
 	}
 	if len(f.Status) > 0 {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/caiflower/common-tools/cluster"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -138,7 +139,7 @@ func (t *taskReceiver) deliverSubtask(data interface{}) (interface{}, error) {
 func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interface{}, error) {
 	ctx := golocalv1.GetContext()
 
-	subtasks, err := t.SubtaskDao.GetSubtasksByIDs(ctx, subtaskIds)
+	subtasks, err := t.SubtaskDao.GetByIDs(ctx, subtaskIds)
 
 	if err != nil {
 		logger.Error("get subtasks by subtaskIds failed. err: %v", err.Error())
@@ -280,7 +281,7 @@ func (t *taskReceiver) deliverSubtaskRollback(data interface{}) (interface{}, er
 
 func (t *taskReceiver) startTaskThreads() {
 	runThread := func(i int) {
-		logger.Debug("TaskReceiver taskWorker %d start", i)
+		logger.Trace("TaskReceiver taskWorker %d start", i)
 		for v := range t.taskQueue {
 			if !t.running {
 				break
@@ -291,7 +292,7 @@ func (t *taskReceiver) startTaskThreads() {
 		}
 
 		t.stopChan <- struct{}{}
-		logger.Debug("TaskReceiver taskWorker %d Exited", i)
+		logger.Trace("TaskReceiver taskWorker %d Exited", i)
 	}
 
 	for i := 1; i <= t.taskWorker; i++ {
@@ -301,7 +302,7 @@ func (t *taskReceiver) startTaskThreads() {
 
 func (t *taskReceiver) startSubtaskThreads() {
 	runThread := func(i int) {
-		logger.Debug("TaskReceiver subtaskWorker %d start", i)
+		logger.Trace("TaskReceiver subtaskWorker %d start", i)
 		for v := range t.subtaskQueue {
 			if !t.running {
 				break
@@ -312,7 +313,7 @@ func (t *taskReceiver) startSubtaskThreads() {
 		}
 
 		t.stopChan <- struct{}{}
-		logger.Debug("TaskReceiver subtaskWorker %d Exited", i)
+		logger.Trace("TaskReceiver subtaskWorker %d Exited", i)
 	}
 
 	for i := 1; i <= t.subtaskWorker; i++ {
@@ -322,7 +323,7 @@ func (t *taskReceiver) startSubtaskThreads() {
 
 func (t *taskReceiver) startRollbackTaskThreads() {
 	runThread := func(i int) {
-		logger.Debug("TaskReceiver subtaskRollbackWorker %d start", i)
+		logger.Trace("TaskReceiver subtaskRollbackWorker %d start", i)
 		for v := range t.subtaskRollbackQueue {
 			if !t.running {
 				break
@@ -333,7 +334,7 @@ func (t *taskReceiver) startRollbackTaskThreads() {
 		}
 
 		t.stopChan <- struct{}{}
-		logger.Debug("TaskReceiver subtaskRollbackWorker %d Exited", i)
+		logger.Trace("TaskReceiver subtaskRollbackWorker %d Exited", i)
 	}
 
 	for i := 1; i <= t.subtaskRollbackWorker; i++ {
@@ -359,8 +360,11 @@ func (t *taskReceiver) execTask(task *model.Task) {
 		logger.Error("get task %v failed. Error: %v", taskID, err)
 		return
 	}
-	if _task == nil || _task.Worker != t.Cluster.GetMyName() || isFinished(_task.State) {
-		logger.Warn("task %v is not satisfy exec condition", taskID)
+	if _task == nil ||
+		_task.Worker != t.Cluster.GetMyName() ||
+		isFinished(_task.State) ||
+		time.Now().Before(_task.LastRunTime.Time().Add(time.Duration(_task.RetryInterval)*time.Second)) {
+		logger.Debug("task %v is not satisfy exec condition", taskID)
 		return
 	}
 
@@ -445,8 +449,11 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	if err != nil {
 		return
 	}
-	if _subtask == nil || _subtask.Worker != t.Cluster.GetMyName() || isFinished(subtask.State) {
-		logger.Warn("subtask '%s' is not satisfy exec condition", subtaskID)
+	if _subtask == nil ||
+		_subtask.Worker != t.Cluster.GetMyName() ||
+		isFinished(subtask.State) ||
+		time.Now().Before(_subtask.LastRunTime.Time().Add(time.Duration(subtask.RetryInterval)*time.Second)) {
+		logger.Debug("subtask '%s' is not satisfy exec condition", subtaskID)
 		return
 	}
 
@@ -464,8 +471,6 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
-		logger.Error("subtask '%s' exec failed. Error: %v", subtaskID, err)
-
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
 			if err = t.SubtaskDao.SetRetry(ctx, subtaskID, subtask.Retry-1); err != nil {
 				logger.Error("subtask %v setRetry failed. Error: %v", subtaskID, err)
@@ -510,8 +515,11 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	if err != nil {
 		return
 	}
-	if _subtask == nil || _subtask.Worker != t.Cluster.GetMyName() || isRollbackFinished(_subtask.Rollback) {
-		logger.Warn("subtask '%s' is not satisfy rollback condition", subtaskID)
+	if _subtask == nil ||
+		_subtask.Worker != t.Cluster.GetMyName() ||
+		isRollbackFinished(_subtask.Rollback) ||
+		time.Now().Before(_subtask.LastRunTime.Time().Add(time.Duration(subtask.RetryInterval)*time.Second)) {
+		logger.Debug("subtask '%s' is not satisfy rollback condition", subtaskID)
 		return
 	}
 
@@ -529,8 +537,6 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
-		logger.Error("subtask '%s' exec failed. Error: %v", subtaskID, err)
-
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
 			if err = t.SubtaskDao.SetRetry(ctx, subtaskID, subtask.Retry-1); err != nil {
 				logger.Error("subtask %v setRetry failed. err: %v", subtaskID, err)
@@ -570,7 +576,7 @@ func (t *taskReceiver) exec(ctx context.Context, executor SubTaskExecutor, taskI
 	preSubtasks := make(map[string]Output)
 	if preSubtaskID != "" {
 		preSubtaskIDs := strings.Split(preSubtaskID, ",")
-		preSubtaskList, err := t.SubtaskDao.GetSubtasksByIDs(ctx, preSubtaskIDs)
+		preSubtaskList, err := t.SubtaskDao.GetByIDs(ctx, preSubtaskIDs)
 		if err != nil {
 			logger.Error("subtask '%s' get preSubtasks failed. Error: %v", subtaskID, err)
 			return "", err

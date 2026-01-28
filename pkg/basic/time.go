@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	TimeFormat  = "2006-01-02 15:04:05"
-	TimeFormatT = "2006-01-02T15:04:05"
+	DBTimeFormat = "2006-01-02 15:04:05.000"
+	TimeFormat   = "2006-01-02 15:04:05"
+	TimeFormatT  = "2006-01-02T15:04:05"
 )
 
 type Time time.Time
@@ -40,6 +41,10 @@ func NewTime(str string) Time {
 		t.UnmarshalJSON([]byte(`"` + str + `"`))
 	}
 	return t
+}
+
+func NewFromTime(t time.Time) Time {
+	return Time(t)
 }
 
 func init() {
@@ -148,10 +153,19 @@ func (t *Time) Scan(val interface{}) (err error) {
 		*t = Time(_time)
 	} else if _, ok := val.([]byte); ok {
 		str := string(val.([]byte))
-		if str == "" || str == "\"\"" || str == "null" || str == "0000-00-00 00:00:00" {
+		if str == "" || str == "\"\"" || str == "null" || str == "0000-00-00 00:00:00.000" {
 			return
 		}
-		now, err := time.ParseInLocation(TimeFormat, str, time.Local)
+		now, err := time.ParseInLocation(DBTimeFormat, str, time.Local)
+		if err != nil {
+			logger.Error("time type convert error. %s", err)
+		}
+		*t = Time(now)
+	} else if str, ok := val.(string); ok {
+		if str == "" || str == "\"\"" || str == "null" || str == "0000-00-00 00:00:00.000" {
+			return
+		}
+		now, err := time.ParseInLocation(DBTimeFormat, str, time.Local)
 		if err != nil {
 			logger.Error("time type convert error. %s", err)
 		}
@@ -165,7 +179,11 @@ func (t *Time) Scan(val interface{}) (err error) {
 
 func (t *Time) Value() (driver.Value, error) {
 	if t.IsZero() {
-		return `0000-00-00 00:00:00.000000`, nil
+		return nil, nil
 	}
-	return t.Time().Format(`2006-01-02 15:04:05.000`), nil
+	return t.Time().Format(DBTimeFormat), nil
+}
+
+func (t Time) DBString() string {
+	return t.Time().Format(DBTimeFormat)
 }

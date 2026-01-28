@@ -5,6 +5,7 @@ import (
 	"time"
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
@@ -114,7 +115,6 @@ func (d *taskDAO) SetWorkerAndTaskState(ctx context.Context, id string, worker, 
 			Table(TableNameOfTask).
 			Set("worker = ?", worker).
 			Set("state = ?", state).
-			Set("update_time = ?", time.Now()).
 			Where("id = ?", id).
 			Exec(ctx))
 	if err != nil {
@@ -129,7 +129,7 @@ func (d *taskDAO) SetOutputAndState(ctx context.Context, taskID string, output, 
 			Table(TableNameOfTask).
 			Set("output = ?", output).
 			Set("state = ?", state).
-			Set("update_time = ?", time.Now()).
+			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Where("id = ?", taskID).
 			Exec(ctx))
 	if err != nil {
@@ -144,7 +144,7 @@ func (d *taskDAO) SetRetry(ctx context.Context, taskID string, retry int8, tx ..
 			Table(TableNameOfTask).
 			Set("retry = ?", retry).
 			Where("id = ?", taskID).
-			Set("update_time = ?", time.Now()).
+			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Exec(ctx))
 	if err != nil {
 		return err

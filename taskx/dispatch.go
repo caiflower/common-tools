@@ -242,12 +242,7 @@ func (t *taskDispatcher) handleTask() {
 			continue
 		}
 
-		subtaskMap := make(map[string]*model.Subtask)
-		for j, vv := range subtasks {
-			subtaskMap[vv.ID] = &subtasks[j]
-		}
-
-		finished, retry, running, rollback := t.analysisTask(task, &v, subtaskMap)
+		finished, retry, running, rollback := t.analysisTask(task, task.subtaskMap)
 		if retry {
 			continue
 		} else if len(running) > 0 {
@@ -262,63 +257,61 @@ func (t *taskDispatcher) handleTask() {
 	t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
 }
 
-func (t *taskDispatcher) analysisTask(task *Task, taskFromDB *model.Task, subtaskMap map[string]*model.Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
-	taskState := task.GetTaskState()
-	state := task.task.State
-
-	if state == TaskPending || state == TaskRunning || state == TaskSubtaskRunning {
-		nextPendingSubTasks, rollback := task.NextSubTasks()
-		if len(nextPendingSubTasks) > 0 {
-			if rollback {
-				for _, subtask := range nextPendingSubTasks {
-					subtaskFromDB := subtaskMap[subtask.GetID()]
-					if subtaskFromDB.Rollback == string(RollbackPending) ||
-						time.Now().Add(time.Duration(subtaskFromDB.RetryInterval)*time.Second).After(subtaskFromDB.UpdateTime.Time()) {
-						rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB)
-					}
-				}
-			} else {
-				if task.GetTaskState() == TaskPending {
-					taskState = TaskSubtaskRunning
-				}
-
-				for _, subtask := range nextPendingSubTasks {
-					subtaskFromDB := subtaskMap[subtask.GetID()]
-					if subtaskFromDB.State == TaskPending ||
-						time.Now().Add(time.Duration(subtaskFromDB.RetryInterval)*time.Second).After(subtaskFromDB.UpdateTime.Time()) {
-						runningSubtasks = append(runningSubtasks, subtaskFromDB)
-					}
-				}
-			}
-		} else {
-			if time.Now().Add(time.Duration(taskFromDB.RetryInterval) * time.Second).After(taskFromDB.UpdateTime.Time()) {
-				finished = true
-			}
-
-			if !finished {
-				// if task has not retry，task updateTime must before all subtasks updateTime
-				var subtaskLastUpdateTime time.Time
-				for _, subtask := range subtaskMap {
-					if subtask.UpdateTime.Time().After(subtaskLastUpdateTime) {
-						subtaskLastUpdateTime = subtask.UpdateTime.Time()
-					}
-				}
-				if subtaskLastUpdateTime.After(taskFromDB.UpdateTime.Time()) {
-					finished = true
-				}
-			}
-		}
+func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
+	if task.IsFinished() {
+		return
 	}
 
-	if task.GetTaskState() != taskState {
-		err := t.TaskDao.SetWorkerAndTaskState(golocalv1.GetContext(), task.GetID(), "", taskState)
-		if err != nil {
-			retry = true
+	nextPendingSubTasks, rollback := task.NextSubTasks()
+	if len(nextPendingSubTasks) > 0 {
+		if rollback {
+			for _, subtask := range nextPendingSubTasks {
+				subtaskFromDB := subtaskMap[subtask.GetID()]
+				if t.canExecuteSubtask(subtaskFromDB, true) {
+					rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB.getModel())
+				}
+			}
 			return
 		}
+
+		for _, subtask := range nextPendingSubTasks {
+			subtaskFromDB := subtaskMap[subtask.GetID()]
+			if t.canExecuteSubtask(subtaskFromDB, false) {
+				runningSubtasks = append(runningSubtasks, subtaskFromDB.getModel())
+			}
+		}
+
+		if task.GetState() == TaskPending {
+			err := t.TaskDao.SetWorkerAndTaskState(golocalv1.GetContext(), task.GetID(), "", TaskSubtaskRunning)
+			if err != nil {
+				retry = true
+				return
+			}
+		}
+
+		return
+	}
+
+	if time.Now().After(task.task.LastRunTime.Time().Add(time.Duration(task.task.RetryInterval) * time.Second)) {
+		finished = true
+	} else {
+		retry = true
 	}
 
 	return
+}
+
+func (t *taskDispatcher) canExecuteSubtask(subtask *Subtask, isRollback bool) bool {
+	now := time.Now()
+	retryTime := subtask.GetLastRunTime().Time().Add(time.Duration(subtask.GetRetryInterval()) * time.Second)
+	if !now.After(retryTime) {
+		return false
+	}
+
+	if isRollback {
+		return !subtask.IsRollbackFinished()
+	}
+	return !subtask.IsFinished()
 }
 
 func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask, aliveNodes, lostNodes []string) {
@@ -331,117 +324,52 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 		return
 	}
 
-	runningTaskIds := make([]string, 0, len(_runningTasks))
-	runningSubtaskIds := make([]string, 0, len(_runningSubtasks))
-	runningRollBackSubtaskIds := make([]string, 0, len(_runningSubtaskRollbacks))
-	for _, runningTask := range _runningTasks {
-		if !t.allocateWorkerInflight.InsertString(runningTask.ID) {
-			continue
-		}
-		runningTaskIds = append(runningTaskIds, runningTask.ID)
-	}
-	for _, runningSubtask := range _runningSubtasks {
-		if !t.allocateWorkerInflight.InsertString(runningSubtask.ID) {
-			continue
-		}
-		runningSubtaskIds = append(runningSubtaskIds, runningSubtask.ID)
-	}
-	for _, runningSubtaskRollback := range _runningSubtaskRollbacks {
-		if !t.allocateWorkerInflight.InsertString(runningSubtaskRollback.ID) {
-			continue
-		}
-		runningRollBackSubtaskIds = append(runningRollBackSubtaskIds, runningSubtaskRollback.ID)
-	}
+	runningTasks := t.filterInflightTasks(_runningTasks)
+	runningSubtasks := t.filterInflightSubtasks(_runningSubtasks)
+	runningSubtaskRollbacks := t.filterInflightSubtasks(_runningSubtaskRollbacks)
 
-	if len(runningTaskIds) == 0 && len(runningSubtaskIds) == 0 && len(runningRollBackSubtaskIds) == 0 {
+	if len(runningTasks) == 0 && len(runningSubtasks) == 0 && len(runningSubtaskRollbacks) == 0 {
 		return
 	}
 
-	var (
-		runningTasks            []model.Task
-		runningSubtasks         []model.Subtask
-		runningSubtaskRollbacks []model.Subtask
-		ctx                     = golocalv1.GetContext()
-	)
+	defer t.cleanupInflight(runningTasks, runningSubtasks, runningSubtaskRollbacks)
 
-	if len(runningTaskIds) > 0 {
-		runningTasks, _ = t.TaskDao.GetByIDs(ctx, runningTaskIds)
-	}
-	if len(runningSubtaskIds) > 0 {
-		runningSubtasks, _ = t.SubtaskDao.GetSubtasksByIDs(ctx, runningSubtaskIds)
-	}
-	if len(runningRollBackSubtaskIds) > 0 {
-		runningSubtaskRollbacks, _ = t.SubtaskDao.GetSubtasksByIDs(ctx, runningRollBackSubtaskIds)
-	}
-
-	defer func() {
-		for _, runningTask := range runningTasks {
-			t.allocateWorkerInflight.DeleteString(runningTask.ID)
-		}
-		for _, runningSubtask := range runningSubtasks {
-			t.allocateWorkerInflight.DeleteString(runningSubtask.ID)
-		}
-		for _, runningSubtaskRollback := range runningSubtaskRollbacks {
-			t.allocateWorkerInflight.DeleteString(runningSubtaskRollback.ID)
-		}
-	}()
-
+	ctx := golocalv1.GetContext()
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
 	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
 
-	for _, runningSubtask := range runningSubtasks {
-		var nodeName string
-		if runningSubtask.State == TaskRunning && !tools.StringSliceContains(lostNodes, runningSubtask.Worker) {
-			nodeName = runningSubtask.Worker
-		} else {
-			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-		}
-
+	for i, _ := range runningSubtasks {
+		runningSubtask := runningSubtasks[i]
+		nodeName := t.selectNode(runningSubtask.State == TaskRunning, runningSubtask.Worker, lostNodes, aliveNodes)
 		if nodeName != runningSubtask.Worker {
-			subtaskId := runningSubtask.ID
 			tx.Add(func(tx *bun.Tx) error {
-				return t.SubtaskDao.SetWorkerAndState(ctx, subtaskId, nodeName, TaskRunning, tx)
+				return t.SubtaskDao.SetWorkerAndState(ctx, runningSubtask.ID, nodeName, TaskRunning, tx)
 			})
 		}
-
 		subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.ID)
 	}
 
-	for _, runningTask := range runningTasks {
-		var nodeName string
-		if runningTask.State == TaskRunning && runningTask.Worker != "" && !tools.StringSliceContains(lostNodes, runningTask.Worker) {
-			nodeName = runningTask.Worker
-		} else {
-			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-		}
-
+	for i, _ := range runningTasks {
+		runningTask := runningTasks[i]
+		nodeName := t.selectNode(runningTask.State == TaskRunning && runningTask.Worker != "", runningTask.Worker, lostNodes, aliveNodes)
 		if nodeName != runningTask.Worker {
-			taskId := runningTask.ID
 			tx.Add(func(tx *bun.Tx) error {
-				return t.TaskDao.SetWorkerAndTaskState(ctx, taskId, nodeName, TaskRunning, tx)
+				return t.TaskDao.SetWorkerAndTaskState(ctx, runningTask.ID, nodeName, TaskRunning, tx)
 			})
 		}
-
 		taskWorkerMap[nodeName] = append(taskWorkerMap[nodeName], runningTask.ID)
 	}
 
-	for _, runningSubtaskRollback := range runningSubtaskRollbacks {
-		var nodeName string
-		if runningSubtaskRollback.Worker != "" && !tools.StringSliceContains(lostNodes, runningSubtaskRollback.Worker) {
-			nodeName = runningSubtaskRollback.Worker
-		} else {
-			nodeName = aliveNodes[rand.Intn(len(aliveNodes))]
-		}
-
+	for i, _ := range runningSubtaskRollbacks {
+		runningSubtaskRollback := runningSubtaskRollbacks[i]
+		nodeName := t.selectNode(runningSubtaskRollback.Worker != "", runningSubtaskRollback.Worker, lostNodes, aliveNodes)
 		if nodeName != runningSubtaskRollback.Worker {
-			subtaskId := runningSubtaskRollback.ID
 			tx.Add(func(tx *bun.Tx) error {
-				return t.SubtaskDao.SetWorkerAndRollback(ctx, subtaskId, nodeName, string(RollingBack), tx)
+				return t.SubtaskDao.SetWorkerAndRollback(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), tx)
 			})
 		}
-
 		subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.ID)
 	}
 
@@ -450,24 +378,55 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 		return
 	}
 
-	for nodeName, taskIds := range subtaskWorkerMap {
-		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, deliverSubtask, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
-		if err != nil {
-			logger.Error("deliver subtasks failed. err: %s", err.Error())
+	t.deliverToCluster(subtaskWorkerMap, deliverSubtask)
+	t.deliverToCluster(taskWorkerMap, deliverTask)
+	t.deliverToCluster(subtaskRollbackWorkerMap, deliverSubtaskRollback)
+}
+
+func (t *taskDispatcher) filterInflightTasks(tasks []*model.Task) []model.Task {
+	filtered := make([]model.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if t.allocateWorkerInflight.InsertString(task.ID) {
+			filtered = append(filtered, *task)
 		}
 	}
+	return filtered
+}
 
-	for nodeName, taskIds := range taskWorkerMap {
-		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, deliverTask, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
-		if err != nil {
-			logger.Error("deliver tasks failed. err: %s", err.Error())
+func (t *taskDispatcher) filterInflightSubtasks(subtasks []*model.Subtask) []model.Subtask {
+	filtered := make([]model.Subtask, 0, len(subtasks))
+	for _, subtask := range subtasks {
+		if t.allocateWorkerInflight.InsertString(subtask.ID) {
+			filtered = append(filtered, *subtask)
 		}
 	}
+	return filtered
+}
 
-	for nodeName, taskIds := range subtaskRollbackWorkerMap {
-		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, deliverSubtaskRollback, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+func (t *taskDispatcher) cleanupInflight(tasks []model.Task, subtasks, rollbackSubtasks []model.Subtask) {
+	for _, task := range tasks {
+		t.allocateWorkerInflight.DeleteString(task.ID)
+	}
+	for _, subtask := range subtasks {
+		t.allocateWorkerInflight.DeleteString(subtask.ID)
+	}
+	for _, subtask := range rollbackSubtasks {
+		t.allocateWorkerInflight.DeleteString(subtask.ID)
+	}
+}
+
+func (t *taskDispatcher) selectNode(keepCurrentNode bool, currentNode string, lostNodes, aliveNodes []string) string {
+	if keepCurrentNode && currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
+		return currentNode
+	}
+	return aliveNodes[rand.Intn(len(aliveNodes))]
+}
+
+func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcName string) {
+	for nodeName, taskIds := range workerMap {
+		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, funcName, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
-			logger.Error("deliver subtaskRollbacks failed. err: %s", err.Error())
+			logger.Error("deliver tasks failed. Error: %s", err.Error())
 		}
 	}
 }
@@ -503,12 +462,7 @@ func (t *taskDispatcher) handleTaskImmediately(taskId string) {
 		return
 	}
 
-	subtaskMap := make(map[string]*model.Subtask)
-	for i, vv := range subtasks {
-		subtaskMap[vv.ID] = &subtasks[i]
-	}
-
-	finished, retry, runningSubtasks, rollbackSubtasks := t.analysisTask(task, dbTask, subtaskMap)
+	finished, retry, runningSubtasks, rollbackSubtasks := t.analysisTask(task, task.subtaskMap)
 	if retry {
 		return
 	} else if finished {

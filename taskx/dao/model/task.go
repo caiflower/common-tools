@@ -21,7 +21,7 @@ type Task struct {
 	State         string     `bun:"state" json:"state"`                  // 任务状态
 	Description   string     `bun:"description" json:"description"`      // 任务描述
 	CreateTime    basic.Time `bun:"create_time" json:"createTime"`       // 创建时间
-	UpdateTime    basic.Time `bun:"update_time" json:"updateTime"`       // 更新时间
+	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
 	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
 }
 
@@ -43,7 +43,7 @@ type TaskFilter struct {
 	State         []string     `json:"state,omitempty"`
 	Description   []string     `json:"description,omitempty"`
 	CreateTime    []basic.Time `json:"createTime,omitempty"`
-	UpdateTime    []basic.Time `json:"updateTime,omitempty"`
+	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
 	Status        []int8       `json:"status,omitempty"`
 }
 
@@ -122,8 +122,8 @@ func (f *TaskFilter) WithCreateTime(v ...basic.Time) *TaskFilter {
 	return f
 }
 
-func (f *TaskFilter) WithUpdateTime(v ...basic.Time) *TaskFilter {
-	f.UpdateTime = v
+func (f *TaskFilter) WithLastRunTime(v ...basic.Time) *TaskFilter {
+	f.LastRunTime = v
 	return f
 }
 
@@ -241,11 +241,11 @@ func (f *TaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 			q.Where("create_time BETWEEN ? AND ?", f.CreateTime[0].Time(), f.CreateTime[1].Time())
 		}
 	}
-	if len(f.UpdateTime) > 0 {
-		if len(f.UpdateTime) == 1 {
-			q.Where("update_time = ?", f.UpdateTime[0].Time())
-		} else if len(f.UpdateTime) == 2 {
-			q.Where("update_time BETWEEN ? AND ?", f.UpdateTime[0].Time(), f.UpdateTime[1].Time())
+	if len(f.LastRunTime) > 0 {
+		if len(f.LastRunTime) == 1 {
+			q.Where("last_run_time = ?", f.LastRunTime[0].Time())
+		} else if len(f.LastRunTime) == 2 {
+			q.Where("last_run_time BETWEEN ? AND ?", f.LastRunTime[0].Time(), f.LastRunTime[1].Time())
 		}
 	}
 	if len(f.Status) > 0 {

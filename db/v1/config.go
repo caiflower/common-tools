@@ -29,6 +29,7 @@ type Config struct {
 	MaxOpen               int           `yaml:"maxOpen" default:"200" json:"maxOpen"`
 	MaxIdle               int           `yaml:"maxIdle" default:"20" json:"maxIdle"`
 	ConnMaxLifetime       int           `yaml:"connMaxLifetime" default:"28800" json:"connMaxLifetime"`
+	ConnMaxIdleTime       time.Duration `yaml:"connMaxIdleTime" json:"connMaxIdleTime" default:"60s"`
 	Plural                bool          `yaml:"plural" json:"plural"`
 	Debug                 bool          `yaml:"debug" json:"debug"`
 	EnableMetric          bool          `yaml:"enableMetric" json:"enableMetric"`

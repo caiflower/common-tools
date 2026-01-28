@@ -33,8 +33,10 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/mysqldialect"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
 )
 
 const traceId = "traceId"
@@ -87,6 +89,11 @@ func NewDBClient(config Config) (c *Client, err error) {
 		if err != nil {
 			return nil, err
 		}
+	case "sqlite":
+		c, err = createSqliteClient(&config)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("unsupported dialect %s", config.Dialect)
 	}
@@ -108,8 +115,10 @@ func NewDBClient(config Config) (c *Client, err error) {
 		})
 	}
 
-	if err = c.DB.Ping(); err != nil {
-		return nil, errors.New("connect to db failed")
+	if config.Dialect != "sqlite" {
+		if err = c.DB.Ping(); err != nil {
+			return nil, errors.New("connect to db failed")
+		}
 	}
 
 	global.DefaultResourceManger.Add(c)
@@ -133,6 +142,7 @@ func createMysqlClient(config *Config) (*Client, error) {
 
 	// See "Important settings" section.
 	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
+	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
 	db.SetMaxOpenConns(config.MaxOpen)
 	db.SetMaxIdleConns(config.MaxIdle)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
@@ -160,6 +170,7 @@ func createPgsqlClient(config *Config) (*Client, error) {
 
 	// See "Important settings" section.
 	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
+	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
 	db.SetMaxOpenConns(config.MaxOpen)
 	db.SetMaxIdleConns(config.MaxIdle)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
@@ -169,6 +180,27 @@ func createPgsqlClient(config *Config) (*Client, error) {
 	}
 
 	bunDB := bun.NewDB(db, mysqldialect.New())
+	return &Client{DB: bunDB, config: config}, nil
+}
+
+func createSqliteClient(config *Config) (*Client, error) {
+	db, err := sql.Open("sqlite3", config.Url)
+	if err != nil {
+		return nil, err
+	}
+
+	// See "Important settings" section.
+	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
+	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
+	db.SetMaxOpenConns(config.MaxOpen)
+	db.SetMaxIdleConns(config.MaxIdle)
+	//ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
+	//defer cancelFunc()
+	//if err = db.PingContext(ctx); err != nil {
+	//	return nil, errors.New("connect to db timeout")
+	//}
+
+	bunDB := bun.NewDB(db, sqlitedialect.New())
 	return &Client{DB: bunDB, config: config}, nil
 }
 
@@ -213,7 +245,7 @@ func (c *Client) GetInsert(model interface{}, tx ...*bun.Tx) *bun.InsertQuery {
 }
 
 func (c *Client) GetUpdate(model interface{}, tx ...*bun.Tx) *bun.UpdateQuery {
-	return c.GetTx(tx...).NewUpdate().Model(model).Set("update_time=current_timestamp")
+	return c.GetTx(tx...).NewUpdate().Model(model)
 }
 
 func (c *Client) GetDelete(model interface{}, tx ...*bun.Tx) *bun.DeleteQuery {
@@ -221,7 +253,7 @@ func (c *Client) GetDelete(model interface{}, tx ...*bun.Tx) *bun.DeleteQuery {
 }
 
 func (c *Client) GetSoftDelete(model interface{}, tx ...*bun.Tx) *bun.UpdateQuery {
-	return c.GetTx(tx...).NewUpdate().Model(model).Set("update_time=current_timestamp").Set("status=-1")
+	return c.GetTx(tx...).NewUpdate().Model(model).Set("status=-1")
 }
 
 func (c *Client) Insert(ctx context.Context, data interface{}, tx ...*bun.Tx) (int64, error) {
@@ -295,7 +327,7 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 			rows = fmt.Sprintf(". rows_affected=%d.", row)
 		}
 		if event.Err == nil {
-			logger.Info("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
+			logger.Debug("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
 		} else {
 			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, time.Since(event.StartTime), rows, event.Err)
 		}

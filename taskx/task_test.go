@@ -30,11 +30,11 @@ func TestTask(t *testing.T) {
 	stp3 := NewSubtask("stp3").SetInput("stp3")
 	stp4 := NewSubtask("stp4").SetInput("stp4")
 	stp5 := NewSubtask("stp5").SetInput("stp5")
-	_ = myTask.AddSubTask(stp1)
-	_ = myTask.AddSubTask(stp2)
-	_ = myTask.AddSubTask(stp3)
-	_ = myTask.AddSubTask(stp4)
-	_ = myTask.AddSubTask(stp5)
+	_ = myTask.AddSubtask(stp1)
+	_ = myTask.AddSubtask(stp2)
+	_ = myTask.AddSubtask(stp3)
+	_ = myTask.AddSubtask(stp4)
+	_ = myTask.AddSubtask(stp5)
 
 	if err := myTask.AddDirectedEdge(stp1, stp2); err != nil {
 		panic(err)

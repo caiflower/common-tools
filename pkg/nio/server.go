@@ -14,12 +14,11 @@
  * limitations under the License.
  */
 
- package nio
+package nio
 
 import (
 	"bytes"
 	"encoding/binary"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"net"
 	"strings"
 	"sync"
@@ -94,7 +93,7 @@ func NewServerWithAllArgs(config *Config, locker sync.Locker, logger logger.ILog
 }
 
 func (s *Server) Open() error {
-	s.logger.Info("[server] Open socket %s acceptor and listening...", s.addr)
+	s.logger.Trace("[server] Open socket %s acceptor and listening...", s.addr)
 
 	listen, err := net.Listen("tcp", s.socket.addr)
 	if err != nil {
@@ -131,8 +130,6 @@ func (s *Server) Close() {
 }
 
 func (s *Server) handlerConnection() {
-	golocalv1.PutTraceID("nio.handlerConnection")
-	defer golocalv1.Clean()
 
 	for {
 		if s.closed {

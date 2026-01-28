@@ -115,7 +115,9 @@ func NewRedisClient(config Config) RedisClient {
 		})
 	}
 
-	if ping := c.GetRedis().Ping(context.Background()); ping.Err() != nil {
+	timeout, cancelFunc := context.WithTimeout(context.Background(), config.ReadTimeout)
+	defer cancelFunc()
+	if ping := c.GetRedis().Ping(timeout); ping.Err() != nil {
 		panic("connect redis failed. Error: " + ping.Err().Error())
 	}
 

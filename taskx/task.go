@@ -44,26 +44,24 @@ const (
 	NoneRollback      TaskRollbackState = "NoneRollback"
 
 	DefaultRetryCount    = 3
-	DefaultRetryInterval = 3
+	DefaultRetryInterval = 5
 )
 
-var taskHash = func(c *SubTask) string {
+var taskHash = func(c *Subtask) string {
 	return c.GetID()
 }
 
 type Task struct {
 	task          model.Task
 	failedSubtask bool
-	subTasks      []*SubTask
-	subtaskMap    map[string]*SubTask
-	g             graph.Graph[string, *SubTask]
-	copyg         graph.Graph[string, *SubTask]
-	rollbacks     []*SubTask
+	subTasks      []*Subtask
+	subtaskMap    map[string]*Subtask
+	g             graph.Graph[string, *Subtask]
+	rollbacks     []*Subtask
 }
 
-type SubTask struct {
-	subtask   model.Subtask
-	attribute map[string]interface{}
+type Subtask struct {
+	subtask model.Subtask
 }
 
 func NewTask(taskName string) *Task {
@@ -71,21 +69,21 @@ func NewTask(taskName string) *Task {
 		task: model.Task{
 			ID:            tools.GenerateId("t"),
 			TaskName:      taskName,
-			State:         string(TaskPending),
+			State:         TaskPending,
 			Retry:         DefaultRetryCount,
 			RetryInterval: DefaultRetryInterval,
 		},
-		subtaskMap: make(map[string]*SubTask),
+		subtaskMap: make(map[string]*Subtask),
 		g:          graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
 	}
 }
 
-func NewSubtask(taskName string) *SubTask {
-	return &SubTask{
+func NewSubtask(taskName string) *Subtask {
+	return &Subtask{
 		subtask: model.Subtask{
 			ID:            tools.GenerateId("st"),
 			TaskName:      taskName,
-			State:         string(TaskPending),
+			State:         TaskPending,
 			Retry:         DefaultRetryCount,
 			RetryInterval: DefaultRetryInterval,
 			Rollback:      string(RollbackPending),
@@ -93,72 +91,80 @@ func NewSubtask(taskName string) *SubTask {
 	}
 }
 
-// Deprecated
-func NewSubTask(taskName string) *SubTask {
-	return NewSubtask(taskName)
-}
-
-func (t *SubTask) GetID() string {
+func (t *Subtask) GetID() string {
 	return t.subtask.ID
 }
 
-func (t *SubTask) GetState() string {
+func (t *Subtask) GetState() string {
 	return t.subtask.State
 }
 
-func (t *SubTask) GetName() string {
+func (t *Subtask) GetName() string {
 	return t.subtask.TaskName
 }
 
-func (t *SubTask) UnmarshalInput(v interface{}) error {
+func (t *Subtask) UnmarshalInput(v interface{}) error {
 	return tools.DeByte([]byte(t.subtask.Input), v)
 }
 
-func (t *SubTask) GetInput() string {
+func (t *Subtask) GetInput() string {
 	return t.subtask.Input
 }
 
-func (t *SubTask) SetInput(content interface{}) *SubTask {
+func (t *Subtask) SetInput(content interface{}) *Subtask {
 	_tmp, _ := tools.ToByte(content)
 	t.subtask.Input = string(_tmp)
 	return t
 }
 
-func (t *SubTask) GetOutput() string {
+func (t *Subtask) GetOutput() string {
 	return t.subtask.Output
 }
 
-func (t *SubTask) UnmarshalOutput(v interface{}) error {
+func (t *Subtask) UnmarshalOutput(v interface{}) error {
 	return tools.DeByte([]byte(t.subtask.Output), v)
 }
 
-func (t *SubTask) SetAttribute(key string, v interface{}) {
-	t.attribute[key] = v
+func (t *Subtask) IsRollbackFinished() bool {
+	rollback := t.GetRollback()
+	return TaskRollbackState(rollback) == RollbackFailed || TaskRollbackState(rollback) == RollbackSucceeded || TaskRollbackState(rollback) == NoneRollback
 }
 
-func (t *SubTask) GetAttribute(key string) interface{} {
-	return t.attribute[key]
-}
-
-func (t *SubTask) IsFinished() bool {
+func (t *Subtask) IsFinished() bool {
 	return t.subtask.State == TaskFailed || t.subtask.State == TaskSucceeded
 }
 
-func (t *SubTask) SetRetry(retry int8) *SubTask {
+func (t *Subtask) SetRetry(retry int8) *Subtask {
 	t.subtask.Retry = retry
 	return t
 }
 
-func (t *SubTask) SetRetryInterval(retryInterval int32) *SubTask {
+func (t *Subtask) SetRetryInterval(retryInterval int32) *Subtask {
 	t.subtask.RetryInterval = retryInterval
 	return t
 }
 
-func (t *SubTask) needRollback() bool {
+func (t *Subtask) needRollback() bool {
 	return (t.subtask.State == TaskRunning ||
 		t.subtask.State == TaskSucceeded ||
 		t.subtask.State == TaskFailed) &&
 		(t.subtask.Rollback == string(RollbackPending) || t.subtask.Rollback == string(RollingBack))
+}
+
+func (t *Subtask) GetRollback() string {
+	return t.subtask.Rollback
+}
+
+func (t *Subtask) GetLastRunTime() *basic.Time {
+	return &t.subtask.LastRunTime
+}
+
+func (t *Subtask) GetRetryInterval() int32 {
+	return t.subtask.RetryInterval
+}
+
+func (t *Subtask) getModel() *model.Subtask {
+	return &t.subtask
 }
 
 func (t *Task) GetID() string {
@@ -179,7 +185,7 @@ func (t *Task) SetInput(content interface{}) *Task {
 	return t
 }
 
-func (t *Task) GetTaskState() string {
+func (t *Task) GetState() string {
 	return t.task.State
 }
 
@@ -196,18 +202,18 @@ func (t *Task) UnmarshalInput(v interface{}) error {
 	return tools.DeByte([]byte(t.task.Input), v)
 }
 
-func (t *Task) AddSubTask(task *SubTask) error {
+func (t *Task) AddSubtask(task *Subtask) error {
 	t.subTasks = append(t.subTasks, task)
 	t.subtaskMap[task.GetID()] = task
 	return t.g.AddVertex(task)
 }
 
-func (t *Task) AddDirectedEdge(src, dst *SubTask) error {
+func (t *Task) AddDirectedEdge(src, dst *Subtask) error {
 	//t.isSort = false
 	return t.g.AddEdge(src.GetID(), dst.GetID())
 }
 
-func (t *Task) SetRequestId(requestID string) *Task {
+func (t *Task) SetRequestID(requestID string) *Task {
 	t.task.RequestID = requestID
 	return t
 }
@@ -228,8 +234,8 @@ func (t *Task) SetUrgent() *Task {
 	return t
 }
 
-func (t *Task) NextSubTasks() ([]*SubTask, bool) {
-	var res []*SubTask
+func (t *Task) NextSubTasks() ([]*Subtask, bool) {
+	var res []*Subtask
 	// has failedSubtask
 	if t.failedSubtask {
 		return t.rollbacks, true
@@ -328,7 +334,6 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 	now := time.Now()
 	task := &t.task
 	task.CreateTime = basic.Time(now)
-	task.UpdateTime = basic.Time(now)
 	task.Status = 1
 
 	predecessorMap, _ := t.g.PredecessorMap()
@@ -344,7 +349,6 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 		}
 		subtask := v.subtask
 		subtask.TaskID = t.GetID()
-		subtask.UpdateTime = basic.Time(now)
 		subtask.PreSubtaskID = preSubtaskId
 		subtask.Status = 1
 		subtasks = append(subtasks, subtask)
@@ -355,13 +359,13 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 
 func (t *Task) initByBean(task *model.Task, subtasks []model.Subtask) (*Task, error) {
 	t.task = *task
-	t.subtaskMap = make(map[string]*SubTask)
+	t.subtaskMap = make(map[string]*Subtask)
 	t.g = graph.New(taskHash, graph.Directed(), graph.PreventCycles())
 	for _, subtask := range subtasks {
-		st := &SubTask{
+		st := &Subtask{
 			subtask: subtask,
 		}
-		err := t.AddSubTask(st)
+		err := t.AddSubtask(st)
 		if err != nil {
 			return nil, err
 		}
@@ -400,14 +404,14 @@ func (t *Task) initByBean(task *model.Task, subtasks []model.Subtask) (*Task, er
 }
 
 func (t *Task) rollbackSubtasks() error {
-	var res [][]*SubTask
+	var res [][]*Subtask
 	predecessorMap, err := t.g.PredecessorMap()
 	if err != nil {
 		return err
 	}
 
 	for len(predecessorMap) != 0 {
-		var tmp, removeTmp []*SubTask
+		var tmp, removeTmp []*Subtask
 
 		for k, v := range predecessorMap {
 			if len(v) == 0 {

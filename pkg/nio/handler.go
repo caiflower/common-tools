@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package nio
+package nio
 
 import (
 	"bytes"
@@ -68,22 +68,22 @@ func (h *Handler) readIO(socket *socket, session *Session) {
 
 			// 判断是否远程连接被关闭
 			if err.Error() == "EOF" {
-				h.logger.Info("%s [%d] Connection close. Cause of remote connection has closed. remote=%s", socket.addr, session.id, conn.RemoteAddr())
+				h.logger.Trace("%s [%d] Connection close. Cause of remote connection has closed. remote=%s", socket.addr, session.id, conn.RemoteAddr())
 				session.Close()
 				return
 			}
 			if strings.Contains(err.Error(), "closed by the remote host") {
-				h.logger.Info("%s [%d] Connection close. Cause of remote connection has interrupted. remote=%s", socket.addr, session.id, conn.RemoteAddr())
+				h.logger.Trace("%s [%d] Connection close. Cause of remote connection has interrupted. remote=%s", socket.addr, session.id, conn.RemoteAddr())
 				session.Close()
 				return
 			}
 			if strings.Contains(err.Error(), "use of closed network") {
-				h.logger.Info("%s [%d] Connection close. Cause of connection has closed. remote=%s", socket.addr, session.id, conn.RemoteAddr())
+				h.logger.Trace("%s [%d] Connection close. Cause of connection has closed. remote=%s", socket.addr, session.id, conn.RemoteAddr())
 				session.Close()
 				return
 			}
 			if strings.Contains(err.Error(), "connection reset by peer") {
-				h.logger.Info("%s [%d] Connection close. Cause of connection has closed by server. remote=%s", socket.addr, session.id, conn.RemoteAddr())
+				h.logger.Trace("%s [%d] Connection close. Cause of connection has closed by server. remote=%s", socket.addr, session.id, conn.RemoteAddr())
 				session.Close()
 				return
 			}

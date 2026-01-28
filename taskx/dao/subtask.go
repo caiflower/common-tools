@@ -5,6 +5,7 @@ import (
 	"time"
 
 	dbv1 "github.com/caiflower/common-tools/db/v1"
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
@@ -18,9 +19,9 @@ type SubtaskDAO interface {
 	DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error)
+	GetByIDs(ctx context.Context, subtaskIDs []string) ([]model.Subtask, error)
 	SetWorkerAndState(ctx context.Context, subtaskID string, worker, state string, tx ...*bun.Tx) error
 	SetWorkerAndRollback(ctx context.Context, subtaskID string, worker, rollback string, tx ...*bun.Tx) error
-	GetSubtasksByIDs(ctx context.Context, subtaskIDs []string) ([]model.Subtask, error)
 	SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error
 	SetRollbackAndState(ctx context.Context, id string, rollback string, output string, tx ...*bun.Tx) error
 	SetRetry(ctx context.Context, subtaskID string, retry int8, tx ...*bun.Tx) error
@@ -152,7 +153,7 @@ func (d *subtaskDAO) SetWorkerAndRollback(ctx context.Context, id string, worker
 	return nil
 }
 
-func (d *subtaskDAO) GetSubtasksByIDs(ctx context.Context, ids []string) ([]model.Subtask, error) {
+func (d *subtaskDAO) GetByIDs(ctx context.Context, ids []string) ([]model.Subtask, error) {
 	var subtasks []model.Subtask
 	if len(ids) == 0 {
 		return subtasks, nil
@@ -170,7 +171,7 @@ func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, s
 			Table(TableNameOfSubtask).
 			Set("output = ?", output).
 			Set("state = ?", state).
-			Set("update_time = ?", time.Now()).
+			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Where("id = ?", id).
 			Exec(ctx))
 	if err != nil {
@@ -185,7 +186,7 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 			Table(TableNameOfSubtask).
 			Set("rollback = ?", rollback).
 			Set("output = ?", output).
-			Set("update_time = ?", time.Now()).
+			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Where("id = ?", id).
 			Exec(ctx))
 	if err != nil {
@@ -199,7 +200,7 @@ func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8, tx ...
 		d.Client.GetTx(tx...).NewUpdate().
 			Table(TableNameOfSubtask).
 			Set("retry = ?", retry).
-			Set("update_time = ?", time.Now()).
+			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Where("id = ?", id).
 			Exec(ctx))
 	if err != nil {
