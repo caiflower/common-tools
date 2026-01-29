@@ -1051,8 +1051,9 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 }
 
 func (c *Cluster) callLocalFunc(f *FuncSpec) {
+	defer golocalv1.Clean()
+
 	if golocalv1.GetTraceID() == "" {
-		defer golocalv1.Clean()
 		golocalv1.PutTraceID(f.traceId)
 	}
 	fc := c.localFuncs[f.funcName]

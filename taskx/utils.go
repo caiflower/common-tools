@@ -5,5 +5,5 @@ func isFinished(state string) bool {
 }
 
 func isRollbackFinished(state string) bool {
-	return state == string(RollbackFailed) || state == string(RollbackSucceeded) || string(state) == string(NoneRollback)
+	return state == string(RollbackFailed) || state == string(RollbackSucceeded) || state == string(NoneRollback)
 }

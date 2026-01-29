@@ -19,7 +19,8 @@ type TaskDAO interface {
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	GetByIDs(ctx context.Context, taskIDs []string) ([]model.Task, error)
 	GetByTaskState(ctx context.Context, taskState []string) ([]model.Task, error)
-	SetWorkerAndTaskState(ctx context.Context, taskID string, worker, state string, tx ...*bun.Tx) error
+	SetWorkerAndTaskStateWithOldWorker(ctx context.Context, taskID string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error)
+	SetState(ctx context.Context, id string, state string, tx ...*bun.Tx) (int64, error)
 	SetOutputAndState(ctx context.Context, taskID string, output, state string, tx ...*bun.Tx) error
 	SetRetry(ctx context.Context, taskID string, retry int8, tx ...*bun.Tx) error
 }
@@ -109,18 +110,23 @@ func (d *taskDAO) GetByTaskState(ctx context.Context, taskState []string) ([]mod
 	return res, err
 }
 
-func (d *taskDAO) SetWorkerAndTaskState(ctx context.Context, id string, worker, state string, tx ...*bun.Tx) error {
-	_, err := d.Client.GetRowsAffected(
+func (d *taskDAO) SetWorkerAndTaskStateWithOldWorker(ctx context.Context, id string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error) {
+	return d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
 			Table(TableNameOfTask).
 			Set("worker = ?", worker).
 			Set("state = ?", state).
 			Where("id = ?", id).
+			Where("worker = ?", oldWorker).
 			Exec(ctx))
-	if err != nil {
-		return err
-	}
-	return nil
+}
+
+func (d *taskDAO) SetState(ctx context.Context, id string, state string, tx ...*bun.Tx) (int64, error) {
+	return d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewUpdate().
+		Table(TableNameOfTask).
+		Set("state = ?", state).
+		Where("id = ?", id).
+		Exec(ctx))
 }
 
 func (d *taskDAO) SetOutputAndState(ctx context.Context, taskID string, output, state string, tx ...*bun.Tx) error {

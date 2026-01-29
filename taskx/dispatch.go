@@ -17,6 +17,7 @@
 package taskx
 
 import (
+	"context"
 	"math/rand"
 	"time"
 
@@ -31,10 +32,6 @@ import (
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
-)
-
-const (
-	taskIdKey = "common-tools/taskx/taskId"
 )
 
 var SingletonTaskDispatcher = &taskDispatcher{
@@ -57,13 +54,13 @@ type taskDispatcher struct {
 
 type Config struct {
 	TaskWorker               int           `yaml:"taskWorker" default:"20"`
-	TaskQueueSize            int           `yaml:"taskQueueSize" default:"1000"`
+	TaskQueueSize            int           `yaml:"taskQueueSize" default:"100"`
 	SubtaskWorker            int           `yaml:"subtaskWorker" default:"100"`
-	SubtaskQueueSize         int           `yaml:"subtaskQueueSize" default:"2000"`
+	SubtaskQueueSize         int           `yaml:"subtaskQueueSize" default:"200"`
 	SubtaskRollbackWorker    int           `yaml:"subtaskRollbackWorker" default:"50"`
-	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"500"`
+	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"100"`
 	RemoteCallTimeout        time.Duration `yaml:"remoteCallTimeout" default:"3s"`
-	BackupTaskAgeSeconds     int           `yaml:"backupTaskAgeSeconds" default:"7200"`
+	BackupTaskAge            time.Duration `yaml:"backupTaskAge" default:"168h"`
 }
 
 func InitTaskDispatcher(cfg *Config) {
@@ -95,7 +92,7 @@ func (t *taskDispatcher) MasterCall() {
 	}()
 
 	// handle task
-	t.handleTask()
+	t.handleTask(context.TODO())
 	// back task
 	//t.backupTask()
 }
@@ -130,7 +127,12 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 		return err
 	}
 	if task.task.Urgent {
-		go t.handleTaskImmediately(task.task.ID)
+		taskID := taskBean.ID
+		funcSpec := cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID())
+		_, err := t.Cluster.CallFunc(funcSpec)
+		if err != nil {
+			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
+		}
 	}
 
 	return nil
@@ -210,9 +212,7 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]Output
 	return
 }
 
-func (t *taskDispatcher) handleTask() {
-	ctx := golocalv1.GetContext()
-
+func (t *taskDispatcher) handleTask(ctx context.Context) {
 	tasks, err := t.TaskDao.GetByTaskState(ctx, []string{TaskPending, TaskRunning, TaskSubtaskRunning})
 	if err != nil {
 		logger.Error("get tasks failed. err: %s", err.Error())
@@ -227,8 +227,9 @@ func (t *taskDispatcher) handleTask() {
 		runningSubtasks  []*model.Subtask
 		rollbackSubtasks []*model.Subtask
 	)
-	for i, v := range tasks {
-		taskID := v.ID
+
+	for i, _ := range tasks {
+		taskID := tasks[i].ID
 		subtasks, err := t.SubtaskDao.GetByTaskID(ctx, taskID)
 		if err != nil {
 			logger.Error("get task %v subtasks failed. err: %s", taskID, err.Error())
@@ -236,7 +237,7 @@ func (t *taskDispatcher) handleTask() {
 		}
 
 		task := &Task{}
-		task, err = task.initByBean(&v, subtasks)
+		task, err = task.initByBean(&tasks[i], subtasks)
 		if err != nil {
 			logger.Error("task %v init by bean failed. err: %s", taskID, err.Error())
 			continue
@@ -254,7 +255,7 @@ func (t *taskDispatcher) handleTask() {
 		}
 	}
 
-	t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
+	t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks)
 }
 
 func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
@@ -282,7 +283,7 @@ func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask
 		}
 
 		if task.GetState() == TaskPending {
-			err := t.TaskDao.SetWorkerAndTaskState(golocalv1.GetContext(), task.GetID(), "", TaskSubtaskRunning)
+			_, err := t.TaskDao.SetState(golocalv1.GetContext(), task.GetID(), TaskSubtaskRunning)
 			if err != nil {
 				retry = true
 				return
@@ -314,7 +315,7 @@ func (t *taskDispatcher) canExecuteSubtask(subtask *Subtask, isRollback bool) bo
 	return !subtask.IsFinished()
 }
 
-func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask, aliveNodes, lostNodes []string) {
+func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask) {
 	if len(_runningTasks) == 0 && len(_runningSubtasks) == 0 && len(_runningSubtaskRollbacks) == 0 {
 		return
 	}
@@ -324,6 +325,7 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 		return
 	}
 
+	aliveNodes, lostNodes := t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames()
 	runningTasks := t.filterInflightTasks(_runningTasks)
 	runningSubtasks := t.filterInflightSubtasks(_runningSubtasks)
 	runningSubtaskRollbacks := t.filterInflightSubtasks(_runningSubtaskRollbacks)
@@ -338,15 +340,20 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
-	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
 
-	for i, _ := range runningSubtasks {
+	for i := range runningSubtasks {
 		runningSubtask := runningSubtasks[i]
 		nodeName := t.selectNode(runningSubtask.State == TaskRunning, runningSubtask.Worker, lostNodes, aliveNodes)
 		if nodeName != runningSubtask.Worker {
-			tx.Add(func(tx *bun.Tx) error {
-				return t.SubtaskDao.SetWorkerAndState(ctx, runningSubtask.ID, nodeName, TaskRunning, tx)
-			})
+			cnt, err := t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtask.ID, nodeName, TaskRunning, runningSubtask.Worker)
+			if err != nil {
+				logger.Error("allocate a worker failed. subtaskID: %s, err: %s", runningSubtask.ID, err.Error())
+				continue
+			}
+			if cnt == 0 {
+				logger.Warn("allocate a worker failed, worker may be changed. subtaskID: %s", runningSubtask.ID)
+				continue
+			}
 		}
 		subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.ID)
 	}
@@ -355,27 +362,34 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 		runningTask := runningTasks[i]
 		nodeName := t.selectNode(runningTask.State == TaskRunning && runningTask.Worker != "", runningTask.Worker, lostNodes, aliveNodes)
 		if nodeName != runningTask.Worker {
-			tx.Add(func(tx *bun.Tx) error {
-				return t.TaskDao.SetWorkerAndTaskState(ctx, runningTask.ID, nodeName, TaskRunning, tx)
-			})
+			cnt, err := t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTask.ID, nodeName, TaskRunning, runningTask.Worker)
+			if err != nil {
+				logger.Error("allocate a worker failed. taskID: %s, err: %s", runningTask.ID, err.Error())
+				continue
+			}
+			if cnt == 0 {
+				logger.Warn("allocate a worker failed, worker may be changed. taskID: %s", runningTask.ID)
+				continue
+			}
 		}
 		taskWorkerMap[nodeName] = append(taskWorkerMap[nodeName], runningTask.ID)
 	}
 
-	for i, _ := range runningSubtaskRollbacks {
+	for i := range runningSubtaskRollbacks {
 		runningSubtaskRollback := runningSubtaskRollbacks[i]
 		nodeName := t.selectNode(runningSubtaskRollback.Worker != "", runningSubtaskRollback.Worker, lostNodes, aliveNodes)
 		if nodeName != runningSubtaskRollback.Worker {
-			tx.Add(func(tx *bun.Tx) error {
-				return t.SubtaskDao.SetWorkerAndRollback(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), tx)
-			})
+			cnt, err := t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), runningSubtaskRollback.Worker)
+			if err != nil {
+				logger.Error("allocate a worker failed. subtaskID: %s, err: %s", runningSubtaskRollback.ID, err.Error())
+				continue
+			}
+			if cnt == 0 {
+				logger.Warn("allocate a worker failed, worker may be changed. subtaskID: %s", runningSubtaskRollback.ID)
+				continue
+			}
 		}
 		subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.ID)
-	}
-
-	if err := tx.Submit(); err != nil {
-		logger.Error("allocateWorker for task failed. err: %s", err.Error())
-		return
 	}
 
 	t.deliverToCluster(subtaskWorkerMap, deliverSubtask)
@@ -431,14 +445,6 @@ func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcNam
 	}
 }
 
-func HandleTaskImmediately(taskId string) {
-	SingletonTaskDispatcher.HandleTaskImmediately(taskId)
-}
-
-func (t *taskDispatcher) HandleTaskImmediately(taskId string) {
-	go t.handleTaskImmediately(taskId)
-}
-
 func (t *taskDispatcher) handleTaskImmediately(taskId string) {
 	ctx := golocalv1.GetContext()
 
@@ -466,8 +472,8 @@ func (t *taskDispatcher) handleTaskImmediately(taskId string) {
 	if retry {
 		return
 	} else if finished {
-		t.allocateWorker([]*model.Task{dbTask}, nil, nil, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
+		t.allocateWorker([]*model.Task{dbTask}, nil, nil)
 	} else if len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
-		t.allocateWorker(nil, runningSubtasks, rollbackSubtasks, t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames())
+		t.allocateWorker(nil, runningSubtasks, rollbackSubtasks)
 	}
 }

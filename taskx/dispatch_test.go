@@ -206,8 +206,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	subtaskDao := dao.NewSubtaskDAOWithClient(client)
 	subtaskBakDao := dao.NewSubtaskBakDAOWithClient(client)
 	cfg := &Config{
-		RemoteCallTimeout:    time.Second * 3,
-		BackupTaskAgeSeconds: 120,
+		RemoteCallTimeout: time.Second * 3,
 	}
 
 	receiver1 = &taskReceiver{
@@ -266,7 +265,9 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	dispatcher2 = &taskDispatcher{
 		Cluster:                cluster2,
 		TaskDao:                taskDao,
+		TaskBakDao:             taskBakDao,
 		SubtaskDao:             subtaskDao,
+		SubtaskBakDao:          subtaskBakDao,
 		DBClient:               client,
 		cfg:                    cfg,
 		TaskReceiver:           receiver2,
@@ -275,7 +276,9 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	dispatcher3 = &taskDispatcher{
 		Cluster:                cluster3,
 		TaskDao:                taskDao,
+		TaskBakDao:             taskBakDao,
 		SubtaskDao:             subtaskDao,
+		SubtaskBakDao:          subtaskBakDao,
 		DBClient:               client,
 		cfg:                    cfg,
 		TaskReceiver:           receiver3,
@@ -675,6 +678,11 @@ func TestDisPatch(t *testing.T) {
 	defer cluster1.Close()
 	defer cluster2.Close()
 	defer cluster3.Close()
+	for {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
 
 	// 提交一个任务
 	_ = submitDemoTaskAndCheck(t, dispatcher1)

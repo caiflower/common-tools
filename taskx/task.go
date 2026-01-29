@@ -341,7 +341,7 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 	for _, v := range t.subTasks {
 		m := predecessorMap[v.GetID()]
 		preSubtaskId := ""
-		for k, _ := range m {
+		for k := range m {
 			if preSubtaskId != "" {
 				preSubtaskId += ","
 			}

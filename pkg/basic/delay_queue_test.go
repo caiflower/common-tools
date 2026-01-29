@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
-	"fmt"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type testDelayQueue struct {
@@ -28,19 +30,22 @@ type testDelayQueue struct {
 
 func TestDelayQueue(t *testing.T) {
 	queue := NewDelayQueue()
-	fmt.Println(time.Now().Format("2006-01-02 15:04:05"))
+	begin := time.Now()
 	queue.Add(&testDelayQueue{Name: "10"}, time.Now().Add(10*time.Second))
 	queue.Add(&testDelayQueue{Name: "8"}, time.Now().Add(8*time.Second))
-	go func() {
-		for {
-			value := queue.Take()
-			fmt.Printf("time = %s, value = %s\n", time.Now().Format("2006-01-02 15:04:05"), value.(*testDelayQueue).Name)
-		}
-	}()
 	queue.Add(&testDelayQueue{Name: "5"}, time.Now().Add(5*time.Second))
 	queue.Add(&testDelayQueue{Name: "4"}, time.Now().Add(4*time.Second))
 	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
+	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
+	queue.Add(&testDelayQueue{Name: "7"}, time.Now().Add(7*time.Second))
+	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
 
-	time.Sleep(20 * time.Second)
-
+	for {
+		value := queue.Take()
+		atoi, _ := strconv.Atoi(value.(*testDelayQueue).Name)
+		assert.Equal(t, time.Now().Format("2006-01-02 15:04:05"), begin.Add(time.Second*time.Duration(atoi)).Format("2006-01-02 15:04:05"))
+		if queue.Size() == 0 {
+			break
+		}
+	}
 }

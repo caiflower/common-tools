@@ -20,8 +20,8 @@ type SubtaskDAO interface {
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error)
 	GetByIDs(ctx context.Context, subtaskIDs []string) ([]model.Subtask, error)
-	SetWorkerAndState(ctx context.Context, subtaskID string, worker, state string, tx ...*bun.Tx) error
-	SetWorkerAndRollback(ctx context.Context, subtaskID string, worker, rollback string, tx ...*bun.Tx) error
+	SetWorkerAndStateWithOldWorker(ctx context.Context, subtaskID string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error)
+	SetWorkerAndRollbackWithOldWorker(ctx context.Context, subtaskID string, worker, rollback string, oldWorker string, tx ...*bun.Tx) (int64, error)
 	SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error
 	SetRollbackAndState(ctx context.Context, id string, rollback string, output string, tx ...*bun.Tx) error
 	SetRetry(ctx context.Context, subtaskID string, retry int8, tx ...*bun.Tx) error
@@ -125,32 +125,26 @@ func (d *subtaskDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.Su
 	return subtasks, nil
 }
 
-func (d *subtaskDAO) SetWorkerAndState(ctx context.Context, id string, worker, state string, tx ...*bun.Tx) error {
-	_, err := d.Client.GetRowsAffected(
+func (d *subtaskDAO) SetWorkerAndStateWithOldWorker(ctx context.Context, id string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error) {
+	return d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
 			Table(TableNameOfSubtask).
 			Set("worker = ?", worker).
 			Set("state = ?", state).
 			Where("id = ?", id).
+			Where("worker = ?", oldWorker).
 			Exec(ctx))
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
-func (d *subtaskDAO) SetWorkerAndRollback(ctx context.Context, id string, worker, rollback string, tx ...*bun.Tx) error {
-	_, err := d.Client.GetRowsAffected(
+func (d *subtaskDAO) SetWorkerAndRollbackWithOldWorker(ctx context.Context, id string, worker, rollback string, oldWorker string, tx ...*bun.Tx) (int64, error) {
+	return d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
 			Table(TableNameOfSubtask).
 			Set("worker = ?", worker).
 			Set("rollback = ?", rollback).
 			Where("id = ?", id).
+			Where("worker = ?", oldWorker).
 			Exec(ctx))
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (d *subtaskDAO) GetByIDs(ctx context.Context, ids []string) ([]model.Subtask, error) {

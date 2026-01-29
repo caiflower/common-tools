@@ -32,10 +32,10 @@ import (
 )
 
 const (
-	deliverTask            = "deliverTask"
-	deliverSubtask         = "deliverSubtask"
-	deliverSubtaskRollback = "deliverSubtaskRollback"
-	taskDoneCallBack       = "taskDoneCallBack"
+	deliverTask            = "github.caiflower.common.taskx.deliverTask"
+	deliverSubtask         = "github.caiflower.common.taskx.deliverSubtask"
+	deliverSubtaskRollback = "github.caiflower.common.taskx.deliverSubtaskRollback"
+	handleTaskImmediately  = "github.caiflower.common.taskx.handleTaskImmediately"
 )
 
 var _tr = &taskReceiver{
@@ -100,7 +100,7 @@ func (t *taskReceiver) Start() error {
 	// register func in cluster
 	t.Cluster.RegisterFunc(deliverSubtask, t.deliverSubtask)
 	t.Cluster.RegisterFunc(deliverTask, t.deliverTask)
-	t.Cluster.RegisterFunc(taskDoneCallBack, t.taskDoneCallBack)
+	t.Cluster.RegisterFunc(handleTaskImmediately, t.handleTaskImmediately)
 	t.Cluster.RegisterFunc(deliverSubtaskRollback, t.deliverSubtaskRollback)
 	return nil
 }
@@ -364,7 +364,7 @@ func (t *taskReceiver) execTask(task *model.Task) {
 		_task.Worker != t.Cluster.GetMyName() ||
 		isFinished(_task.State) ||
 		time.Now().Before(_task.LastRunTime.Time().Add(time.Duration(_task.RetryInterval)*time.Second)) {
-		logger.Debug("task %v is not satisfy exec condition", taskID)
+		logger.Warn("task %v is not satisfy exec condition", taskID)
 		return
 	}
 
@@ -453,7 +453,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		_subtask.Worker != t.Cluster.GetMyName() ||
 		isFinished(subtask.State) ||
 		time.Now().Before(_subtask.LastRunTime.Time().Add(time.Duration(subtask.RetryInterval)*time.Second)) {
-		logger.Debug("subtask '%s' is not satisfy exec condition", subtaskID)
+		logger.Warn("subtask '%s' is not satisfy exec condition", subtaskID)
 		return
 	}
 
@@ -493,9 +493,9 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
-			logger.Warn("task %v remote call 'taskDoneCallBack' failed. Error: %v", taskID, err)
+			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
 	}
 }
@@ -519,7 +519,7 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 		_subtask.Worker != t.Cluster.GetMyName() ||
 		isRollbackFinished(_subtask.Rollback) ||
 		time.Now().Before(_subtask.LastRunTime.Time().Add(time.Duration(subtask.RetryInterval)*time.Second)) {
-		logger.Debug("subtask '%s' is not satisfy rollback condition", subtaskID)
+		logger.Warn("subtask '%s' is not satisfy rollback condition", subtaskID)
 		return
 	}
 
@@ -559,16 +559,27 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), taskDoneCallBack, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
-			logger.Warn("task %v remote call 'taskDoneCallBack' failed. Error: %v", taskID, err)
+			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
 	}
 }
 
-func (t *taskReceiver) taskDoneCallBack(data interface{}) (interface{}, error) {
-	logger.Debug("[taskReceiver] task %v taskDoneCallBack", data)
-	t.TaskDispatcher.handleTaskImmediately(data.(string))
+func (t *taskReceiver) handleTaskImmediately(data interface{}) (interface{}, error) {
+	taskID := data.(string)
+
+	if !t.Cluster.IsReady() {
+		logger.Warn("handleTaskImmediately %s failed. cluster is not ready.", taskID)
+		return nil, nil
+	}
+	if !t.Cluster.IsLeader() {
+		logger.Warn("handleTaskImmediately %s failed. cluster is not leader", taskID)
+		return nil, nil
+	}
+
+	logger.Debug("[taskReceiver] task %v handleTaskImmediately", data)
+	t.TaskDispatcher.handleTaskImmediately(taskID)
 	return nil, nil
 }
 
