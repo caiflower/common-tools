@@ -198,6 +198,15 @@ func (t *Task) GetDescription() string {
 	return t.task.Description
 }
 
+func (t *Task) SetExecuteTime(executeTime time.Time) *Task {
+	t.task.ExecuteTime = basic.Time(executeTime)
+	return t
+}
+
+func (t *Task) GetExecuteTime() time.Time {
+	return t.task.ExecuteTime.Time()
+}
+
 func (t *Task) UnmarshalInput(v interface{}) error {
 	return tools.DeByte([]byte(t.task.Input), v)
 }

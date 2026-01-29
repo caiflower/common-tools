@@ -124,9 +124,13 @@ func (t *taskReceiver) Close() {
 
 func (t *taskReceiver) deliverSubtask(data interface{}) (interface{}, error) {
 	var subtaskIds []string
-	err := tools.Unmarshal([]byte(tools.ToJson(data)), &subtaskIds)
-	if err != nil {
-		return nil, err
+	if _subtaskIds, ok := data.([]string); !ok {
+		err := tools.Unmarshal([]byte(tools.ToJson(data)), &subtaskIds)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		subtaskIds = _subtaskIds
 	}
 
 	if len(subtaskIds) == 0 {
@@ -220,12 +224,18 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 
 func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 	var taskIds []string
-	err := tools.Unmarshal([]byte(tools.ToJson(data)), &taskIds)
+
+	if _taskIds, ok := data.([]string); !ok {
+		err := tools.Unmarshal([]byte(tools.ToJson(data)), &taskIds)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		taskIds = _taskIds
+	}
+
 	if len(taskIds) == 0 {
 		return nil, nil
-	}
-	if err != nil {
-		return nil, err
 	}
 
 	ctx := golocalv1.GetContext()
@@ -267,9 +277,13 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 
 func (t *taskReceiver) deliverSubtaskRollback(data interface{}) (interface{}, error) {
 	var subtaskIds []string
-	err := tools.Unmarshal([]byte(tools.ToJson(data)), &subtaskIds)
-	if err != nil {
-		return nil, err
+	if _subtaskIds, ok := data.([]string); !ok {
+		err := tools.Unmarshal([]byte(tools.ToJson(data)), &subtaskIds)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		subtaskIds = _subtaskIds
 	}
 
 	if len(subtaskIds) == 0 {
@@ -493,7 +507,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
@@ -559,7 +573,7 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
@@ -567,19 +581,19 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 }
 
 func (t *taskReceiver) handleTaskImmediately(data interface{}) (interface{}, error) {
-	taskID := data.(string)
+	logger.Debug("[remoteCall] tasks %v handleTaskImmediately", data)
+	var taskIDs []string
 
-	if !t.Cluster.IsReady() {
-		logger.Warn("handleTaskImmediately %s failed. cluster is not ready.", taskID)
-		return nil, nil
-	}
-	if !t.Cluster.IsLeader() {
-		logger.Warn("handleTaskImmediately %s failed. cluster is not leader", taskID)
-		return nil, nil
+	if _taskIds, ok := data.([]string); !ok {
+		err := tools.Unmarshal([]byte(tools.ToJson(data)), &taskIDs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		taskIDs = _taskIds
 	}
 
-	logger.Debug("[taskReceiver] task %v handleTaskImmediately", data)
-	t.TaskDispatcher.handleTaskImmediately(taskID)
+	t.TaskDispatcher.handleTaskImmediately(golocalv1.GetContext(), taskIDs)
 	return nil, nil
 }
 

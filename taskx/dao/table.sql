@@ -13,9 +13,11 @@ CREATE TABLE IF NOT EXISTS `task` (
       `description` VARCHAR(512) COMMENT '任务描述',
       `create_time` TIMESTAMP(3) COMMENT '创建时间',
       `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+      `execute_time` TIMESTAMP(3) COMMENT '定时执行时间',
       `status` TINYINT COMMENT '任务状态(0:禁用, 1:启用)',
       INDEX idx_request_id (`request_id`),
       INDEX idx_state (`state`),
+      INDEX idx_execute_time (`execute_time`),
       UNIQUE INDEX idx_id (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 
@@ -54,9 +56,11 @@ CREATE TABLE IF NOT EXISTS `task_bak` (
     `description` VARCHAR(512) COMMENT '任务描述',
     `create_time` TIMESTAMP(3) COMMENT '创建时间',
     `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+    `execute_time` TIMESTAMP(3) COMMENT '定时执行时间',
     `status` TINYINT COMMENT '任务状态(0:禁用, 1:启用)',
     INDEX idx_request_id (`request_id`),
     INDEX idx_state (`state`),
+    INDEX idx_execute_time (`execute_time`),
     UNIQUE INDEX idx_id (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 

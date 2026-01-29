@@ -17,6 +17,8 @@
 package basic
 
 import (
+	"fmt"
+	"math/rand"
 	"strconv"
 	"testing"
 	"time"
@@ -31,21 +33,22 @@ type testDelayQueue struct {
 func TestDelayQueue(t *testing.T) {
 	queue := NewDelayQueue()
 	begin := time.Now()
-	queue.Add(&testDelayQueue{Name: "10"}, time.Now().Add(10*time.Second))
-	queue.Add(&testDelayQueue{Name: "8"}, time.Now().Add(8*time.Second))
-	queue.Add(&testDelayQueue{Name: "5"}, time.Now().Add(5*time.Second))
-	queue.Add(&testDelayQueue{Name: "4"}, time.Now().Add(4*time.Second))
-	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
-	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
-	queue.Add(&testDelayQueue{Name: "7"}, time.Now().Add(7*time.Second))
-	queue.Add(&testDelayQueue{Name: "3"}, time.Now().Add(3*time.Second))
+	cnt := 0
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := 0; i < 1000; i++ {
+		intn := r.Intn(10)
+		go queue.Add(&testDelayQueue{Name: fmt.Sprintf("%v", intn)}, time.Now().Add(time.Duration(intn)*time.Second))
+	}
 
 	for {
 		value := queue.Take()
 		atoi, _ := strconv.Atoi(value.(*testDelayQueue).Name)
 		assert.Equal(t, time.Now().Format("2006-01-02 15:04:05"), begin.Add(time.Second*time.Duration(atoi)).Format("2006-01-02 15:04:05"))
+		cnt++
 		if queue.Size() == 0 {
 			break
 		}
 	}
+
+	assert.Equal(t, 1000, cnt)
 }

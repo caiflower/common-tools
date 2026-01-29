@@ -2,6 +2,7 @@
 package model
 
 import (
+	"fmt"
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/uptrace/bun"
 )
@@ -22,6 +23,7 @@ type TaskBak struct {
 	Description   string     `bun:"description" json:"description"`      // 任务描述
 	CreateTime    basic.Time `bun:"create_time" json:"createTime"`       // 创建时间
 	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
+	ExecuteTime   basic.Time `bun:"execute_time" json:"executeTime"`     // 定时执行时间
 	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
 }
 
@@ -43,7 +45,11 @@ type TaskBakFilter struct {
 	State         []string     `json:"state,omitempty"`
 	Description   []string     `json:"description,omitempty"`
 	CreateTime    []basic.Time `json:"createTime,omitempty"`
+	CreateTimeOp  string       `json:"createTimeOp,omitempty"`
 	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
+	LastRunTimeOp string       `json:"lastRunTimeOp,omitempty"`
+	ExecuteTime   []basic.Time `json:"executeTime,omitempty"`
+	ExecuteTimeOp string       `json:"executeTimeOp,omitempty"`
 	Status        []int8       `json:"status,omitempty"`
 }
 
@@ -117,13 +123,36 @@ func (f *TaskBakFilter) WithDescription(v ...string) *TaskBakFilter {
 	return f
 }
 
+func (f *TaskBakFilter) WithCreateTimeOp(op string, v basic.Time) *TaskBakFilter {
+	f.CreateTime = []basic.Time{v}
+	f.CreateTimeOp = op
+	return f
+}
+
 func (f *TaskBakFilter) WithCreateTime(v ...basic.Time) *TaskBakFilter {
 	f.CreateTime = v
 	return f
 }
 
+func (f *TaskBakFilter) WithLastRunTimeOp(op string, v basic.Time) *TaskBakFilter {
+	f.LastRunTime = []basic.Time{v}
+	f.LastRunTimeOp = op
+	return f
+}
+
 func (f *TaskBakFilter) WithLastRunTime(v ...basic.Time) *TaskBakFilter {
 	f.LastRunTime = v
+	return f
+}
+
+func (f *TaskBakFilter) WithExecuteTimeOp(op string, v basic.Time) *TaskBakFilter {
+	f.ExecuteTime = []basic.Time{v}
+	f.ExecuteTimeOp = op
+	return f
+}
+
+func (f *TaskBakFilter) WithExecuteTime(v ...basic.Time) *TaskBakFilter {
+	f.ExecuteTime = v
 	return f
 }
 
@@ -236,16 +265,23 @@ func (f *TaskBakFilter) Filter(db bun.IDB) *bun.SelectQuery {
 	}
 	if len(f.CreateTime) > 0 {
 		if len(f.CreateTime) == 1 {
-			q.Where("create_time = ?", f.CreateTime[0].Time())
+			q.Where(fmt.Sprintf("create_time %s ?", f.CreateTimeOp), f.CreateTime[0].Time())
 		} else if len(f.CreateTime) == 2 {
 			q.Where("create_time BETWEEN ? AND ?", f.CreateTime[0].Time(), f.CreateTime[1].Time())
 		}
 	}
 	if len(f.LastRunTime) > 0 {
 		if len(f.LastRunTime) == 1 {
-			q.Where("last_run_time = ?", f.LastRunTime[0].Time())
+			q.Where(fmt.Sprintf("last_run_time %s ?", f.LastRunTimeOp), f.LastRunTime[0].Time())
 		} else if len(f.LastRunTime) == 2 {
 			q.Where("last_run_time BETWEEN ? AND ?", f.LastRunTime[0].Time(), f.LastRunTime[1].Time())
+		}
+	}
+	if len(f.ExecuteTime) > 0 {
+		if len(f.ExecuteTime) == 1 {
+			q.Where(fmt.Sprintf("execute_time %s ?", f.ExecuteTimeOp), f.ExecuteTime[0].Time())
+		} else if len(f.ExecuteTime) == 2 {
+			q.Where("execute_time BETWEEN ? AND ?", f.ExecuteTime[0].Time(), f.ExecuteTime[1].Time())
 		}
 	}
 	if len(f.Status) > 0 {

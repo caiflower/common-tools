@@ -13,12 +13,14 @@ CREATE TABLE IF NOT EXISTS task (
     description VARCHAR(512) /* 任务描述 */,
     create_time TIMESTAMP(3) /* 创建时间，保留3位毫秒 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
+    execute_time TIMESTAMP(3) /* 定时执行时间，保留3位毫秒 */,
     status TINYINT /* 任务状态(0:禁用, 1:启用) */
     );
 
 -- 为task表创建索引
 CREATE INDEX IF NOT EXISTS idx_task_request_id ON task(request_id);
 CREATE INDEX IF NOT EXISTS idx_task_state ON task(state);
+CREATE INDEX IF NOT EXISTS idx_task_execute_time ON task(execute_time);
 
 -- 2. 创建subtask表（无内联索引）
 CREATE TABLE IF NOT EXISTS subtask (
@@ -56,12 +58,14 @@ CREATE TABLE IF NOT EXISTS task_bak (
     description VARCHAR(512) /* 任务描述 */,
     create_time TIMESTAMP(3) /* 创建时间，保留3位毫秒 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
+    execute_time TIMESTAMP(3) /* 定时执行时间，保留3位毫秒 */,
     status TINYINT /* 任务状态(0:禁用, 1:启用) */
     );
 
 -- 为task_bak表创建索引
 CREATE INDEX IF NOT EXISTS idx_task_bak_request_id ON task_bak(request_id);
 CREATE INDEX IF NOT EXISTS idx_task_bak_state ON task_bak(state);
+CREATE INDEX IF NOT EXISTS idx_task_bak_execute_time ON task_bak(execute_time);
 
 -- 4. 创建subtask_bak表（无内联索引）
 CREATE TABLE IF NOT EXISTS subtask_bak (

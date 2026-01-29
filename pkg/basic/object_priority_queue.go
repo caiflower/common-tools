@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
- package basic
+package basic
+
+import "errors"
+
+var nilElement = errors.New("size is 0")
 
 type Ordered interface {
 	// String sort and uuid
@@ -29,15 +33,14 @@ type ObjectPriorityQueue[T Ordered] struct {
 }
 
 func (h *ObjectPriorityQueue[T]) Offer(e T) {
-	if cap(h.arr) >= h.size {
-		h.arr = append(h.arr, e)
+	if h.size < cap(h.arr) {
+		h.arr = h.arr[:h.size+1]
+		h.arr[h.size] = e
 	} else {
-		h.arr[h.size-1] = e
+		h.arr = append(h.arr, e)
 	}
 	h.size++
-	for i := (h.size / 2) - 1; i >= 0; i-- {
-		h.down(i)
-	}
+	h.up(h.size - 1)
 }
 
 func (h *ObjectPriorityQueue[T]) down(i int) {
@@ -52,6 +55,18 @@ func (h *ObjectPriorityQueue[T]) down(i int) {
 	if t != i {
 		h.swap(i, t)
 		h.down(t)
+	}
+}
+
+func (h *ObjectPriorityQueue[T]) up(i int) {
+	for i > 0 {
+		parent := (i - 1) / 2
+		if h.compare(parent, i) {
+			h.swap(parent, i)
+			i = parent
+		} else {
+			break
+		}
 	}
 }
 
@@ -72,15 +87,16 @@ func (h *ObjectPriorityQueue[T]) swap(i, j int) {
 func (h *ObjectPriorityQueue[T]) Poll() (T, error) {
 	if h.size > 0 {
 		res := h.arr[0]
-		h.arr[0] = h.arr[h.size-1]
 		h.size--
-		if h.size != 0 {
-			for i := (h.size / 2) - 1; i >= 0; i-- {
-				h.down(i)
-			}
+		if h.size > 0 {
+			h.arr[0] = h.arr[h.size]
+			h.down(0)
 		}
-		if half := cap(h.arr) / 2; h.size < half/2 {
-			h.arr = h.arr[0:h.size:half]
+		h.arr = h.arr[:h.size]
+		if half := cap(h.arr) / 2; h.size < half && cap(h.arr) > 512 {
+			newArr := make([]T, h.size, half)
+			copy(newArr, h.arr)
+			h.arr = newArr
 		}
 		return res, nil
 	} else {
@@ -95,37 +111,6 @@ func (h *ObjectPriorityQueue[T]) Peek() (T, error) {
 		return h.zero, nilElement
 	}
 }
-
-//func (h *ObjectPriorityQueue[T]) Update(e T) {
-//	if index := h.indexOf(e); index != -1 {
-//		h.arr[index] = e
-//		for i := (h.size / 2) - 1; i >= 0; i-- {
-//			h.down(i)
-//		}
-//		if half := cap(h.arr) / 2; h.size < half/2 {
-//			h.arr = h.arr[0:h.size:half]
-//		}
-//	}
-//}
-//
-//func (h *ObjectPriorityQueue[T]) Delete(e T) T {
-//	if index := h.indexOf(e); index != -1 {
-//		res := h.arr[index]
-//		h.arr[index] = h.arr[h.size-1]
-//		h.size--
-//		if h.size != 0 {
-//			for i := (h.size / 2) - 1; i >= 0; i-- {
-//				h.down(i)
-//			}
-//		}
-//		if half := cap(h.arr) / 2; h.size < half/2 {
-//			h.arr = h.arr[0:h.size:half]
-//		}
-//		return res
-//	} else {
-//		return h.zero
-//	}
-//}
 
 func (h *ObjectPriorityQueue[T]) Size() int {
 	return h.size

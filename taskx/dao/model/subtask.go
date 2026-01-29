@@ -2,6 +2,7 @@
 package model
 
 import (
+	"fmt"
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/uptrace/bun"
 )
@@ -42,6 +43,7 @@ type SubtaskFilter struct {
 	RetryInterval []int32      `json:"retryInterval,omitempty"`
 	Rollback      []string     `json:"rollback,omitempty"`
 	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
+	LastRunTimeOp string       `json:"lastRunTimeOp,omitempty"`
 	Status        []int8       `json:"status,omitempty"`
 }
 
@@ -112,6 +114,12 @@ func (f *SubtaskFilter) WithRetryInterval(v ...int32) *SubtaskFilter {
 
 func (f *SubtaskFilter) WithRollback(v ...string) *SubtaskFilter {
 	f.Rollback = v
+	return f
+}
+
+func (f *SubtaskFilter) WithLastRunTimeOp(op string, v basic.Time) *SubtaskFilter {
+	f.LastRunTime = []basic.Time{v}
+	f.LastRunTimeOp = op
 	return f
 }
 
@@ -229,7 +237,7 @@ func (f *SubtaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 	}
 	if len(f.LastRunTime) > 0 {
 		if len(f.LastRunTime) == 1 {
-			q.Where("last_run_time = ?", f.LastRunTime[0].Time())
+			q.Where(fmt.Sprintf("last_run_time %s ?", f.LastRunTimeOp), f.LastRunTime[0].Time())
 		} else if len(f.LastRunTime) == 2 {
 			q.Where("last_run_time BETWEEN ? AND ?", f.LastRunTime[0].Time(), f.LastRunTime[1].Time())
 		}

@@ -19,8 +19,12 @@ package taskx
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"time"
 
+	"sync/atomic"
+
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/inflight"
 
 	"github.com/caiflower/common-tools/cluster"
@@ -48,8 +52,11 @@ type taskDispatcher struct {
 	DBClient               dbv1.DB           `autowired:""`
 	TaskReceiver           *taskReceiver     `autowired:""`
 	cfg                    *Config
-	running                bool
+	running                atomic.Value
+	runningL               bool
 	allocateWorkerInflight *inflight.InFlight
+	inQueueTasks           sync.Map
+	delayQueue             *basic.DelayQueue
 }
 
 type Config struct {
@@ -72,6 +79,7 @@ func InitTaskDispatcher(cfg *Config) {
 	_tr.taskQueueSize = cfg.TaskQueueSize
 	_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
 	SingletonTaskDispatcher.cfg = cfg
+	SingletonTaskDispatcher.delayQueue = basic.NewDelayQueue()
 	_tr.cfg = cfg
 	bean.AddBean(dao.NewTaskDAO())
 	bean.AddBean(dao.NewSubtaskBakDAO())
@@ -80,21 +88,54 @@ func InitTaskDispatcher(cfg *Config) {
 }
 
 func (t *taskDispatcher) MasterCall() {
-	if t.running || t.Cluster == nil {
+	if t.Cluster == nil {
 		return
 	}
-	t.running = true
+	if t.runningL {
+		return
+	}
+	t.runningL = true
 
 	golocalv1.PutTraceID(tools.UUID())
 	defer func() {
-		t.running = false
 		golocalv1.Clean()
+		t.runningL = false
 	}()
 
 	// handle task
 	t.handleTask(context.TODO())
 	// back task
 	//t.backupTask()
+}
+
+// OnStartedLeading handles task distribution when becoming leader
+func (t *taskDispatcher) OnStartedLeading() {
+	logger.Info("[taskDispatcher] %s begin to dispatcher task", t.Cluster.GetMyName())
+	t.running.Store(true)
+
+	// Start delay queue processor
+	for t.running.Load().(bool) {
+		// Take task from delay queue
+		item := t.delayQueue.Take()
+
+		// Handle batch task IDs
+		var taskIDs = item.([]string)
+
+		// Batch handle tasks
+		if len(taskIDs) > 0 {
+
+			for _, v := range taskIDs {
+				t.inQueueTasks.Delete(v)
+			}
+
+			t.handleTaskImmediately(context.TODO(), taskIDs)
+		}
+	}
+}
+
+func (t *taskDispatcher) OnStoppedLeading() {
+	logger.Info("[taskDispatcher] %s stop to dispatcher task", t.Cluster.GetMyName())
+	t.running.Store(false)
 }
 
 func SubmitTask(task *Task) error {
@@ -126,9 +167,10 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	if err := tx.Submit(); err != nil {
 		return err
 	}
+
 	if task.task.Urgent {
 		taskID := taskBean.ID
-		funcSpec := cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, taskID, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID())
+		funcSpec := cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID())
 		_, err := t.Cluster.CallFunc(funcSpec)
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
@@ -213,7 +255,12 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]Output
 }
 
 func (t *taskDispatcher) handleTask(ctx context.Context) {
-	tasks, err := t.TaskDao.GetByTaskState(ctx, []string{TaskPending, TaskRunning, TaskSubtaskRunning})
+	// Query tasks that need to be executed within the next 2 minutes
+	now := time.Now()
+	endTime := basic.NewFromTime(now.Add(2 * time.Minute))
+
+	// Get tasks by filter
+	tasks, err := t.TaskDao.GetTodoTask(ctx, []string{TaskPending, TaskRunning, TaskSubtaskRunning}, endTime)
 	if err != nil {
 		logger.Error("get tasks failed. err: %s", err.Error())
 		return
@@ -222,40 +269,41 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 		return
 	}
 
-	var (
-		runningTasks     []*model.Task
-		runningSubtasks  []*model.Subtask
-		rollbackSubtasks []*model.Subtask
-	)
+	// Add task IDs to delay queue in batches
+	var immediateTasks []string
+	var scheduledTasks []struct {
+		taskID      string
+		executeTime time.Time
+	}
 
-	for i, _ := range tasks {
-		taskID := tasks[i].ID
-		subtasks, err := t.SubtaskDao.GetByTaskID(ctx, taskID)
-		if err != nil {
-			logger.Error("get task %v subtasks failed. err: %s", taskID, err.Error())
+	for _, task := range tasks {
+		if _, ok := t.inQueueTasks.Load(task.ID); ok {
 			continue
 		}
-
-		task := &Task{}
-		task, err = task.initByBean(&tasks[i], subtasks)
-		if err != nil {
-			logger.Error("task %v init by bean failed. err: %s", taskID, err.Error())
-			continue
-		}
-
-		finished, retry, running, rollback := t.analysisTask(task, task.subtaskMap)
-		if retry {
-			continue
-		} else if len(running) > 0 {
-			runningSubtasks = append(runningSubtasks, running...)
-		} else if finished {
-			runningTasks = append(runningTasks, &tasks[i])
-		} else if len(rollback) > 0 {
-			rollbackSubtasks = append(rollbackSubtasks, rollback...)
+		t.inQueueTasks.Store(task.ID, true)
+		if !task.ExecuteTime.IsZero() {
+			// Scheduled task
+			scheduledTasks = append(scheduledTasks, struct {
+				taskID      string
+				executeTime time.Time
+			}{task.ID, task.ExecuteTime.Time()})
+		} else {
+			// Immediate task
+			immediateTasks = append(immediateTasks, task.ID)
 		}
 	}
 
-	t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks)
+	// Add immediate tasks as batch
+	if len(immediateTasks) > 0 {
+		logger.Debug("add task %v, executeTime = %s", immediateTasks, now.Format("2006-01-02 15:04:05.000"))
+		t.delayQueue.Add(immediateTasks, now)
+	}
+
+	// Add scheduled tasks
+	for _, task := range scheduledTasks {
+		logger.Debug("add task %v, executeTime = %s", task.taskID, task.executeTime.Format("2006-01-02 15:04:05.000"))
+		t.delayQueue.Add([]string{task.taskID}, task.executeTime)
+	}
 }
 
 func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
@@ -445,35 +493,60 @@ func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcNam
 	}
 }
 
-func (t *taskDispatcher) handleTaskImmediately(taskId string) {
-	ctx := golocalv1.GetContext()
+func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
+	logger.Debug("[taskDispatcher] tasks %v handleTask immediately", taskIDs)
 
-	dbTask, err := t.TaskDao.GetByID(ctx, taskId)
-	if err != nil {
-		logger.Error("task %v getTasksByTaskIds failed. err: %v", taskId, err)
+	if !t.Cluster.IsReady() {
+		logger.Warn("handleTaskImmediately failed. cluster is not ready.")
 		return
 	}
-	if dbTask == nil {
-		return
-	}
-	subtasks, err := t.SubtaskDao.GetByTaskID(ctx, taskId)
-	if err != nil {
+	if !t.Cluster.IsLeader() {
+		logger.Warn("handleTaskImmediately failed. cluster is not leader")
 		return
 	}
 
-	task := &Task{}
-	task, err = task.initByBean(dbTask, subtasks)
+	// Get all tasks
+	tasks, err := t.TaskDao.GetByIDs(ctx, taskIDs)
 	if err != nil {
-		logger.Error("task %v initByBean failed. err: %v", taskId, err)
+		logger.Error("getTasksByTaskIds failed. err: %v", err)
 		return
 	}
 
-	finished, retry, runningSubtasks, rollbackSubtasks := t.analysisTask(task, task.subtaskMap)
-	if retry {
-		return
-	} else if finished {
-		t.allocateWorker([]*model.Task{dbTask}, nil, nil)
-	} else if len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
-		t.allocateWorker(nil, runningSubtasks, rollbackSubtasks)
+	var (
+		runningTasks     []*model.Task
+		runningSubtasks  []*model.Subtask
+		rollbackSubtasks []*model.Subtask
+	)
+
+	for i := range tasks {
+		dbTask := &tasks[i]
+
+		subtasks, err := t.SubtaskDao.GetByTaskID(ctx, dbTask.ID)
+		if err != nil {
+			continue
+		}
+
+		task := &Task{}
+		task, err = task.initByBean(dbTask, subtasks)
+		if err != nil {
+			logger.Error("task %v initByBean failed. err: %v", dbTask.ID, err)
+			continue
+		}
+
+		finished, retry, running, rollback := t.analysisTask(task, task.subtaskMap)
+		if retry {
+			continue
+		} else if finished {
+			runningTasks = append(runningTasks, dbTask)
+		} else if len(running) > 0 {
+			runningSubtasks = append(runningSubtasks, running...)
+		} else if len(rollback) > 0 {
+			rollbackSubtasks = append(rollbackSubtasks, rollback...)
+		}
+	}
+
+	// Batch allocate workers
+	if len(runningTasks) > 0 || len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
+		t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks)
 	}
 }

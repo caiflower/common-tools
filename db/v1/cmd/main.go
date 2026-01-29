@@ -535,6 +535,7 @@ func collectImports(tables []tableMeta, includeDAO bool) map[string]struct{} {
 		for _, c := range t.Columns {
 			if c.NeedTime {
 				imports["github.com/caiflower/common-tools/pkg/basic"] = struct{}{}
+				imports["fmt"] = struct{}{}
 			}
 			if c.NeedJSONRaw {
 				imports["encoding/json"] = struct{}{}
@@ -643,6 +644,7 @@ func renderStructBlocks(tables []tableMeta) string {
 		for _, c := range t.Columns {
 			if c.NeedTime {
 				b.WriteString(fmt.Sprintf("\t%s []%s `json:\"%s,omitempty\"`\n", c.GoName, c.GoType, c.JSONTag))
+				b.WriteString(fmt.Sprintf("\t%sOp string `json:\"%sOp,omitempty\"`\n", c.GoName, c.JSONTag))
 			} else {
 				b.WriteString(fmt.Sprintf("\t%s []%s `json:\"%s,omitempty\"`\n", c.GoName, c.GoType, c.JSONTag))
 			}
@@ -658,6 +660,19 @@ func renderStructBlocks(tables []tableMeta) string {
 
 		// Generate With methods for each field
 		for _, c := range t.Columns {
+			if c.NeedTime {
+				b.WriteString(fmt.Sprintf("func (f *%s) With%sOp(op string, v %s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
+				b.WriteString(fmt.Sprintf("\tf.%s = []basic.Time{v}\n", c.GoName))
+				b.WriteString(fmt.Sprintf("\tf.%sOp = op\n", c.GoName))
+				b.WriteString(fmt.Sprintf("\treturn f\n"))
+				b.WriteString("}\n\n")
+
+				b.WriteString(fmt.Sprintf("func (f *%s) With%s(v ...%s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
+				b.WriteString(fmt.Sprintf("\tf.%s = v\n", c.GoName))
+				b.WriteString(fmt.Sprintf("\treturn f\n"))
+				b.WriteString("}\n\n")
+				continue
+			}
 			b.WriteString(fmt.Sprintf("func (f *%s) With%s(v ...%s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
 			b.WriteString(fmt.Sprintf("\tf.%s = v\n", c.GoName))
 			b.WriteString(fmt.Sprintf("\treturn f\n"))
@@ -698,7 +713,7 @@ func renderStructBlocks(tables []tableMeta) string {
 			if c.NeedTime {
 				b.WriteString(fmt.Sprintf("\tif len(%s) > 0 {\n", field))
 				b.WriteString(fmt.Sprintf("\t\tif len(%s) == 1 {\n", field))
-				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s = ?\", %s[0].Time())\n", c.ColumnName, field))
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(fmt.Sprintf(\"%s %%s ?\", f.%sOp), %s[0].Time())\n", c.ColumnName, c.GoName, field))
 				b.WriteString(fmt.Sprintf("\t\t} else if len(%s) == 2 {\n", field))
 				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s BETWEEN ? AND ?\", %s[0].Time(), %s[1].Time())\n", c.ColumnName, field, field))
 				b.WriteString("\t\t}\n")

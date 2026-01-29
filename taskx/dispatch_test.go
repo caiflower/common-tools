@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/caiflower/common-tools/cluster"
 	dbv1 "github.com/caiflower/common-tools/db/v1"
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/taskx/dao"
@@ -171,13 +173,13 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	//	User:     "test-user",
 	//	Password: "test-user",
 	//	DbName:   "task_test",
-	//	Debug:    true,
+	//	//Debug:    true,
 	//}
 
 	config := dbv1.Config{
 		Dialect: "sqlite",
 		Url:     "file:./app.db?cache=shared&_fk=1&mode=rwc&journal_mode=WAL",
-		Debug:   true,
+		//Debug:   true,
 	}
 
 	l := logger.Config{
@@ -261,6 +263,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		cfg:                    cfg,
 		TaskReceiver:           receiver1,
 		allocateWorkerInflight: inflight.NewInFlight(),
+		delayQueue:             basic.NewDelayQueue(),
 	}
 	dispatcher2 = &taskDispatcher{
 		Cluster:                cluster2,
@@ -272,6 +275,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		cfg:                    cfg,
 		TaskReceiver:           receiver2,
 		allocateWorkerInflight: inflight.NewInFlight(),
+		delayQueue:             basic.NewDelayQueue(),
 	}
 	dispatcher3 = &taskDispatcher{
 		Cluster:                cluster3,
@@ -283,6 +287,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		cfg:                    cfg,
 		TaskReceiver:           receiver3,
 		allocateWorkerInflight: inflight.NewInFlight(),
+		delayQueue:             basic.NewDelayQueue(),
 	}
 	receiver1.TaskDispatcher = dispatcher1
 	receiver2.TaskDispatcher = dispatcher2
@@ -291,7 +296,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	return
 }
 
-func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
+func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
 	var (
 		requestId   = "traceId"
 		description = "description"
@@ -346,9 +351,13 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 		panic(err)
 	}
 
-	err = dispatcher1.SubmitTask(task)
-	if err != nil {
-		panic(err)
+	for {
+		err = dispatcher1.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
 	}
 
 	var (
@@ -361,7 +370,8 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	for {
 		dbTask, err = dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
-			panic(err)
+			time.Sleep(time.Second * 2)
+			continue
 		}
 		if isFinished(dbTask.State) {
 			dbSubTasks, _ = dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
@@ -412,7 +422,9 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) string {
 	assert.Equal(t, stepFour, outputs[stepFour].Output, "check task output failed")
 	assert.Equal(t, stepFive, outputs[stepFive].Output, "check task output failed")
 
-	return task.GetID()
+	done <- struct{}{}
+
+	return
 }
 
 type TaskDemo struct {
@@ -530,7 +542,7 @@ func (t *TaskRollbackDemo) StepFive(data *TaskData) (output interface{}, err err
 	return data.Input, nil
 }
 
-func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
+func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
 	task := NewTask(taskRollbackName).SetUrgent()
 	one := NewSubtask(stepOne).SetInput(stepOne)
 	two := NewSubtask(stepTwo).SetInput(stepTwo)
@@ -548,7 +560,14 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	_ = task.AddDirectedEdge(two, four)
 	_ = task.AddDirectedEdge(three, five)
 	_ = task.AddDirectedEdge(four, five)
-	_ = dispatcher1.SubmitTask(task)
+	for {
+		err := dispatcher1.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
+	}
 
 	var (
 		dbSubTaskMap map[string]*model.Subtask
@@ -558,7 +577,9 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	for {
 		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
-			panic(err)
+			time.Sleep(time.Second * 2)
+			fmt.Println(err)
+			continue
 		}
 		if isFinished(dbTask.State) {
 			dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
@@ -591,6 +612,7 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) > 0, "check finishTime failed")
 	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
 
+	done <- struct{}{}
 	return
 }
 
@@ -618,18 +640,27 @@ func (t *TaskNonRetryable) GetExecutor() (TaskExecutor, map[string]SubTaskExecut
 	}
 }
 
-func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
+func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
 	task := NewTask(taskNameOfNonRetryable).SetUrgent()
 	one := NewSubtask(stepOne).SetInput(stepOne)
 	_ = task.AddSubtask(one)
 
-	_ = dispatcher1.SubmitTask(task)
+	for {
+		err := dispatcher1.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
+	}
 
 	var dbOne model.Subtask
 	for {
 		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
-			panic(err)
+			time.Sleep(time.Second * 2)
+			fmt.Println(err)
+			continue
 		}
 		if isFinished(dbTask.State) {
 			subTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
@@ -641,6 +672,59 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher) {
 
 	assert.Equal(t, TaskFailed, dbOne.State, "check task state failed")
 	assert.Equal(t, int8(DefaultRetryCount), dbOne.Retry, "check task retryCount failed")
+
+	done <- struct{}{}
+}
+
+func submitScheduleTask(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
+	// Create a task scheduled to run after 5 seconds
+	task := NewTask(taskDemoName)
+	executeTime := time.Now().Add(10 * time.Second)
+	task.SetExecuteTime(executeTime)
+
+	subtask := NewSubtask(stepOne).SetInput("scheduled input")
+	_ = task.AddSubtask(subtask)
+
+	// Submit task
+	for {
+		err := dispatcher1.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
+	}
+
+	// Wait for task to complete
+	var dbTask *model.Task
+	for {
+		_dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			fmt.Println(err)
+			continue
+		}
+		if isFinished(_dbTask.State) {
+			dbTask = _dbTask
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	assert.Equal(t, TaskSucceeded, dbTask.State, "check task state failed")
+
+	// Check subtask output
+	dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+	for _, subTask := range dbSubTasks {
+		assert.Equal(t, true, isFinished(subTask.State), "check subtask finished failed")
+		output := Output{}
+		_ = json.Unmarshal([]byte(subTask.Output), &output)
+		assert.Equal(t, "scheduled input", output.Output, "check subtask output failed")
+		assert.Equal(t, true, subTask.LastRunTime.Time().After(executeTime),
+			fmt.Sprintf("must after ExecuteTime, executeTime = %v, lastTime = %v", executeTime.Format("2006-01-02 15:04:05"), subTask.LastRunTime.Time().Format("2006-01-02 15:04:05")))
+	}
+
+	done <- struct{}{}
 }
 
 func TestDisPatch(t *testing.T) {
@@ -679,19 +763,30 @@ func TestDisPatch(t *testing.T) {
 	defer cluster2.Close()
 	defer cluster3.Close()
 	for {
+		time.Sleep(time.Second * 2)
 		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
 			break
 		}
 	}
 
+	size := 4
+	done := make(chan struct{}, size)
+
 	// 提交一个任务
-	_ = submitDemoTaskAndCheck(t, dispatcher1)
+	go submitDemoTaskAndCheck(t, dispatcher1, done)
 
 	//提交一个回滚任务
-	submitRollbackTaskAndCheck(t, dispatcher1)
+	go submitRollbackTaskAndCheck(t, dispatcher1, done)
 
 	// test NonRetryable Task
-	submitNonRetryTaskAndCheck(t, dispatcher1)
+	go submitNonRetryTaskAndCheck(t, dispatcher1, done)
+
+	// schedule task
+	go submitScheduleTask(t, dispatcher1, done)
+
+	for i := 0; i < size; i++ {
+		<-done
+	}
 
 	os.Remove("./app.db")
 }

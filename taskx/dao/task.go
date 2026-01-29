@@ -18,7 +18,7 @@ type TaskDAO interface {
 	DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	GetByIDs(ctx context.Context, taskIDs []string) ([]model.Task, error)
-	GetByTaskState(ctx context.Context, taskState []string) ([]model.Task, error)
+	GetTodoTask(ctx context.Context, taskState []string, time basic.Time) ([]model.Task, error)
 	SetWorkerAndTaskStateWithOldWorker(ctx context.Context, taskID string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error)
 	SetState(ctx context.Context, id string, state string, tx ...*bun.Tx) (int64, error)
 	SetOutputAndState(ctx context.Context, taskID string, output, state string, tx ...*bun.Tx) error
@@ -98,11 +98,13 @@ func (d *taskDAO) GetByIDs(ctx context.Context, taskIDs []string) ([]model.Task,
 	return tasks, err
 }
 
-func (d *taskDAO) GetByTaskState(ctx context.Context, taskState []string) ([]model.Task, error) {
+func (d *taskDAO) GetTodoTask(ctx context.Context, taskState []string, time basic.Time) ([]model.Task, error) {
 	var res []model.Task
 	err := d.Client.DB.NewSelect().
 		Table(TableNameOfTask).
 		Where("state IN (?)", bun.In(taskState)).
+		Where("execute_time < ? or execute_time IS NULL", time.DBString()).
+		Where("status = ?", 1).
 		Scan(ctx, &res)
 	if err != nil {
 		return nil, err
