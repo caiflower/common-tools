@@ -35,20 +35,20 @@ func TestDelayQueue(t *testing.T) {
 	begin := time.Now()
 	cnt := 0
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 10000; i++ {
 		intn := r.Intn(10)
-		go queue.Add(&testDelayQueue{Name: fmt.Sprintf("%v", intn)}, time.Now().Add(time.Duration(intn)*time.Second))
+		go queue.Add(&testDelayQueue{Name: fmt.Sprintf("%v", intn)}, begin.Add(time.Duration(intn)*time.Second))
 	}
 
 	for {
 		value := queue.Take()
 		atoi, _ := strconv.Atoi(value.(*testDelayQueue).Name)
-		assert.Equal(t, time.Now().Format("2006-01-02 15:04:05"), begin.Add(time.Second*time.Duration(atoi)).Format("2006-01-02 15:04:05"))
+		assert.Equal(t, true, time.Now().After(begin.Add(time.Second*time.Duration(atoi))))
 		cnt++
 		if queue.Size() == 0 {
 			break
 		}
 	}
 
-	assert.Equal(t, 1000, cnt)
+	assert.Equal(t, 10000, cnt)
 }

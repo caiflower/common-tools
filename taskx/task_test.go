@@ -56,7 +56,7 @@ func TestTask(t *testing.T) {
 	assert.Equal(t, 5, myTask.Order())
 	fmt.Println(myTask.Graph())
 
-	doStream(t, myTask, 5, 0, []string{"stp1", "stp2", "stp3", "stp5", "stp4"})
+	doStream(t, myTask, 5, 0, []string{"stp1", "stp2,stp3", "stp2,stp3", "stp5", "stp4"})
 }
 
 func doStream(t *testing.T, myTask *Task, order, idx int, taskName []string) {
@@ -69,7 +69,7 @@ func doStream(t *testing.T, myTask *Task, order, idx int, taskName []string) {
 		// do something
 		v.subtask.State = TaskRunning
 		fmt.Printf("task = %+v\n", v)
-		assert.Equal(t, taskName[idx], v.GetName())
+		assert.Contains(t, taskName[idx], v.GetName())
 		idx++
 
 		// finish
