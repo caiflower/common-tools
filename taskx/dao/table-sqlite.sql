@@ -14,13 +14,17 @@ CREATE TABLE IF NOT EXISTS task (
     create_time TIMESTAMP(3) /* 创建时间，保留3位毫秒 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
     execute_time TIMESTAMP(3) /* 定时执行时间，保留3位毫秒 */,
-    status TINYINT /* 任务状态(0:禁用, 1:启用) */
+    status TINYINT /* 任务状态(0:禁用, 1:启用) */,
+    affinity_type VARCHAR(20) /* 亲和性类型(SameNode, ForceSameNode, Random) */,
+    primary_worker VARCHAR(128) /* 主要执行节点 */
     );
 
 -- 为task表创建索引
 CREATE INDEX IF NOT EXISTS idx_task_request_id ON task(request_id);
 CREATE INDEX IF NOT EXISTS idx_task_state ON task(state);
 CREATE INDEX IF NOT EXISTS idx_task_execute_time ON task(execute_time);
+CREATE INDEX IF NOT EXISTS idx_task_affinity_type ON task(affinity_type);
+CREATE INDEX IF NOT EXISTS idx_task_primary_worker ON task(primary_worker);
 
 -- 2. 创建subtask表（无内联索引）
 CREATE TABLE IF NOT EXISTS subtask (
@@ -59,13 +63,17 @@ CREATE TABLE IF NOT EXISTS task_bak (
     create_time TIMESTAMP(3) /* 创建时间，保留3位毫秒 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
     execute_time TIMESTAMP(3) /* 定时执行时间，保留3位毫秒 */,
-    status TINYINT /* 任务状态(0:禁用, 1:启用) */
+    status TINYINT /* 任务状态(0:禁用, 1:启用) */,
+    affinity_type VARCHAR(20) /* 亲和性类型(SameNode, ForceSameNode, Random) */,
+    primary_worker VARCHAR(128) /* 主要执行节点 */
     );
 
 -- 为task_bak表创建索引
 CREATE INDEX IF NOT EXISTS idx_task_bak_request_id ON task_bak(request_id);
 CREATE INDEX IF NOT EXISTS idx_task_bak_state ON task_bak(state);
 CREATE INDEX IF NOT EXISTS idx_task_bak_execute_time ON task_bak(execute_time);
+CREATE INDEX IF NOT EXISTS idx_task_bak_affinity_type ON task_bak(affinity_type);
+CREATE INDEX IF NOT EXISTS idx_task_bak_primary_worker ON task_bak(primary_worker);
 
 -- 4. 创建subtask_bak表（无内联索引）
 CREATE TABLE IF NOT EXISTS subtask_bak (

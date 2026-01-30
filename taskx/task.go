@@ -47,6 +47,15 @@ const (
 	DefaultRetryInterval = 5
 )
 
+// TaskAffinityType 定义任务亲和性类型
+type TaskAffinityType string
+
+const (
+	AffinityPreferSameNode TaskAffinityType = "PreferSameNode"
+	AffinityForceSameNode  TaskAffinityType = "ForceSameNode"
+	AffinityRandom         TaskAffinityType = "Random"
+)
+
 var taskHash = func(c *Subtask) string {
 	return c.GetID()
 }
@@ -72,6 +81,7 @@ func NewTask(taskName string) *Task {
 			State:         TaskPending,
 			Retry:         DefaultRetryCount,
 			RetryInterval: DefaultRetryInterval,
+			AffinityType:  string(AffinityRandom),
 		},
 		subtaskMap: make(map[string]*Subtask),
 		g:          graph.New(taskHash, graph.Directed(), graph.PreventCycles()),
@@ -241,6 +251,24 @@ func (t *Task) SetRetryInterval(retryInterval int32) *Task {
 func (t *Task) SetUrgent() *Task {
 	t.task.Urgent = true
 	return t
+}
+
+func (t *Task) SetAffinityType(affinityType TaskAffinityType) *Task {
+	t.task.AffinityType = string(affinityType)
+	return t
+}
+
+func (t *Task) SetPrimaryWorker(worker string) *Task {
+	t.task.PrimaryWorker = worker
+	return t
+}
+
+func (t *Task) GetAffinityType() TaskAffinityType {
+	return TaskAffinityType(t.task.AffinityType)
+}
+
+func (t *Task) GetPrimaryWorker() string {
+	return t.task.PrimaryWorker
 }
 
 func (t *Task) NextSubTasks() ([]*Subtask, bool) {

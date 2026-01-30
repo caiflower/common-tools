@@ -374,9 +374,9 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan
 			continue
 		}
 		if isFinished(dbTask.State) {
-			dbSubTasks, _ = dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
-			for i, subTask := range dbSubTasks {
-				dbSubTaskMap[subTask.ID] = &dbSubTasks[i]
+			subtasks := getSubTask(task.GetID(), dispatcher1)
+			for i, subTask := range subtasks {
+				dbSubTaskMap[subTask.ID] = &subtasks[i]
 			}
 			break
 		}
@@ -560,14 +560,7 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 	_ = task.AddDirectedEdge(two, four)
 	_ = task.AddDirectedEdge(three, five)
 	_ = task.AddDirectedEdge(four, five)
-	for {
-		err := dispatcher1.SubmitTask(task)
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		break
-	}
+	waitForTask(task, dispatcher1)
 
 	var (
 		dbSubTaskMap map[string]*model.Subtask
@@ -578,13 +571,12 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
 			time.Sleep(time.Second * 2)
-			fmt.Println(err)
 			continue
 		}
 		if isFinished(dbTask.State) {
-			dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
-			for i, v := range dbSubTasks {
-				dbSubTaskMap[v.ID] = &dbSubTasks[i]
+			subtasks := getSubTask(task.GetID(), dispatcher1)
+			for i, v := range subtasks {
+				dbSubTaskMap[v.ID] = &subtasks[i]
 			}
 			break
 		}
@@ -659,11 +651,10 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
 			time.Sleep(time.Second * 2)
-			fmt.Println(err)
 			continue
 		}
 		if isFinished(dbTask.State) {
-			subTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+			subTasks := getSubTask(task.GetID(), dispatcher1)
 			dbOne = subTasks[0]
 			break
 		}
@@ -672,6 +663,81 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 
 	assert.Equal(t, TaskFailed, dbOne.State, "check task state failed")
 	assert.Equal(t, int8(DefaultRetryCount), dbOne.Retry, "check task retryCount failed")
+
+	done <- struct{}{}
+}
+
+func waitForTask(task *Task, dispatcher *taskDispatcher) {
+	for {
+		err := dispatcher.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
+	}
+}
+
+func getSubTask(taskID string, dispatcher *taskDispatcher) []model.Subtask {
+	for {
+		dbSubTasks, err := dispatcher.SubtaskDao.GetByTaskID(context.TODO(), taskID)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		return dbSubTasks
+	}
+}
+
+func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	// 创建带有PreferSameNode亲和性的任务
+	task := NewTask(taskDemoName).
+		SetInput("affinity test input").
+		SetAffinityType(AffinityForceSameNode)
+
+	subtask := NewSubtask(stepOne).
+		SetInput("affinity test input")
+	subtask2 := NewSubtask(stepOne).
+		SetInput("affinity test input")
+	subtask3 := NewSubtask(stepThree).
+		SetInput("affinity test input")
+	subtask4 := NewSubtask(stepFour).
+		SetInput("affinity test input")
+	subtask5 := NewSubtask(stepFive).
+		SetInput("affinity test input")
+
+	_ = task.AddSubtask(subtask)
+	_ = task.AddSubtask(subtask2)
+	_ = task.AddSubtask(subtask3)
+	_ = task.AddSubtask(subtask4)
+	_ = task.AddSubtask(subtask5)
+	_ = task.AddDirectedEdge(subtask, subtask2)
+	_ = task.AddDirectedEdge(subtask, subtask3)
+	_ = task.AddDirectedEdge(subtask2, subtask4)
+	_ = task.AddDirectedEdge(subtask3, subtask4)
+	_ = task.AddDirectedEdge(subtask4, subtask5)
+
+	waitForTask(task, dispatcher)
+
+	// Wait for task to complete
+	var dbTask *model.Task
+	for {
+		_dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		if isFinished(_dbTask.State) {
+			dbTask = _dbTask
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	dbSubTasks := getSubTask(task.GetID(), dispatcher)
+	for _, v := range dbSubTasks {
+		assert.Equal(t, dbTask.Worker, v.Worker, "must same node")
+	}
 
 	done <- struct{}{}
 }
@@ -703,7 +769,7 @@ func (t *PanicTask) PanicStep(data *TaskData) (output interface{}, err error) {
 	panic("this is a test panic in PanicStep")
 }
 
-func submitScheduleTask(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
+func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
 	// Create a task scheduled to run after 5 seconds
 	task := NewTask(taskDemoName)
 	executeTime := time.Now().Add(10 * time.Second)
@@ -713,22 +779,14 @@ func submitScheduleTask(t *testing.T, dispatcher1 *taskDispatcher, done chan<- s
 	_ = task.AddSubtask(subtask)
 
 	// Submit task
-	for {
-		err := dispatcher1.SubmitTask(task)
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		break
-	}
+	waitForTask(task, dispatcher)
 
 	// Wait for task to complete
 	var dbTask *model.Task
 	for {
-		_dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
+		_dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
 			time.Sleep(time.Second * 2)
-			fmt.Println(err)
 			continue
 		}
 		if isFinished(_dbTask.State) {
@@ -741,7 +799,7 @@ func submitScheduleTask(t *testing.T, dispatcher1 *taskDispatcher, done chan<- s
 	assert.Equal(t, TaskSucceeded, dbTask.State, "check task state failed")
 
 	// Check subtask output
-	dbSubTasks, _ := dispatcher1.SubtaskDao.GetByTaskID(context.TODO(), task.GetID())
+	dbSubTasks := getSubTask(task.GetID(), dispatcher)
 	for _, subTask := range dbSubTasks {
 		assert.Equal(t, true, isFinished(subTask.State), "check subtask finished failed")
 		output := Output{}
@@ -798,7 +856,7 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 5
+	size := 6
 	done := make(chan struct{}, size)
 
 	// 提交一个任务
@@ -815,6 +873,9 @@ func TestDisPatch(t *testing.T) {
 
 	// test panic task
 	go submitPanicTaskAndCheck(t, dispatcher1, done)
+
+	// test affinity task
+	go submitAffinityTaskAndCheck(t, dispatcher1, done)
 
 	for i := 0; i < size; i++ {
 		<-done
@@ -833,14 +894,7 @@ func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan
 
 	_ = task.AddSubtask(subtask)
 
-	for {
-		err := dispatcher.SubmitTask(task)
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		break
-	}
+	waitForTask(task, dispatcher)
 
 	for {
 		time.Sleep(time.Millisecond * 100)
@@ -850,7 +904,7 @@ func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan
 		}
 		if taskInfo.State == TaskFailed {
 			// 验证任务失败，说明panic已被正确处理并转换为错误
-			subtasks, _ := dispatcher.SubtaskDao.GetByTaskID(context.Background(), task.GetID())
+			subtasks := getSubTask(task.GetID(), dispatcher)
 			for _, subtask := range subtasks {
 				if subtask.State == TaskFailed {
 					// 验证子任务也失败了

@@ -18,6 +18,7 @@ package taskx
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"sync"
 	"time"
@@ -68,6 +69,11 @@ type Config struct {
 	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"100"`
 	RemoteCallTimeout        time.Duration `yaml:"remoteCallTimeout" default:"3s"`
 	BackupTaskAge            time.Duration `yaml:"backupTaskAge" default:"168h"`
+}
+
+type affinity struct {
+	Type   TaskAffinityType
+	Worker string
 }
 
 func InitTaskDispatcher(cfg *Config) {
@@ -146,6 +152,14 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
 	taskBean, subtaskBeans := task.convert2Bean()
 	ctx := golocalv1.GetContext()
+
+	if TaskAffinityType(taskBean.AffinityType) != AffinityRandom && taskBean.PrimaryWorker == "" {
+		nodeName := t.selectNodeByAffinity(AffinityRandom, "", "", t.Cluster.GetLostNodeNames(), t.Cluster.GetAliveNodeNames())
+		if nodeName == "" {
+			return errors.New("task node name failed")
+		}
+		taskBean.PrimaryWorker = nodeName
+	}
 
 	tx.Add(func(tx *bun.Tx) error {
 		_, err := t.TaskDao.Insert(ctx, taskBean, tx)
@@ -363,7 +377,7 @@ func (t *taskDispatcher) canExecuteSubtask(subtask *Subtask, isRollback bool) bo
 	return !subtask.IsFinished()
 }
 
-func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask) {
+func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask, taskAffinityMap map[string]affinity) {
 	if len(_runningTasks) == 0 && len(_runningSubtasks) == 0 && len(_runningSubtaskRollbacks) == 0 {
 		return
 	}
@@ -389,9 +403,22 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 	subtaskRollbackWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
 
+	getAffinity := func(taskID string) affinity {
+		affinityConf, exists := taskAffinityMap[taskID]
+		if !exists {
+			affinityConf = affinity{
+				Type:   AffinityRandom,
+				Worker: "",
+			}
+		}
+		return affinityConf
+	}
+
 	for i := range runningSubtasks {
 		runningSubtask := runningSubtasks[i]
-		nodeName := t.selectNode(runningSubtask.State == TaskRunning, runningSubtask.Worker, lostNodes, aliveNodes)
+		affinityConf := getAffinity(runningSubtask.TaskID)
+
+		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtask.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
 			logger.Warn("allocate a worker failed: no available node for subtaskID: %s", runningSubtask.ID)
 			continue
@@ -412,7 +439,9 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 	for i := range runningTasks {
 		runningTask := runningTasks[i]
-		nodeName := t.selectNode(runningTask.State == TaskRunning && runningTask.Worker != "", runningTask.Worker, lostNodes, aliveNodes)
+		affinityConf := getAffinity(runningTask.ID)
+
+		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningTask.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
 			logger.Warn("allocate a worker failed: no available node for taskID: %s", runningTask.ID)
 			continue
@@ -433,7 +462,9 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 	for i := range runningSubtaskRollbacks {
 		runningSubtaskRollback := runningSubtaskRollbacks[i]
-		nodeName := t.selectNode(runningSubtaskRollback.Worker != "", runningSubtaskRollback.Worker, lostNodes, aliveNodes)
+		affinityConf := getAffinity(runningSubtaskRollback.TaskID)
+
+		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtaskRollback.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
 			logger.Warn("allocate a worker failed: no available node for subtaskRollbackID: %s", runningSubtaskRollback.ID)
 			continue
@@ -489,15 +520,34 @@ func (t *taskDispatcher) cleanupInflight(tasks []model.Task, subtasks, rollbackS
 	}
 }
 
-func (t *taskDispatcher) selectNode(keepCurrentNode bool, currentNode string, lostNodes, aliveNodes []string) string {
-	if keepCurrentNode && currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
-		return currentNode
-	}
+func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType, primaryWorker string, currentNode string, lostNodes, aliveNodes []string) string {
 	if len(aliveNodes) == 0 {
 		logger.Warn("selectNode failed: no alive nodes available")
 		return ""
 	}
-	return aliveNodes[rand.Intn(len(aliveNodes))]
+
+	switch taskAffinityType {
+	case AffinityForceSameNode:
+		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
+			return primaryWorker
+		}
+		return ""
+	case AffinityPreferSameNode:
+		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
+			return primaryWorker
+		}
+		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
+			return currentNode
+		}
+		return aliveNodes[rand.Intn(len(aliveNodes))]
+	case AffinityRandom:
+		fallthrough
+	default:
+		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
+			return currentNode
+		}
+		return aliveNodes[rand.Intn(len(aliveNodes))]
+	}
 }
 
 func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcName string) {
@@ -534,6 +584,7 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 		rollbackSubtasks []*model.Subtask
 	)
 
+	taskAffinityMap := make(map[string]affinity)
 	for i := range tasks {
 		dbTask := &tasks[i]
 
@@ -547,6 +598,10 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 		if err != nil {
 			logger.Error("task %v initByBean failed. err: %v", dbTask.ID, err)
 			continue
+		}
+		taskAffinityMap[task.GetID()] = affinity{
+			Type:   task.GetAffinityType(),
+			Worker: task.GetPrimaryWorker(),
 		}
 
 		finished, retry, running, rollback := t.analysisTask(task, task.subtaskMap)
@@ -563,6 +618,6 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 
 	// Batch allocate workers
 	if len(runningTasks) > 0 || len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
-		t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks)
+		t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks, taskAffinityMap)
 	}
 }

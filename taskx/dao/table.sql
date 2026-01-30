@@ -12,12 +12,16 @@ CREATE TABLE IF NOT EXISTS `task` (
       `state` VARCHAR(20) COMMENT '任务状态',
       `description` VARCHAR(512) COMMENT '任务描述',
       `create_time` TIMESTAMP(3) COMMENT '创建时间',
-      `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+      `last_run_time` TIMESTAMP(3) COMMENT '最后执行时间',
       `execute_time` TIMESTAMP(3) COMMENT '定时执行时间',
       `status` TINYINT COMMENT '任务状态(0:禁用, 1:启用)',
+      `affinity_type` VARCHAR(20) COMMENT '亲和性类型(SameNode, ForceSameNode, Random)',
+      `primary_worker` VARCHAR(128) COMMENT '主要执行节点',
       INDEX idx_request_id (`request_id`),
       INDEX idx_state (`state`),
       INDEX idx_execute_time (`execute_time`),
+      INDEX idx_affinity_type (`affinity_type`),
+      INDEX idx_primary_worker (`primary_worker`),
       UNIQUE INDEX idx_id (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 
@@ -34,7 +38,7 @@ CREATE TABLE IF NOT EXISTS `subtask` (
      `retry` TINYINT COMMENT '剩余重试次数',
      `retry_interval` INT COMMENT '重试间隔(秒)',
      `rollback` VARCHAR(20) COMMENT '回滚策略',
-     `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+     `last_run_time` TIMESTAMP(3) COMMENT '最后执行时间',
      `status` TINYINT COMMENT '子任务状态(0:禁用, 1:启用)',
      UNIQUE INDEX idx_id (`id`),
      INDEX idx_task_id (`task_id`),
@@ -55,12 +59,16 @@ CREATE TABLE IF NOT EXISTS `task_bak` (
     `state` VARCHAR(20) COMMENT '任务状态',
     `description` VARCHAR(512) COMMENT '任务描述',
     `create_time` TIMESTAMP(3) COMMENT '创建时间',
-    `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+    `last_run_time` TIMESTAMP(3) COMMENT '最后执行时间',
     `execute_time` TIMESTAMP(3) COMMENT '定时执行时间',
     `status` TINYINT COMMENT '任务状态(0:禁用, 1:启用)',
+    `affinity_type` VARCHAR(20) COMMENT '亲和性类型(SameNode, ForceSameNode, Random)',
+    `primary_worker` VARCHAR(128) COMMENT '主要执行节点',
     INDEX idx_request_id (`request_id`),
     INDEX idx_state (`state`),
     INDEX idx_execute_time (`execute_time`),
+    INDEX idx_affinity_type (`affinity_type`),
+    INDEX idx_primary_worker (`primary_worker`),
     UNIQUE INDEX idx_id (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 
@@ -77,7 +85,7 @@ CREATE TABLE IF NOT EXISTS `subtask_bak` (
     `retry` TINYINT COMMENT '剩余重试次数',
     `retry_interval` INT COMMENT '重试间隔(秒)',
     `rollback` VARCHAR(20) COMMENT '回滚策略',
-    `last_run_time` TIMESTAMP(3) COMMENT '更新时间',
+    `last_run_time` TIMESTAMP(3) COMMENT '最后执行时间',
     `status` TINYINT COMMENT '子任务状态(0:禁用, 1:启用)',
     UNIQUE INDEX idx_id (`id`),
     INDEX idx_task_id (`task_id`),

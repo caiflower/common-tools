@@ -25,6 +25,8 @@ type Task struct {
 	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
 	ExecuteTime   basic.Time `bun:"execute_time" json:"executeTime"`     // 定时执行时间
 	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
+	AffinityType  string     `bun:"affinity_type" json:"affinityType"`   // 亲和性类型(SameNode, ForceSameNode, Random)
+	PrimaryWorker string     `bun:"primary_worker" json:"primaryWorker"` // 主要执行节点
 }
 
 type TaskFilter struct {
@@ -51,6 +53,8 @@ type TaskFilter struct {
 	ExecuteTime   []basic.Time `json:"executeTime,omitempty"`
 	ExecuteTimeOp string       `json:"executeTimeOp,omitempty"`
 	Status        []int8       `json:"status,omitempty"`
+	AffinityType  []string     `json:"affinityType,omitempty"`
+	PrimaryWorker []string     `json:"primaryWorker,omitempty"`
 }
 
 func (f *TaskFilter) GetPage() (offset int, limit int, disable bool) {
@@ -158,6 +162,16 @@ func (f *TaskFilter) WithExecuteTime(v ...basic.Time) *TaskFilter {
 
 func (f *TaskFilter) WithStatus(v ...int8) *TaskFilter {
 	f.Status = v
+	return f
+}
+
+func (f *TaskFilter) WithAffinityType(v ...string) *TaskFilter {
+	f.AffinityType = v
+	return f
+}
+
+func (f *TaskFilter) WithPrimaryWorker(v ...string) *TaskFilter {
+	f.PrimaryWorker = v
 	return f
 }
 
@@ -289,6 +303,20 @@ func (f *TaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 			q.Where("status = ?", f.Status[0])
 		} else {
 			q.Where("status IN (?)", bun.In(f.Status))
+		}
+	}
+	if len(f.AffinityType) > 0 {
+		if len(f.AffinityType) == 1 {
+			q.Where("affinity_type = ?", f.AffinityType[0])
+		} else {
+			q.Where("affinity_type IN (?)", bun.In(f.AffinityType))
+		}
+	}
+	if len(f.PrimaryWorker) > 0 {
+		if len(f.PrimaryWorker) == 1 {
+			q.Where("primary_worker = ?", f.PrimaryWorker[0])
+		} else {
+			q.Where("primary_worker IN (?)", bun.In(f.PrimaryWorker))
 		}
 	}
 	if len(f.Orders) > 0 {

@@ -178,7 +178,8 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 		taskIdMap[v.ID] = &tasks[i]
 	}
 
-	for i, subtask := range subtasks {
+	for i := range subtasks {
+		subtask := subtasks[i]
 		subtaskID := subtask.ID
 
 		if subtask.Worker != t.Cluster.GetMyName() {
@@ -212,6 +213,7 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 				task:    taskIdMap[subtask.TaskID],
 			}:
 			default:
+				t.subtaskInflight.DeleteString(subtaskID)
 				logger.Warn("subtask queue is full")
 				return nil, errors.New("subtask queue is full")
 			}
@@ -222,6 +224,7 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 				task:    taskIdMap[subtask.TaskID],
 			}:
 			default:
+				t.subtaskInflight.DeleteString(subtaskID)
 				logger.Warn("subtask queue is full")
 				return nil, errors.New("subtask queue is full")
 			}
@@ -252,7 +255,8 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 		logger.Error("get task by taskIds failed. err: %v", err.Error())
 		return nil, err
 	}
-	for _, task := range tasks {
+	for i := range tasks {
+		task := tasks[i]
 		taskID := task.ID
 
 		if task.Worker != t.Cluster.GetMyName() {
@@ -263,18 +267,19 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 			logger.Warn("task '%s' is finished", taskID)
 			continue
 		}
-		if !t.taskInflight.InsertString(taskID) {
-			logger.Warn("task '%s' is inflight", taskID)
-			continue
-		}
 		if t.running.Load() == nil || !t.running.Load().(bool) {
 			logger.Warn("task receiver is closed")
 			return nil, errors.New("task receiver is closed")
 		}
+		if !t.taskInflight.InsertString(taskID) {
+			logger.Warn("task '%s' is inflight", taskID)
+			continue
+		}
+
 		select {
 		case t.taskQueue <- &task:
 		default:
-
+			t.taskInflight.DeleteString(taskID)
 			logger.Warn("subtask queue is full")
 			return nil, errors.New("task queue is full")
 		}
@@ -332,6 +337,7 @@ func (t *taskReceiver) startSubtaskThreads() {
 				logger.Trace("TaskReceiver subtaskWorker %d Exited (stop signal)", i)
 				return
 			case v := <-t.subtaskQueue:
+
 				t.execSubtask(v.task, v.subtask)
 			}
 		}
