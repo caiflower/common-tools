@@ -676,6 +676,33 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 	done <- struct{}{}
 }
 
+// PanicTask 用于测试panic处理
+type PanicTask struct {
+}
+
+func (t *PanicTask) Name() string {
+	return "PanicTask"
+}
+
+func (t *PanicTask) FinishedTask(data *TaskData) (err error) {
+	return nil
+}
+
+func (t *PanicTask) FailedTask(data *TaskData) (err error) {
+	return nil
+}
+
+func (t *PanicTask) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
+	return t, map[string]SubTaskExecutor{
+		"panicStep": t.PanicStep,
+	}
+}
+
+// PanicStep 会在执行时触发panic
+func (t *PanicTask) PanicStep(data *TaskData) (output interface{}, err error) {
+	panic("this is a test panic in PanicStep")
+}
+
 func submitScheduleTask(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
 	// Create a task scheduled to run after 5 seconds
 	task := NewTask(taskDemoName)
@@ -738,9 +765,11 @@ func TestDisPatch(t *testing.T) {
 	demo := &TaskDemo{}
 	rollbackDemo := TaskRollbackDemo{}
 	retryable := TaskNonRetryable{}
+	panicTask := &PanicTask{} // 添加panic任务实例
 	RegisterTaskExecutor(demo.GetExecutor())
 	RegisterTaskExecutorWithRollback(rollbackDemo.GetExecutorWithRollback())
 	RegisterTaskExecutor(retryable.GetExecutor())
+	RegisterTaskExecutor(panicTask.GetExecutor()) // 注册panic任务
 
 	_ = receiver1.Start()
 	_ = receiver2.Start()
@@ -769,7 +798,7 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 4
+	size := 5
 	done := make(chan struct{}, size)
 
 	// 提交一个任务
@@ -784,9 +813,57 @@ func TestDisPatch(t *testing.T) {
 	// schedule task
 	go submitScheduleTask(t, dispatcher1, done)
 
+	// test panic task
+	go submitPanicTaskAndCheck(t, dispatcher1, done)
+
 	for i := 0; i < size; i++ {
 		<-done
 	}
 
-	os.Remove("./app.db")
+	_ = os.Remove("./app.db")
+}
+
+// 提交panic任务并检查结果
+func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	task := NewTask("PanicTask").
+		SetInput("panic test input")
+
+	subtask := NewSubtask("panicStep").
+		SetInput("panic test input")
+
+	_ = task.AddSubtask(subtask)
+
+	for {
+		err := dispatcher.SubmitTask(task)
+		if err != nil {
+			time.Sleep(time.Second * 2)
+			continue
+		}
+		break
+	}
+
+	for {
+		time.Sleep(time.Millisecond * 100)
+		taskInfo, err := dispatcher.TaskDao.GetByID(context.Background(), task.GetID())
+		if err != nil {
+			continue
+		}
+		if taskInfo.State == TaskFailed {
+			// 验证任务失败，说明panic已被正确处理并转换为错误
+			subtasks, _ := dispatcher.SubtaskDao.GetByTaskID(context.Background(), task.GetID())
+			for _, subtask := range subtasks {
+				if subtask.State == TaskFailed {
+					// 验证子任务也失败了
+					var output Output
+					_ = json.Unmarshal([]byte(subtask.Output), &output)
+					// 输出应该包含panic信息
+					assert.Contains(t, output.Err, "panic occurred during execution")
+					break
+				}
+			}
+			break
+		}
+	}
+
+	done <- struct{}{}
 }

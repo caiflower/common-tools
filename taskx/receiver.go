@@ -19,7 +19,10 @@ package taskx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/cluster"
@@ -66,7 +69,7 @@ type taskReceiver struct {
 	TaskDispatcher *taskDispatcher  `autowired:""`
 	cfg            *Config
 
-	running                  bool
+	running                  atomic.Value
 	subtaskWorker            int
 	subtaskQueueSize         int
 	subtaskInflight          *inflight.InFlight
@@ -79,14 +82,20 @@ type taskReceiver struct {
 	subtaskRollbackQueueSize int
 	subtaskRollbackQueue     chan *SubtaskBag
 	stopChan                 chan struct{}
+	wg                       sync.WaitGroup
 }
 
 func (t *taskReceiver) Start() error {
-	if t.running {
+	if t.running.Load() != nil && t.running.Load().(bool) {
+		logger.Warn("taskReceiver already running, skip start")
 		return nil
 	}
 
 	logger.Info("taskReceiver start.")
+
+	// Initialize stopChan before starting workers
+	t.stopChan = make(chan struct{})
+
 	t.subtaskQueue = make(chan *SubtaskBag, t.subtaskQueueSize)
 	t.taskQueue = make(chan *model.Task, t.taskQueueSize)
 	t.subtaskRollbackQueue = make(chan *SubtaskBag, t.subtaskRollbackQueueSize)
@@ -94,30 +103,29 @@ func (t *taskReceiver) Start() error {
 	t.startTaskThreads()
 	t.startSubtaskThreads()
 	t.startRollbackTaskThreads()
-	t.running = true
-	t.stopChan = make(chan struct{})
+	t.running.Store(true)
 
 	// register func in cluster
 	t.Cluster.RegisterFunc(deliverSubtask, t.deliverSubtask)
 	t.Cluster.RegisterFunc(deliverTask, t.deliverTask)
 	t.Cluster.RegisterFunc(handleTaskImmediately, t.handleTaskImmediately)
 	t.Cluster.RegisterFunc(deliverSubtaskRollback, t.deliverSubtaskRollback)
+	logger.Info("taskReceiver started successfully")
 	return nil
 }
 
 func (t *taskReceiver) Close() {
-	if !t.running {
+	if t.running.Load() == nil || !t.running.Load().(bool) {
+		logger.Warn("TaskReceiver not running, skip close")
 		return
 	}
 
-	t.running = false
-	close(t.taskQueue)
-	close(t.subtaskQueue)
-	close(t.subtaskRollbackQueue)
+	t.running.Store(false)
+	close(t.stopChan)
 
-	for i := 1; i <= t.taskWorker+t.subtaskWorker+t.subtaskRollbackWorker; i++ {
-		<-t.stopChan
-	}
+	// Wait for all workers to finish
+	logger.Info("TaskReceiver waiting for workers to finish...")
+	t.wg.Wait()
 
 	logger.Info("TaskReceiver close finish.")
 }
@@ -187,7 +195,7 @@ func (t *taskReceiver) handleSubtask(subtaskIds []string, rollback bool) (interf
 			continue
 		}
 
-		if !t.running {
+		if t.running.Load() == nil || !t.running.Load().(bool) {
 			logger.Warn("task receiver is closed")
 			return nil, errors.New("task receiver is closed")
 		}
@@ -259,7 +267,7 @@ func (t *taskReceiver) deliverTask(data interface{}) (interface{}, error) {
 			logger.Warn("task '%s' is inflight", taskID)
 			continue
 		}
-		if !t.running {
+		if t.running.Load() == nil || !t.running.Load().(bool) {
 			logger.Warn("task receiver is closed")
 			return nil, errors.New("task receiver is closed")
 		}
@@ -295,20 +303,20 @@ func (t *taskReceiver) deliverSubtaskRollback(data interface{}) (interface{}, er
 
 func (t *taskReceiver) startTaskThreads() {
 	runThread := func(i int) {
+		defer t.wg.Done()
 		logger.Trace("TaskReceiver taskWorker %d start", i)
-		for v := range t.taskQueue {
-			if !t.running {
-				break
+		for {
+			select {
+			case <-t.stopChan:
+				logger.Trace("TaskReceiver taskWorker %d Exited (stop signal)", i)
+				return
+			case v := <-t.taskQueue:
+				t.execTask(v)
 			}
-
-			t.execTask(v)
-			t.taskInflight.DeleteString(v.ID)
 		}
-
-		t.stopChan <- struct{}{}
-		logger.Trace("TaskReceiver taskWorker %d Exited", i)
 	}
 
+	t.wg.Add(t.taskWorker)
 	for i := 1; i <= t.taskWorker; i++ {
 		go runThread(i)
 	}
@@ -316,20 +324,20 @@ func (t *taskReceiver) startTaskThreads() {
 
 func (t *taskReceiver) startSubtaskThreads() {
 	runThread := func(i int) {
+		defer t.wg.Done()
 		logger.Trace("TaskReceiver subtaskWorker %d start", i)
-		for v := range t.subtaskQueue {
-			if !t.running {
-				break
+		for {
+			select {
+			case <-t.stopChan:
+				logger.Trace("TaskReceiver subtaskWorker %d Exited (stop signal)", i)
+				return
+			case v := <-t.subtaskQueue:
+				t.execSubtask(v.task, v.subtask)
 			}
-
-			t.execSubtask(v.task, v.subtask)
-			t.subtaskInflight.DeleteString(v.subtask.ID)
 		}
-
-		t.stopChan <- struct{}{}
-		logger.Trace("TaskReceiver subtaskWorker %d Exited", i)
 	}
 
+	t.wg.Add(t.subtaskWorker)
 	for i := 1; i <= t.subtaskWorker; i++ {
 		go runThread(i)
 	}
@@ -337,26 +345,28 @@ func (t *taskReceiver) startSubtaskThreads() {
 
 func (t *taskReceiver) startRollbackTaskThreads() {
 	runThread := func(i int) {
+		defer t.wg.Done()
 		logger.Trace("TaskReceiver subtaskRollbackWorker %d start", i)
-		for v := range t.subtaskRollbackQueue {
-			if !t.running {
-				break
+		for {
+			select {
+			case <-t.stopChan:
+				logger.Trace("TaskReceiver subtaskRollbackWorker %d Exited (stop signal)", i)
+				return
+			case v := <-t.subtaskRollbackQueue:
+				t.execSubtaskRollback(v.task, v.subtask)
 			}
-
-			t.execSubtaskRollback(v.task, v.subtask)
-			t.subtaskInflight.DeleteString(v.subtask.ID)
 		}
-
-		t.stopChan <- struct{}{}
-		logger.Trace("TaskReceiver subtaskRollbackWorker %d Exited", i)
 	}
 
+	t.wg.Add(t.subtaskRollbackWorker)
 	for i := 1; i <= t.subtaskRollbackWorker; i++ {
 		go runThread(i)
 	}
 }
 
 func (t *taskReceiver) execTask(task *model.Task) {
+	defer t.taskInflight.DeleteString(task.ID)
+
 	golocalv1.PutTraceID(task.RequestID)
 	defer golocalv1.Clean()
 	ctx := context.TODO()
@@ -364,7 +374,12 @@ func (t *taskReceiver) execTask(task *model.Task) {
 
 	executor := getTaskExecutor(task.TaskName)
 	if executor == nil {
-		logger.Warn("task %v executor is not found", taskID)
+		logger.Error("task %v executor is not found", taskID)
+		// 尝试将任务设置为失败状态
+		err := t.TaskDao.SetOutputAndState(ctx, taskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s not found", task.TaskName)}), TaskFailed)
+		if err != nil {
+			logger.Error("task %v set output and state failed. Error: %s", taskID, err.Error())
+		}
 		return
 	}
 
@@ -452,6 +467,8 @@ func (t *taskReceiver) execTask(task *model.Task) {
 }
 
 func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
+	defer t.subtaskInflight.DeleteString(subtask.ID)
+
 	golocalv1.PutTraceID(task.RequestID)
 	defer golocalv1.Clean()
 	ctx := golocalv1.GetContext()
@@ -461,6 +478,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	// check subtask state again
 	_subtask, err := t.SubtaskDao.GetByID(ctx, subtaskID)
 	if err != nil {
+		logger.Error("execSubtask: failed to get subtask %s, err: %v", subtaskID, err)
 		return
 	}
 	if _subtask == nil ||
@@ -473,7 +491,11 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 
 	executor := getSubTaskExecutor(task.TaskName, subtask.TaskName)
 	if executor == nil {
-		logger.Warn("subtask '%s' executor is not found", subtaskID)
+		logger.Error("subtask '%s' executor is not found", subtaskID)
+		// 设置任务为失败状态
+		if err = t.SubtaskDao.SetOutputAndState(ctx, subtaskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s/%s not found", task.TaskName, subtask.TaskName)}), TaskFailed); err != nil {
+			logger.Error("subtask %v set output and state failed. Error: %s", subtaskID, err.Error())
+		}
 		return
 	}
 
@@ -515,6 +537,8 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 }
 
 func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subtask) {
+	defer t.subtaskInflight.DeleteString(subtask.ID)
+
 	golocalv1.PutTraceID(task.RequestID)
 	defer golocalv1.Clean()
 
@@ -527,6 +551,7 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	// check subtask state again
 	_subtask, err := t.SubtaskDao.GetByID(ctx, subtaskID)
 	if err != nil {
+		logger.Error("execSubtaskRollback: failed to get subtask %s, err: %v", subtaskID, err)
 		return
 	}
 	if _subtask == nil ||
@@ -539,7 +564,11 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 
 	executor := getRollbackTaskExecutor(task.TaskName, subtask.TaskName)
 	if executor == nil {
-		logger.Warn("subtask '%s' executor is not found", subtaskID)
+		logger.Error("subtask '%s' rollback executor is not found", subtaskID)
+		// 设置回滚状态为失败
+		if err = t.SubtaskDao.SetRollbackAndState(ctx, subtaskID, string(RollbackFailed), tools.ToJson(&Output{RollbackErr: fmt.Sprintf("rollback executor for task %s/%s not found", task.TaskName, subtask.TaskName)})); err != nil {
+			logger.Error("subtask %v set rollback and state failed. Error: %s", subtaskID, err.Error())
+		}
 		return
 	}
 
@@ -613,5 +642,19 @@ func (t *taskReceiver) exec(ctx context.Context, executor SubTaskExecutor, taskI
 		}
 	}
 
-	return executor(&TaskData{RequestId: requestID, TaskId: taskID, SubTaskId: subtaskID, Input: input, Subtasks: preSubtasks})
+	// 添加panic处理机制，捕获panic并返回错误
+	var result interface{}
+	var execErr error
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("panic recovered in exec for subtask '%s': %v", subtaskID, r)
+				execErr = fmt.Errorf("panic occurred during execution: %v", r)
+			}
+		}()
+		result, execErr = executor(&TaskData{RequestId: requestID, TaskId: taskID, SubTaskId: subtaskID, Input: input, Subtasks: preSubtasks})
+	}()
+
+	return result, execErr
 }

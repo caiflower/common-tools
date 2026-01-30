@@ -53,7 +53,7 @@ type taskDispatcher struct {
 	TaskReceiver           *taskReceiver     `autowired:""`
 	cfg                    *Config
 	running                atomic.Value
-	runningL               bool
+	runningL               atomic.Value
 	allocateWorkerInflight *inflight.InFlight
 	inQueueTasks           sync.Map
 	delayQueue             *basic.DelayQueue
@@ -91,15 +91,15 @@ func (t *taskDispatcher) MasterCall() {
 	if t.Cluster == nil {
 		return
 	}
-	if t.runningL {
+	if t.runningL.Load() != nil && t.runningL.Load().(bool) {
 		return
 	}
-	t.runningL = true
+	t.runningL.Store(true)
 
 	golocalv1.PutTraceID(tools.UUID())
 	defer func() {
 		golocalv1.Clean()
-		t.runningL = false
+		t.runningL.Store(false)
 	}()
 
 	// handle task
@@ -392,6 +392,10 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 	for i := range runningSubtasks {
 		runningSubtask := runningSubtasks[i]
 		nodeName := t.selectNode(runningSubtask.State == TaskRunning, runningSubtask.Worker, lostNodes, aliveNodes)
+		if nodeName == "" {
+			logger.Warn("allocate a worker failed: no available node for subtaskID: %s", runningSubtask.ID)
+			continue
+		}
 		if nodeName != runningSubtask.Worker {
 			cnt, err := t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtask.ID, nodeName, TaskRunning, runningSubtask.Worker)
 			if err != nil {
@@ -406,9 +410,13 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 		subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.ID)
 	}
 
-	for i, _ := range runningTasks {
+	for i := range runningTasks {
 		runningTask := runningTasks[i]
 		nodeName := t.selectNode(runningTask.State == TaskRunning && runningTask.Worker != "", runningTask.Worker, lostNodes, aliveNodes)
+		if nodeName == "" {
+			logger.Warn("allocate a worker failed: no available node for taskID: %s", runningTask.ID)
+			continue
+		}
 		if nodeName != runningTask.Worker {
 			cnt, err := t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTask.ID, nodeName, TaskRunning, runningTask.Worker)
 			if err != nil {
@@ -426,6 +434,10 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 	for i := range runningSubtaskRollbacks {
 		runningSubtaskRollback := runningSubtaskRollbacks[i]
 		nodeName := t.selectNode(runningSubtaskRollback.Worker != "", runningSubtaskRollback.Worker, lostNodes, aliveNodes)
+		if nodeName == "" {
+			logger.Warn("allocate a worker failed: no available node for subtaskRollbackID: %s", runningSubtaskRollback.ID)
+			continue
+		}
 		if nodeName != runningSubtaskRollback.Worker {
 			cnt, err := t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), runningSubtaskRollback.Worker)
 			if err != nil {
@@ -480,6 +492,10 @@ func (t *taskDispatcher) cleanupInflight(tasks []model.Task, subtasks, rollbackS
 func (t *taskDispatcher) selectNode(keepCurrentNode bool, currentNode string, lostNodes, aliveNodes []string) string {
 	if keepCurrentNode && currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
 		return currentNode
+	}
+	if len(aliveNodes) == 0 {
+		logger.Warn("selectNode failed: no alive nodes available")
+		return ""
 	}
 	return aliveNodes[rand.Intn(len(aliveNodes))]
 }

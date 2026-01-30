@@ -65,6 +65,18 @@ func (b *BatchTx) Submit() (err error) {
 		tx, isMyTx = &newTx, true
 	}
 
+	// 如果是内部创建的事务，处理 panic 回滚
+	if isMyTx {
+		defer func() {
+			if r := recover(); r != nil {
+				if _err := tx.Rollback(); _err != nil {
+					logger.Warn("rollback failed after panic. err: %v", _err.Error())
+				}
+				panic(r)
+			}
+		}()
+	}
+
 	// 执行
 	for _, fc := range b.txs {
 		if err = fc(tx); err != nil {
