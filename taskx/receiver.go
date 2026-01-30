@@ -52,7 +52,7 @@ type SubtaskBag struct {
 }
 
 type Output struct {
-	Output         string `json:",omitempty"`
+	Output         string `json:"output,omitempty"`
 	Err            string `json:"err,omitempty"`
 	RollbackErr    string `json:"rollbackErr,omitempty"`
 	RollbackOutput string `json:"rollbackOutput,omitempty"`

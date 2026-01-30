@@ -21,7 +21,7 @@ type Subtask struct {
 	Retry         int8       `bun:"retry" json:"retry"`                  // 剩余重试次数
 	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"` // 重试间隔(秒)
 	Rollback      string     `bun:"rollback" json:"rollback"`            // 回滚策略
-	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
+	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
 	Status        int8       `bun:"status" json:"status"`                // 子任务状态(0:禁用, 1:启用)
 }
 

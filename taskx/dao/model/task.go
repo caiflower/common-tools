@@ -22,7 +22,7 @@ type Task struct {
 	State         string     `bun:"state" json:"state"`                  // 任务状态
 	Description   string     `bun:"description" json:"description"`      // 任务描述
 	CreateTime    basic.Time `bun:"create_time" json:"createTime"`       // 创建时间
-	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 更新时间
+	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
 	ExecuteTime   basic.Time `bun:"execute_time" json:"executeTime"`     // 定时执行时间
 	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
 	AffinityType  string     `bun:"affinity_type" json:"affinityType"`   // 亲和性类型(SameNode, ForceSameNode, Random)
