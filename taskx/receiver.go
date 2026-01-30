@@ -489,7 +489,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	}
 	if _subtask == nil ||
 		_subtask.Worker != t.Cluster.GetMyName() ||
-		isFinished(subtask.State) ||
+		isFinished(_subtask.State) ||
 		time.Now().Before(_subtask.LastRunTime.Time().Add(time.Duration(subtask.RetryInterval)*time.Second)) {
 		logger.Warn("subtask '%s' is not satisfy exec condition", subtaskID)
 		return

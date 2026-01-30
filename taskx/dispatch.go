@@ -43,6 +43,8 @@ var SingletonTaskDispatcher = &taskDispatcher{
 	allocateWorkerInflight: inflight.NewInFlight(),
 }
 
+var initOnce sync.Once
+
 type taskDispatcher struct {
 	cluster.DefaultCaller
 	Cluster                cluster.ICluster  `autowired:""`
@@ -77,20 +79,22 @@ type affinity struct {
 }
 
 func InitTaskDispatcher(cfg *Config) {
-	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
-	_tr.subtaskWorker = cfg.SubtaskWorker
-	_tr.taskWorker = cfg.TaskWorker
-	_tr.subtaskRollbackWorker = cfg.SubtaskRollbackWorker
-	_tr.subtaskQueueSize = cfg.SubtaskQueueSize
-	_tr.taskQueueSize = cfg.TaskQueueSize
-	_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
-	SingletonTaskDispatcher.cfg = cfg
-	SingletonTaskDispatcher.delayQueue = basic.NewDelayQueue()
-	_tr.cfg = cfg
-	bean.AddBean(dao.NewTaskDAO())
-	bean.AddBean(dao.NewSubtaskBakDAO())
-	bean.AddBean(SingletonTaskDispatcher)
-	bean.AddBean(_tr)
+	initOnce.Do(func() {
+		_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+		_tr.subtaskWorker = cfg.SubtaskWorker
+		_tr.taskWorker = cfg.TaskWorker
+		_tr.subtaskRollbackWorker = cfg.SubtaskRollbackWorker
+		_tr.subtaskQueueSize = cfg.SubtaskQueueSize
+		_tr.taskQueueSize = cfg.TaskQueueSize
+		_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
+		SingletonTaskDispatcher.cfg = cfg
+		SingletonTaskDispatcher.delayQueue = basic.NewDelayQueue()
+		_tr.cfg = cfg
+		bean.AddBean(dao.NewTaskDAO())
+		bean.AddBean(dao.NewSubtaskBakDAO())
+		bean.AddBean(SingletonTaskDispatcher)
+		bean.AddBean(_tr)
+	})
 }
 
 func (t *taskDispatcher) MasterCall() {
