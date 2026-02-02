@@ -29,7 +29,7 @@ const (
 
 type event struct {
 	name        string
-	clusterStat stat
+	clusterStat uint32
 	nodeName    string
 	leaderName  string
 }

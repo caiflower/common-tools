@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/global"
@@ -45,7 +46,6 @@ type ICluster interface {
 	Name() string                                                                 // 名称
 	Start() error                                                                 // 启动
 	Close()                                                                       // 关闭
-	IsFighting() bool                                                             // 集群是否正在选举
 	IsClose() bool                                                                // 集群是否关闭
 	IsReady() bool                                                                // 集群是否就绪
 	IsLeader() bool                                                               // 当前节点是否是领导人
@@ -69,14 +69,11 @@ type ICluster interface {
 	CallFunc(fc *FuncSpec) (interface{}, error)                                   // callFunc
 }
 
-type stat uint8
-
 const (
-	_init stat = iota
-	fighting
-	leader
-	candidate
+	_init uint32 = iota
 	follower
+	candidate
+	leader
 	closed
 
 	modeCluster = "cluster"
@@ -116,17 +113,16 @@ type ReplicasDiscovery struct {
 
 type Cluster struct {
 	lock           sync.Locker                                            // 启动关闭锁
-	fightingLock   sync.Locker                                            // 竞争锁
+	fightingState  uint32                                                 // 选举锁
 	config         *Config                                                // 配置文件
 	curNode        *Node                                                  // 当前节点
 	leaderNode     *Node                                                  // 领导节点
-	leaderName     string                                                 // 领导节点名称
-	leaderLock     sync.Locker                                            // leader锁
+	leaderLock     sync.RWMutex                                           // leader锁
 	lostLeaderTime time.Time                                              // 没有leader的时间
 	allNode        *sync.Map                                              // 所有的节点
 	aliveNodes     *sync.Map                                              // 所有存活的节点
 	term           int                                                    // 当前任期
-	sate           stat                                                   // 集群状态
+	sate           uint32                                                 // 集群状态
 	server         nio.IServer                                            // 服务端口
 	logger         logger.ILog                                            // 日志框架
 	msgChan        chan *Message                                          // 消息通信chan
@@ -138,6 +134,7 @@ type Cluster struct {
 	cancelFunc     context.CancelFunc
 	events         chan *event
 	jobTrackers    *sync.Map
+	closeSuccess   chan bool
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -157,20 +154,17 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	}
 
 	cluster := &Cluster{
-		config:       &config,
-		allNode:      &sync.Map{},
-		aliveNodes:   &sync.Map{},
-		term:         0,
-		sate:         _init,
-		logger:       logger,
-		lock:         syncx.NewSpinLock(),
-		fightingLock: syncx.NewSpinLock(),
-		votesMap:     make(map[int]string),
-		votesLock:    syncx.NewSpinLock(),
-		leaderLock:   syncx.NewSpinLock(),
-		events:       make(chan *event, 20),
-		jobTrackers:  &sync.Map{},
-		localFuncs:   make(map[string]func(data interface{}) (interface{}, error)),
+		config:      &config,
+		allNode:     &sync.Map{},
+		aliveNodes:  &sync.Map{},
+		term:        0,
+		sate:        _init,
+		logger:      logger,
+		lock:        syncx.NewSpinLock(),
+		votesMap:    make(map[int]string),
+		votesLock:   syncx.NewSpinLock(),
+		jobTrackers: &sync.Map{},
+		localFuncs:  make(map[string]func(data interface{}) (interface{}, error)),
 	}
 
 	if !cluster.IsEnable() {
@@ -217,7 +211,8 @@ func (c *Cluster) Start() error {
 	defer c.lock.Unlock()
 
 	// 只允许启动一次
-	if !c.IsEnable() || (c.sate > _init && c.sate != closed) {
+	sate := atomic.LoadUint32(&c.sate)
+	if !c.IsEnable() || (sate > _init && sate != closed) {
 		return nil
 	}
 	if c.GetMyNode() == nil {
@@ -225,7 +220,7 @@ func (c *Cluster) Start() error {
 	}
 
 	c.term = 0
-	c.sate = _init
+	atomic.StoreUint32(&c.sate, follower)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	c.cancelFunc = cancelFunc
@@ -249,12 +244,9 @@ func (c *Cluster) Start() error {
 		}
 	}
 
+	c.events = make(chan *event, 20)
+
 	switch c.config.Mode {
-	case modeCluster:
-		// 开始选举
-		go c.fighting()
-		// 开始心跳
-		go c.heartbeat()
 	case modeSingle:
 		defer func() {
 			// sign leader
@@ -265,6 +257,8 @@ func (c *Cluster) Start() error {
 
 	case modeRedis:
 		c.redisClusterStartUp()
+	case modeCluster:
+		fallthrough
 	default:
 		go c.fighting()
 		go c.heartbeat()
@@ -273,9 +267,10 @@ func (c *Cluster) Start() error {
 	// 开始消费事件
 	go c.consumeEvent()
 
-	c.logger.Info("[cluster] startup success. ")
-
+	c.closeSuccess = make(chan bool)
 	c.createEvent(eventNameStartUp, "")
+
+	c.logger.Info("[cluster] startup success. ")
 
 	return nil
 }
@@ -309,6 +304,8 @@ func (c *Cluster) Close() {
 	c.curNode.clean()
 	c.releaseLeader()
 
+	atomic.StoreUint32(&c.sate, closed)
+
 	// close nio
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
@@ -323,6 +320,8 @@ func (c *Cluster) Close() {
 	}
 
 	c.createEvent(eventNameClose, "")
+	close(c.events)
+
 	c.jobTrackers.Range(func(key, value interface{}) bool {
 		closer, ok := value.(global.Resource)
 		if ok {
@@ -331,43 +330,50 @@ func (c *Cluster) Close() {
 		return true
 	})
 
-	c.sate = closed
+	<-c.closeSuccess
 	c.logger.Info("[cluster] close success. ")
 }
 
-func (c *Cluster) IsFighting() bool {
-	return c.sate == fighting
-}
-
 func (c *Cluster) IsClosed() bool {
-	return c.sate == closed
+	return atomic.LoadUint32(&c.sate) == closed
 }
 
 func (c *Cluster) IsReady() bool {
+	sate := atomic.LoadUint32(&c.sate)
 	switch c.config.Mode {
-	case modeCluster:
-		return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
 	case modeRedis:
 		return c.GetLeaderName() != ""
+	case modeCluster:
+		fallthrough
 	default:
-		return c.sate == leader || (c.sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
+		return sate == leader || (sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
 	}
 }
 
 func (c *Cluster) IsLeader() bool {
-	return c.sate == leader
+	return atomic.LoadUint32(&c.sate) == leader
 }
 
 func (c *Cluster) IsCandidate() bool {
-	return c.sate == candidate
+	return atomic.LoadUint32(&c.sate) == candidate
 }
 
 func (c *Cluster) IsFollower() bool {
-	return c.sate == follower
+	return atomic.LoadUint32(&c.sate) == follower
 }
 
 func (c *Cluster) GetLeaderNode() *Node {
+	c.leaderLock.RLock()
+	defer c.leaderLock.RUnlock()
 	return c.leaderNode
+}
+
+func (c *Cluster) GetLeaderName() string {
+	node := c.GetLeaderNode()
+	if node == nil {
+		return ""
+	}
+	return node.name
 }
 
 func (c *Cluster) GetMyNode() *Node {
@@ -383,10 +389,6 @@ func (c *Cluster) GetMyName() string {
 
 func (c *Cluster) GetMyTerm() int {
 	return c.term
-}
-
-func (c *Cluster) GetLeaderName() string {
-	return c.leaderName
 }
 
 func (c *Cluster) GetAllNodeNames() (allNames []string) {
@@ -424,7 +426,7 @@ func (c *Cluster) GetLostNodeNames() (lostNames []string) {
 }
 
 func (c *Cluster) IsClose() bool {
-	return c.sate == closed
+	return atomic.LoadUint32(&c.sate) == closed
 }
 
 func (c *Cluster) GetMyAddress() string {
@@ -506,6 +508,14 @@ func (c *Cluster) enableReplicasDiscovery() bool {
 	return c.config.ReplicasDiscovery.DomainPatten != "" && c.config.ReplicasDiscovery.Port > 0
 }
 
+func (c *Cluster) getQuorum() int {
+	totalNodes := c.GetAllNodeCount()
+	if totalNodes == 0 {
+		return 1
+	}
+	return totalNodes/2 + 1
+}
+
 func (c *Cluster) findCurNode() {
 	if c.curNode == nil { // 说明没有开启调试
 		if c.config.Mode == modeSingle {
@@ -578,28 +588,27 @@ func (c *Cluster) listen() {
 func (c *Cluster) fighting() {
 	defer e.OnError("cluster fighting")
 
-	if c.IsFighting() || c.IsReady() || c.IsClose() {
+	if c.IsReady() || c.IsClose() {
 		return
 	}
 
 	// 保证同时只有一个竞选过程在执行
-	c.fightingLock.Lock()
-	defer c.fightingLock.Unlock()
+	if !atomic.CompareAndSwapUint32(&c.fightingState, 0, 1) {
+		return
+	}
+	defer atomic.StoreUint32(&c.fightingState, 0)
 
 	// 如果集群已经就绪或者关闭了，那么直接返回即可
 	if c.IsReady() || c.IsClose() {
 		return
 	}
-	c.sate = fighting
 
 	defer func() {
-		if c.leaderNode != nil {
-			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.leaderName)
+		if c.GetLeaderNode() != nil {
+			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.GetLeaderName())
 		} else {
-			if !c.IsClose() {
-				c.sate = follower
-			}
-			c.logger.Info("[cluster] do fighting again.")
+			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
+			c.logger.Trace("[cluster] fighting again.")
 			// 没有找到主节点，自动开启新一轮竞选
 			go c.fighting()
 		}
@@ -627,12 +636,12 @@ func (c *Cluster) fighting() {
 		c.reconnect()
 
 		count := c.GetAliveNodeCount()
-		haftAllNodeCount := c.GetAllNodeCount() / 2
-		logger.Info("[cluster] node name: %s, alive node count: %d, half count: %d", c.curNode.name, count, haftAllNodeCount)
+		quorum := c.getQuorum()
+		logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
-		if count > haftAllNodeCount { // 如果否，说明该节点可能已经失联
+		if count >= quorum { // 使用多数原则，防止脑裂
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
-			if len(messages) < haftAllNodeCount {
+			if len(messages) < quorum {
 				// 再问一遍
 				continue
 			}
@@ -702,12 +711,15 @@ func (c *Cluster) fighting() {
 		c.reconnect()
 
 		count := c.GetAliveNodeCount()
-		haftAllNodeCount := c.GetAllNodeCount() / 2
-		logger.Info("[cluster] node name: %s, alive node count: %d, half count: %d", c.curNode.name, count, haftAllNodeCount)
+		quorum := c.getQuorum()
+		logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
-		if count > haftAllNodeCount {
+		if count >= quorum {
 			myNodeName := c.GetMyName()
-			c.sate = candidate
+			// attempt to sign myself to candidate
+			if !atomic.CompareAndSwapUint32(&c.sate, follower, candidate) {
+				return
+			}
 
 			// vote myself first
 			if !c.voteNode(nextTerm, myNodeName) {
@@ -725,10 +737,10 @@ func (c *Cluster) fighting() {
 			}
 			c.logger.Info("[cluster] term %d vote myself finished, accept vote number %d", nextTerm, votesCount)
 
-			if votesCount > haftAllNodeCount {
+			if votesCount >= quorum {
 				// 开始广播自己为 leader
 				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				if len(messages1) < haftAllNodeCount {
+				if len(messages1) < quorum {
 					logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
 					return
 				}
@@ -775,8 +787,8 @@ func (c *Cluster) heartbeat() {
 				c.logger.Debug("[cluster] leader %s send heartbeat.", c.GetMyName())
 				// 向所有follower节点发送心跳
 				messages := c.sendMsgWhitTimeout(2*time.Second, messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
-				count := c.GetAllNodeCount()
-				leastCnt := (count - 1) / 2 // 去掉自己
+				quorum := c.getQuorum()
+				leastCnt := quorum - 1 // 去掉自己，需要收到至少 quorum-1 个其他节点的响应
 				if len(messages) < leastCnt {
 					c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", len(messages), leastCnt, c.GetMyName())
 					c.releaseWithNodeName(c.GetMyName())
@@ -794,7 +806,7 @@ func (c *Cluster) heartbeat() {
 				}
 			} else if c.IsFollower() {
 				// 如果集群不就绪
-				if !c.IsReady() || c.leaderNode == nil {
+				if !c.IsReady() || c.GetLeaderNode() == nil {
 					c.logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
 					go c.fighting()
 				}
@@ -861,17 +873,16 @@ func (c *Cluster) signLeader(node *Node, term int) bool {
 	c.releaseLeaderNoLock()
 
 	if node.name == c.GetMyName() {
-		c.sate = leader
+		atomic.StoreUint32(&c.sate, leader)
 		c.createEvent(eventNameSignMaster, node.name)
 	} else {
-		c.sate = follower
-		c.curNode.heartbeat = time.Now()
+		atomic.StoreUint32(&c.sate, follower)
+		c.curNode.updateHeartbeat()
 		c.createEvent(eventNameSignFollower, node.name)
 	}
 
 	c.lostLeaderTime = time.Time{}
 	c.leaderNode = node
-	c.leaderName = node.name
 	c.term = term
 	return true
 }
@@ -880,30 +891,29 @@ func (c *Cluster) releaseWithNodeName(name string) {
 	c.leaderLock.Lock()
 	defer c.leaderLock.Unlock()
 
-	if c.sate != closed {
-		c.sate = follower
+	if c.leaderNode == nil || c.leaderNode.name != name {
+		return
 	}
 
-	if c.GetLeaderName() != name {
+	if !atomic.CompareAndSwapUint32(&c.sate, leader, follower) {
 		return
 	}
 
 	c.lostLeaderTime = time.Now()
-	if c.leaderName == c.GetMyName() {
+	if c.leaderNode.name == c.GetMyName() {
 		c.createEvent(eventNameUnsignMaster, "")
 	} else {
 		c.createEvent(eventNameUnsignFollower, "")
 	}
 	c.leaderNode = nil
-	c.leaderName = ""
 }
 
 func (c *Cluster) releaseLeader() {
 	c.leaderLock.Lock()
 	defer c.leaderLock.Unlock()
-	if c.sate != closed {
-		c.sate = follower
-	}
+
+	atomic.StoreUint32(&c.sate, follower)
+
 	c.releaseLeaderNoLock()
 }
 
@@ -913,13 +923,13 @@ func (c *Cluster) releaseLeaderNoLock() {
 	}
 
 	c.lostLeaderTime = time.Now()
-	if c.leaderName == c.GetMyName() {
+	if c.leaderNode.name == c.GetMyName() {
 		c.createEvent(eventNameUnsignMaster, "")
 	} else {
 		c.createEvent(eventNameUnsignFollower, "")
 	}
+
 	c.leaderNode = nil
-	c.leaderName = ""
 }
 
 // getVoteNodeName 根据term获取我投票给的节点名称。每个term只能投给一个node
@@ -948,7 +958,7 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 }
 
 func (c *Cluster) createEvent(name, leaderName string) {
-	c.events <- &event{name, c.sate, c.GetMyName(), leaderName}
+	c.events <- &event{name, atomic.LoadUint32(&c.sate), c.GetMyName(), leaderName}
 }
 
 func (c *Cluster) consumeEvent() {
@@ -959,63 +969,57 @@ func (c *Cluster) consumeEvent() {
 		}
 	}()
 
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		case ev := <-c.events:
-			switch ev.name {
-			case eventNameStartUp:
-				c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-			case eventNameSignFollower:
-				c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value interface{}) bool {
-					jobTracker := value.(JobTracker)
-					jobTracker.OnStartedFollowing(ev.leaderName)
-					return true
-				})
-			case eventNameSignMaster:
-				c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value interface{}) bool {
-					jobTracker := value.(JobTracker)
-					jobTracker.OnStartedLeading()
-					return true
-				})
-			case eventNameUnsignMaster:
-				c.logger.Debug("[cluster] %s unsign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value interface{}) bool {
-					jobTracker := value.(JobTracker)
-					jobTracker.OnStoppedLeading()
-					return true
-				})
-			case eventNameElectionStart:
-				c.logger.Debug("[cluster] %s election start event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-			case eventNameElectionFinish:
-				c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-			case eventNameUnsignFollower:
-				c.logger.Debug("[cluster] %s unsign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-				c.jobTrackers.Range(func(key, value interface{}) bool {
-					tracker := value.(JobTracker)
-					tracker.OnStoppedFollowing()
-					return true
-				})
-			case eventNameClose:
-				c.logger.Debug("[cluster] %s close event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
-			default:
-				c.logger.Warn("[cluster] unknown type %s event", ev.name)
-			}
+	for ev := range c.events {
+		switch ev.name {
+		case eventNameStartUp:
+			c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+		case eventNameSignFollower:
+			c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.jobTrackers.Range(func(key, value interface{}) bool {
+				jobTracker := value.(JobTracker)
+				jobTracker.OnStartedFollowing(ev.leaderName)
+				return true
+			})
+		case eventNameSignMaster:
+			c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.jobTrackers.Range(func(key, value interface{}) bool {
+				jobTracker := value.(JobTracker)
+				jobTracker.OnStartedLeading()
+				return true
+			})
+		case eventNameUnsignMaster:
+			c.logger.Debug("[cluster] %s unsign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.jobTrackers.Range(func(key, value interface{}) bool {
+				jobTracker := value.(JobTracker)
+				jobTracker.OnStoppedLeading()
+				return true
+			})
+		case eventNameElectionStart:
+			c.logger.Debug("[cluster] %s election start event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+		case eventNameElectionFinish:
+			c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+		case eventNameUnsignFollower:
+			c.logger.Debug("[cluster] %s unsign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.jobTrackers.Range(func(key, value interface{}) bool {
+				tracker := value.(JobTracker)
+				tracker.OnStoppedFollowing()
+				return true
+			})
+		case eventNameClose:
+			close(c.closeSuccess)
+			c.logger.Debug("[cluster] %s close event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+		default:
+			c.logger.Warn("[cluster] unknown type %s event", ev.name)
 		}
 	}
 }
 
-func getStatusName(s stat) string {
+func getStatusName(s uint32) string {
 	switch s {
 	case closed:
 		return "closed"
 	case _init:
 		return "init"
-	case fighting:
-		return "fighting"
 	case candidate:
 		return "candidate"
 	case follower:

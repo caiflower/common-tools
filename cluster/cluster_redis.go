@@ -34,7 +34,6 @@ func (c *Cluster) redisClusterStartUp() {
 
 func (c *Cluster) redisFighting() {
 	c.createEvent(eventNameElectionStart, "")
-	c.sate = fighting
 	defer func() {
 		c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
@@ -64,11 +63,12 @@ func (c *Cluster) redisSyncLeader() {
 		} else {
 			if c.GetLeaderName() != leaderName {
 				node := c.GetNodeByName(leaderName)
-				if node != nil {
+				if node == nil {
+					c.logger.Warn("[cluster-redis] leader node %s not found in local config", leaderName)
 					return
 				}
 
-				if c.signLeader(node, 0) && c.GetLeaderName() == c.GetMyName() {
+				if c.signLeader(node, 0) && c.IsLeader() {
 					// 看门狗续租
 					go c.redisWatchDog()
 				}

@@ -45,6 +45,9 @@ func TestRemoteCall(t *testing.T) {
 	cluster1.RegisterFunc(printData, printDataFn)
 	cluster2.RegisterFunc(printData, printDataFn)
 	cluster3.RegisterFunc(printData, printDataFn)
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
 
 	// 等待leader选出来
 	for {

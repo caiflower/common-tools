@@ -18,7 +18,6 @@ package cluster
 
 import (
 	"errors"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/cache"
 	"github.com/caiflower/common-tools/pkg/nio"
@@ -30,12 +29,12 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 	handler := &nio.Handler{}
 
 	handler.OnSessionConnected = func(session *nio.Session) {
-		c.logger.Debug("[cluster] %s OnSessionConnected, now is alive.", nodeName)
+		c.logger.Trace("[cluster] %s OnSessionConnected, now is alive.", nodeName)
 		c.aliveNodes.Store(nodeName, c.GetNodeByName(nodeName))
 	}
 
 	handler.OnSessionClosed = func(session *nio.Session) {
-		c.logger.Debug("[cluster] %s OnSessionClosed, now is lost.", nodeName)
+		c.logger.Trace("[cluster] %s OnSessionClosed, now is lost.", nodeName)
 		c.aliveNodes.Delete(nodeName)
 	}
 
@@ -48,7 +47,7 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 				c.logger.Warn("[cluster] unmarshal remoteCallMessage error: %s", err.Error())
 			}
 
-			c.logger.Debug("[cluster] remote [%s] func return", session.GetRemoteAddr())
+			c.logger.Trace("[cluster] remote [%s] func return", session.GetRemoteAddr())
 			if f, ok := cache.LocalCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
 				var _err error
 				if rcMsg.Err != nil {
@@ -209,7 +208,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 				msg.Success = false
 			} else if c.GetLeaderName() == nodeMsg.NodeName {
 				if !c.curNode.heartbeat.IsZero() {
-					c.curNode.heartbeat = time.Now()
+					c.curNode.updateHeartbeat()
 				} else {
 					msg.Success = false
 				}

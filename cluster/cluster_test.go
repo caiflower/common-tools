@@ -171,7 +171,8 @@ func TestSingleCluster(t *testing.T) {
 	})); err != nil {
 		panic(err)
 	} else {
-		cluster.Start()
+		err = cluster.Start()
+		assert.Nil(t, err)
 		time.Sleep(2 * time.Second)
 		cluster.Close()
 	}

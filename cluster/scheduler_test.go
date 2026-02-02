@@ -22,11 +22,17 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/stretchr/testify/assert"
 )
 
 type TestJobTracker struct {
-	Cluster ICluster
-	name    string
+	Cluster           ICluster
+	name              string
+	leaderName        string
+	leaderStartTime   time.Time
+	leaderEndTime     time.Time
+	followerStartTime time.Time
+	followerEndTime   time.Time
 }
 
 func (t *TestJobTracker) Name() string {
@@ -34,19 +40,20 @@ func (t *TestJobTracker) Name() string {
 }
 
 func (t *TestJobTracker) OnStartedLeading() {
-	fmt.Println("leader start")
+	t.leaderStartTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStoppedLeading() {
-	fmt.Println("leader stop")
+	t.leaderEndTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStoppedFollowing() {
-	fmt.Println("release master")
+	t.followerEndTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStartedFollowing(leaderName string) {
-	fmt.Println("new leader", leaderName)
+	t.leaderName = leaderName
+	t.followerStartTime = time.Now()
 }
 
 func TestClusterJobTracker(t *testing.T) {
@@ -65,7 +72,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8088,
 		},
 		&struct {
 			Name  string
@@ -75,7 +82,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8089,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -84,7 +91,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8090,
 		})
 
 	c2.Nodes = append(c2.Nodes,
@@ -96,7 +103,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8088,
 		},
 		&struct {
 			Name  string
@@ -106,7 +113,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8089,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -115,7 +122,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8090,
 		})
 
 	c3.Nodes = append(c3.Nodes,
@@ -127,7 +134,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8088,
 		},
 		&struct {
 			Name  string
@@ -137,7 +144,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8089,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -146,7 +153,7 @@ func TestClusterJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8090,
 		})
 
 	var t1, t2, t3 TestJobTracker
@@ -160,9 +167,10 @@ func TestClusterJobTracker(t *testing.T) {
 	}
 	t1.name = "t1"
 	t1.Cluster = cluster1
-	cluster1.AddJobTracker(&t1)
+	_ = cluster1.AddJobTracker(&t1)
 
-	cluster1.Start()
+	_ = cluster1.Start()
+	defer cluster1.Close()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -173,9 +181,10 @@ func TestClusterJobTracker(t *testing.T) {
 	}
 	t2.name = "t2"
 	t2.Cluster = cluster2
-	cluster2.AddJobTracker(&t2)
+	_ = cluster2.AddJobTracker(&t2)
 
-	cluster2.Start()
+	_ = cluster2.Start()
+	defer cluster2.Close()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -186,9 +195,10 @@ func TestClusterJobTracker(t *testing.T) {
 	}
 	t3.name = "t3"
 	t3.Cluster = cluster3
-	cluster3.AddJobTracker(&t3)
+	_ = cluster3.AddJobTracker(&t3)
 
-	cluster3.Start()
+	_ = cluster3.Start()
+	defer cluster3.Close()
 
 	for {
 		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
@@ -196,30 +206,63 @@ func TestClusterJobTracker(t *testing.T) {
 		}
 	}
 
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
+	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName())
+	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName())
+	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
+	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
+
+	judge := func(leader, f1, f2 TestJobTracker) {
+		assert.Equal(t, false, leader.leaderStartTime.IsZero())
+		assert.Equal(t, true, leader.leaderEndTime.IsZero())
+		assert.Equal(t, true, leader.followerStartTime.IsZero())
+		assert.Equal(t, true, leader.followerEndTime.IsZero())
+
+		assert.Equal(t, true, f1.leaderStartTime.IsZero())
+		assert.Equal(t, true, f1.leaderEndTime.IsZero())
+		assert.Equal(t, false, f1.followerStartTime.IsZero())
+
+		assert.Equal(t, true, f2.leaderStartTime.IsZero())
+		assert.Equal(t, true, f2.leaderEndTime.IsZero())
+		assert.Equal(t, false, f2.followerStartTime.IsZero())
+	}
 
 	switch cluster1.GetLeaderName() {
 	case "localhost1":
-		fmt.Printf("localhost1 is closed\n")
+		assert.Equal(t, t2.leaderName, "localhost1")
+		assert.Equal(t, t3.leaderName, "localhost1")
+
+		time.Sleep(5 * time.Second)
+		judge(t1, t2, t3)
+
 		cluster1.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost1 is start\n")
-		cluster1.Start()
+
+		time.Sleep(10 * time.Second)
+		assert.Equal(t, true, t1.leaderEndTime.After(t1.leaderStartTime))
+		_ = cluster1.Start()
 	case "localhost2":
-		fmt.Printf("localhost2 is closed\n")
+		assert.Equal(t, t1.leaderName, "localhost2")
+		assert.Equal(t, t3.leaderName, "localhost2")
+
+		time.Sleep(5 * time.Second)
+		judge(t2, t1, t3)
+
 		cluster2.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost2 is start\n")
-		cluster2.Start()
+
+		time.Sleep(10 * time.Second)
+		assert.Equal(t, true, t2.leaderEndTime.After(t2.leaderStartTime))
+		_ = cluster2.Start()
 	case "localhost3":
-		fmt.Printf("localhost3 is closed\n")
+		assert.Equal(t, t1.leaderName, "localhost3")
+		assert.Equal(t, t2.leaderName, "localhost3")
+
+		time.Sleep(5 * time.Second)
+		judge(t3, t1, t2)
+
 		cluster3.Close()
-		time.Sleep(20 * time.Second)
-		fmt.Printf("localhost3 is start\n")
-		cluster3.Start()
-	default:
+
+		time.Sleep(10 * time.Second)
+		assert.Equal(t, true, t3.leaderEndTime.After(t3.leaderStartTime))
+		_ = cluster3.Start()
 	}
 
 	for {
@@ -228,9 +271,10 @@ func TestClusterJobTracker(t *testing.T) {
 		}
 	}
 
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
+	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName())
+	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName())
+	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
+	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
 }
 
 type TestCaller struct {
@@ -272,7 +316,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8090,
 		},
 		&struct {
 			Name  string
@@ -282,7 +326,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8091,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -291,7 +335,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8092,
 		})
 
 	c2.Nodes = append(c2.Nodes,
@@ -303,7 +347,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8090,
 		},
 		&struct {
 			Name  string
@@ -313,7 +357,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8091,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -322,7 +366,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8092,
 		})
 
 	c3.Nodes = append(c3.Nodes,
@@ -334,7 +378,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: 8090,
 		},
 		&struct {
 			Name  string
@@ -344,7 +388,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: 8091,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -353,7 +397,7 @@ func TestDefaultJobTracker(t *testing.T) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: 8092,
 		})
 
 	testCaller1 := &TestCaller{
@@ -367,7 +411,8 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker1 := NewDefaultJobTracker(10, testCaller1)
 	_ = cluster1.AddJobTracker(tracker1)
-	cluster1.Start()
+	_ = cluster1.Start()
+	defer cluster1.Close()
 
 	testCaller2 := &TestCaller{
 		Name: "Localhost2",
@@ -380,7 +425,8 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker2 := NewDefaultJobTracker(10, testCaller2)
 	_ = cluster2.AddJobTracker(tracker2)
-	cluster2.Start()
+	_ = cluster2.Start()
+	defer cluster2.Close()
 
 	testCaller3 := &TestCaller{
 		Name: "Localhost3",
@@ -392,7 +438,8 @@ func TestDefaultJobTracker(t *testing.T) {
 	}
 	tracker3 := NewDefaultJobTracker(10, testCaller3)
 	_ = cluster3.AddJobTracker(tracker3)
-	cluster3.Start()
+	_ = cluster3.Start()
+	defer cluster3.Close()
 
 	time.Sleep(20 * time.Second)
 }
