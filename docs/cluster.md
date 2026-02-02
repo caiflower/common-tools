@@ -4,6 +4,10 @@
 
 `cluster` 包提供了一个基于 Raft 共识算法的分布式集群管理解决方案，支持主节点选举、心跳检测、远程调用和任务调度等功能。该模块可以用于构建高可用的分布式系统。
 
+## 架构图
+
+![Cluster 架构图](./images/cluster_architecture.png)
+
 ## 核心特性
 
 - **多种集群模式**：支持 `cluster`（标准集群）、`single`（单机模式）、`redis`（基于 Redis 的选主）三种模式

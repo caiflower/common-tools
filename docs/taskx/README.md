@@ -4,26 +4,30 @@
 
 taskx 是一个分布式任务调度框架，支持任务编排、依赖管理、重试机制和回滚功能。
 
-## 2. 核心概念
+## 2. 架构图
 
-### 2.1 Task（任务）
+![taskx 架构图](../images/taxkx_architecture.png)
+
+## 3. 核心概念
+
+### 3.1 Task（任务）
 - 一个完整的业务流程单元
 - 包含多个子任务（Subtask）
 - 支持任务状态管理和重试配置
 
-### 2.2 Subtask（子任务）
+### 3.2 Subtask（子任务）
 - 任务的最小执行单元
 - 支持依赖关系定义
 - 可配置重试次数和重试间隔
 
-### 2.3 Executor（执行器）
+### 3.3 Executor（执行器）
 - 任务执行逻辑的实现者
 - 分为 TaskExecutor 和 SubTaskExecutor
 - 支持回滚逻辑注册
 
-## 3. 快速开始
+## 4. 快速开始
 
-### 3.1 定义执行器
+### 4.1 定义执行器
 
 ```go
 // 定义子任务执行逻辑
@@ -50,7 +54,7 @@ func (e *MyTaskExecutor) FailedTask(data *taskx.TaskData) error {
 }
 ```
 
-### 3.2 注册执行器
+### 4.2 注册执行器
 
 ```go
 // 注册任务执行器和子任务执行器
@@ -59,7 +63,7 @@ taskx.RegisterTaskExecutor(&MyTaskExecutor{}, map[string]taskx.SubTaskExecutor{
 })
 ```
 
-### 3.3 创建并提交任务
+### 4.3 创建并提交任务
 
 ```go
 // 创建任务
@@ -79,7 +83,7 @@ if err != nil {
 }
 ```
 
-## 4. 高级功能
+## 5. 高级功能
 
 ### 4.1 任务编排
 
@@ -106,7 +110,7 @@ subtask.SetRetry(5)
 subtask.SetRetryInterval(10)
 ```
 
-### 4.3 回滚机制
+### 5.3 回滚机制
 
 ```go
 // 定义回滚逻辑
@@ -122,7 +126,7 @@ taskx.RegisterTaskExecutorWithRollback(&MyTaskExecutor{},
 )
 ```
 
-## 5. 配置参数
+## 6. 配置参数
 
 | 参数名 | 类型 | 默认值 | 描述 |
 |--------|------|--------|------|
@@ -135,7 +139,7 @@ taskx.RegisterTaskExecutorWithRollback(&MyTaskExecutor{},
 | RemoteCallTimeout | time.Duration | 3s | 远程调用超时时间 |
 | BackupTaskAge | time.Duration | 168h | 任务备份保留时间 |
 
-## 6. 任务状态
+## 7. 任务状态
 
 - **Pending**: 任务待执行
 - **Running**: 任务执行中
@@ -143,23 +147,23 @@ taskx.RegisterTaskExecutorWithRollback(&MyTaskExecutor{},
 - **Failed**: 任务失败
 - **Succeeded**: 任务成功
 
-## 7. 错误处理
+## 8. 错误处理
 
-### 7.1 可重试错误
+### 8.1 可重试错误
 
 ```go
 // 普通错误会触发重试
 return nil, fmt.Errorf("retryable error")
 ```
 
-### 7.2 不可重试错误
+### 8.2 不可重试错误
 
 ```go
 // 不可重试错误会直接标记任务失败
 return nil, taskx.ErrNonRetryable
 ```
 
-## 8. 最佳实践
+## 9. 最佳实践
 
 1. **任务拆分**：将大型任务拆分为多个子任务，提高并行度和可维护性
 2. **依赖管理**：合理定义子任务依赖关系，确保执行顺序正确
@@ -167,9 +171,9 @@ return nil, taskx.ErrNonRetryable
 4. **回滚设计**：对有状态操作实现回滚逻辑，确保数据一致性
 5. **错误处理**：合理使用可重试和不可重试错误类型
 
-## 9. API 参考
+## 10. API 参考
 
-### 9.1 Task 方法
+### 10.1 Task 方法
 
 - `NewTask(taskName string) *Task`: 创建新任务
 - `AddSubtask(subtask *Subtask) error`: 添加子任务
@@ -180,19 +184,19 @@ return nil, taskx.ErrNonRetryable
 - `SetRetryInterval(retryInterval int32) *Task`: 设置任务重试间隔
 - `SetUrgent() *Task`: 设置为紧急任务
 
-### 9.2 Subtask 方法
+### 10.2 Subtask 方法
 
 - `NewSubtask(taskName string) *Subtask`: 创建新子任务
 - `SetInput(content interface{}) *Subtask`: 设置子任务输入
 - `SetRetry(retry int8) *Subtask`: 设置重试次数
 - `SetRetryInterval(retryInterval int32) *Subtask`: 设置重试间隔
 
-### 9.3 执行器注册
+### 10.3 执行器注册
 
 - `RegisterTaskExecutor(taskExecutor TaskExecutor, subTaskExecutor map[string]SubTaskExecutor)`: 注册任务执行器
 - `RegisterTaskExecutorWithRollback(taskExecutor TaskExecutor, subtaskExecutor map[string]SubTaskExecutor, subtaskRollbackExecutor map[string]SubTaskExecutor)`: 注册带回滚的任务执行器
 
-### 9.4 任务提交
+### 10.4 任务提交
 
 - `SubmitTask(task *Task) error`: 提交任务
 - `SubmitTaskWithTx(task *Task, tx *bun.Tx) error`: 带事务提交任务
