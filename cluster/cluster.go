@@ -288,15 +288,15 @@ func (c *Cluster) Close() {
 	}
 
 	// 缩容或者重启
-	if c.enableReplicasDiscovery() && env.Kubernetes {
-		for _, v := range c.GetAliveNodeNames() {
-			if v != c.GetMyName() {
-				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second)); err != nil {
-					logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
-				}
-			}
-		}
-	}
+	//if c.enableReplicasDiscovery() && env.Kubernetes {
+	//	for _, v := range c.GetAliveNodeNames() {
+	//		if v != c.GetMyName() {
+	//			if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second)); err != nil {
+	//				logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+	//			}
+	//		}
+	//	}
+	//}
 
 	if c.cancelFunc != nil {
 		c.cancelFunc()
@@ -586,6 +586,13 @@ func (c *Cluster) listen() {
 }
 
 func (c *Cluster) fighting() {
+	c.fightingWithRetry(0)
+}
+
+func (c *Cluster) fightingWithRetry(retryCount int) {
+	const maxRetries = 10
+	const alertThreshold = 5
+	
 	defer e.OnError("cluster fighting")
 
 	if c.IsReady() || c.IsClose() {
@@ -603,14 +610,30 @@ func (c *Cluster) fighting() {
 		return
 	}
 
+	// 重试计数器监控
+	if retryCount >= alertThreshold {
+		c.logger.Warn("[cluster] high fighting retry count: %d/%d for node %s", retryCount, maxRetries, c.GetMyName())
+	}
+
 	defer func() {
 		if c.GetLeaderNode() != nil {
 			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.GetLeaderName())
 		} else {
 			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
-			c.logger.Trace("[cluster] fighting again.")
-			// 没有找到主节点，自动开启新一轮竞选
-			go c.fighting()
+			
+			// 检查重试次数限制
+			if retryCount < maxRetries && !c.IsClose() {
+				backoff := time.Duration((retryCount+1)*(retryCount+1)) * time.Second
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
+				
+				c.logger.Debug("[cluster] fighting failed, retry %d/%d after %v", retryCount+1, maxRetries, backoff)
+				time.Sleep(backoff)
+				go c.fightingWithRetry(retryCount + 1)
+			} else {
+				c.logger.Error("[cluster] fighting stopped after %d retries or cluster closed", retryCount)
+			}
 		}
 	}()
 
