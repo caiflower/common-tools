@@ -18,6 +18,7 @@ package cluster
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -32,6 +33,10 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	c2 := Config{}
 	c3 := Config{}
 
+	rand.Seed(time.Now().UnixNano())
+	port1 := rand.Intn(10000) + 8000
+	port2 := rand.Intn(10000) + 8000
+	port3 := rand.Intn(10000) + 8000
 	c1.Nodes = append(c1.Nodes,
 		&struct {
 			Name  string
@@ -41,7 +46,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -51,7 +56,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -60,7 +65,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c2.Nodes = append(c2.Nodes,
@@ -72,7 +77,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -82,7 +87,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -91,7 +96,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c3.Nodes = append(c3.Nodes,
@@ -103,7 +108,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -113,7 +118,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -122,44 +127,33 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c1.Nodes[0].Local = true
 	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
-		Level: "DebugLevel",
+		Level: "DEBUG",
 	}))
 	if err != nil {
 		panic(err)
 	}
-
-	go cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
-		Level: "DebugLevel",
+		Level: "DEBUG",
 	}))
 	if err != nil {
 		panic(err)
 	}
-
-	go cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
-		Level: "DebugLevel",
+		Level: "DEBUG",
 	}))
 	if err != nil {
 		panic(err)
 	}
 
-	go cluster3.Start()
-
-	time.Sleep(10 * time.Second)
-
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster1.GetMyName(), cluster1.GetMyTerm(), cluster1.GetLeaderName(), cluster1.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster2.GetMyName(), cluster1.GetMyTerm(), cluster2.GetLeaderName(), cluster2.IsReady())
-	fmt.Printf("clusterName: %s term:%d leader: %s isready: %v\n", cluster3.GetMyName(), cluster1.GetMyTerm(), cluster3.GetLeaderName(), cluster3.IsReady())
 	return cluster1, cluster2, cluster3
 }
 
@@ -298,7 +292,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster1.Redis = redisClient
-	go cluster1.Start()
+	_ = cluster1.Start()
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
@@ -309,7 +303,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster2.Redis = redisClient
-	go cluster2.Start()
+	_ = cluster2.Start()
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
@@ -320,7 +314,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	}
 
 	cluster3.Redis = redisClient
-	go cluster3.Start()
+	_ = cluster3.Start()
 
 	time.Sleep(10 * time.Second)
 
@@ -337,4 +331,54 @@ func TestDisable(t *testing.T) {
 	err = c.Start()
 	assert.Nil(t, err, "start cluster err expected nil")
 	c.Close()
+}
+
+func TestMockApplication(t *testing.T) {
+	cluster1, cluster2, cluster3 := common()
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+
+	waitForReady := func(c1, c2 *Cluster) {
+		for {
+			if c1.IsReady() && c2.IsReady() {
+				break
+			}
+		}
+		assert.Equal(t, true, c1.GetLeaderName() == c2.GetLeaderName())
+		assert.Equal(t, true, c1.GetMyTerm() == c2.GetMyTerm())
+	}
+
+	if cluster1.IsLeader() {
+		cluster1.Close()
+		waitForReady(cluster2, cluster3)
+		_ = cluster1.Start()
+	} else if cluster2.IsLeader() {
+		cluster2.Close()
+		waitForReady(cluster1, cluster3)
+		_ = cluster2.Start()
+	} else {
+		cluster3.Close()
+		waitForReady(cluster1, cluster2)
+		_ = cluster3.Start()
+	}
+
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+}
+
+func waitAllForReady(t *testing.T, cluster1, cluster2, cluster3 *Cluster) {
+	for {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
+
+	assert.Equal(t, true, cluster1.GetLeaderName() == cluster2.GetLeaderName())
+	assert.Equal(t, true, cluster1.GetLeaderName() == cluster3.GetLeaderName())
+	assert.Equal(t, true, cluster1.GetMyTerm() == cluster2.GetMyTerm())
+	assert.Equal(t, true, cluster1.GetMyTerm() == cluster3.GetMyTerm())
 }

@@ -45,16 +45,14 @@ func TestRemoteCall(t *testing.T) {
 	cluster1.RegisterFunc(printData, printDataFn)
 	cluster2.RegisterFunc(printData, printDataFn)
 	cluster3.RegisterFunc(printData, printDataFn)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
 	defer cluster1.Close()
 	defer cluster2.Close()
 	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
 
-	// 等待leader选出来
-	for {
-		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
-			break
-		}
-	}
 	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName(), "leader must same")
 	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName(), "leader must same")
 

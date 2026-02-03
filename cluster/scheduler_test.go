@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -57,154 +56,26 @@ func (t *TestJobTracker) OnStartedFollowing(leaderName string) {
 }
 
 func TestClusterJobTracker(t *testing.T) {
-	var cluster1, cluster2, cluster3 *Cluster
-
-	c1 := Config{Enable: "true"}
-	c2 := Config{Enable: "true"}
-	c3 := Config{Enable: "true"}
-
-	c1.Nodes = append(c1.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8088,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8089,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8090,
-		})
-
-	c2.Nodes = append(c2.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8088,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8089,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8090,
-		})
-
-	c3.Nodes = append(c3.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8088,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8089,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8090,
-		})
+	cluster1, cluster2, cluster3 := common()
 
 	var t1, t2, t3 TestJobTracker
-
-	c1.Nodes[0].Local = true
-	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
-		Level: "INFO",
-	}))
-	if err != nil {
-		panic(err)
-	}
 	t1.name = "t1"
 	t1.Cluster = cluster1
 	_ = cluster1.AddJobTracker(&t1)
-
-	_ = cluster1.Start()
-	defer cluster1.Close()
-
-	c2.Nodes[1].Local = true
-	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
-		Level: "INFO",
-	}))
-	if err != nil {
-		panic(err)
-	}
 	t2.name = "t2"
 	t2.Cluster = cluster2
 	_ = cluster2.AddJobTracker(&t2)
-
-	_ = cluster2.Start()
-	defer cluster2.Close()
-
-	c3.Nodes[2].Local = true
-	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
-		Level: "INFO",
-	}))
-	if err != nil {
-		panic(err)
-	}
 	t3.name = "t3"
 	t3.Cluster = cluster3
 	_ = cluster3.AddJobTracker(&t3)
 
+	_ = cluster1.Start()
+	_ = cluster2.Start()
 	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
 	defer cluster3.Close()
-
-	for {
-		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
-			break
-		}
-	}
+	waitAllForReady(t, cluster1, cluster2, cluster3)
 
 	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName())
 	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName())
@@ -303,143 +174,28 @@ func (t *TestCaller) SlaverCall(leaderName string) {
 }
 
 func TestDefaultJobTracker(t *testing.T) {
-	c1 := Config{Enable: "true"}
-	c2 := Config{Enable: "true"}
-	c3 := Config{Enable: "true"}
-
-	c1.Nodes = append(c1.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8090,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8091,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8092,
-		})
-
-	c2.Nodes = append(c2.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8090,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8091,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8092,
-		})
-
-	c3.Nodes = append(c3.Nodes,
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost1",
-			Port: 8090,
-		},
-		&struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost2",
-			Port: 8091,
-		}, &struct {
-			Name  string
-			Ip    string
-			Port  int
-			Local bool
-		}{
-			Ip:   "127.0.0.1",
-			Name: "localhost3",
-			Port: 8092,
-		})
-
+	cluster1, cluster2, cluster3 := common()
 	testCaller1 := &TestCaller{
 		Name: "Localhost1",
 	}
-	c1.Nodes[0].Local = true
-
-	cluster1, err := NewCluster(c1)
-	if err != nil {
-		panic(err)
-	}
 	tracker1 := NewDefaultJobTracker(10, testCaller1)
 	_ = cluster1.AddJobTracker(tracker1)
-	_ = cluster1.Start()
-	defer cluster1.Close()
-
 	testCaller2 := &TestCaller{
 		Name: "Localhost2",
 	}
-	c2.Nodes[1].Local = true
-
-	cluster2, err := NewCluster(c2)
-	if err != nil {
-		panic(err)
-	}
 	tracker2 := NewDefaultJobTracker(10, testCaller2)
 	_ = cluster2.AddJobTracker(tracker2)
-	_ = cluster2.Start()
-	defer cluster2.Close()
-
 	testCaller3 := &TestCaller{
 		Name: "Localhost3",
 	}
-	c3.Nodes[2].Local = true
-	cluster3, err := NewCluster(c3)
-	if err != nil {
-		panic(err)
-	}
 	tracker3 := NewDefaultJobTracker(10, testCaller3)
 	_ = cluster3.AddJobTracker(tracker3)
-	_ = cluster3.Start()
-	defer cluster3.Close()
 
-	time.Sleep(20 * time.Second)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
 }
