@@ -704,11 +704,11 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		quorum := c.getQuorum()
 		logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
-		if count >= quorum { // 使用多数原则，防止脑裂
+		if count >= quorum {
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
 			if len(messages) < quorum {
-				// 再问一遍
-				continue
+				// 跳过
+				break
 			}
 
 			leaderNode := ""
@@ -805,7 +805,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			if votesCount >= quorum {
 				// 开始广播自己为 leader
 				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				if len(messages1) < quorum {
+				if len(messages1)+1 < quorum { // +1是包括了自己
 					logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
 					return
 				}
@@ -900,6 +900,10 @@ func (c *Cluster) heartbeat() {
 					c.logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
 					go c.fighting()
 				}
+			}
+
+			if c.needReconnect() {
+				c.reconnect()
 			}
 		}
 	}
