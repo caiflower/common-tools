@@ -25,16 +25,22 @@ import (
 )
 
 type Node struct {
-	address    string      // 节点通信地址, ip:port
-	name       string      // 节点名称
-	connection nio.IClient // 连接
-	heartbeat  time.Time   // 主节点发送给自己的心跳时间
+	address           string      // 节点通信地址, ip:port
+	name              string      // 节点名称
+	connection        nio.IClient // 连接
+	heartbeat         time.Time   // 主节点发送给自己的心跳时间
+	lastHeartbeatOk   bool        // 上次心跳是否成功
+	heartbeatFailures int         // 心跳失败次数统计
+	heartbeatInterval float64
 }
 
-func newNode(address, name string) *Node {
+func newNode(address, name string, heartbeatInterval float64) *Node {
 	return &Node{
-		address: address,
-		name:    name,
+		address:           address,
+		name:              name,
+		lastHeartbeatOk:   true,
+		heartbeatFailures: 0,
+		heartbeatInterval: heartbeatInterval,
 	}
 }
 
@@ -44,6 +50,45 @@ func (n *Node) clean() {
 
 func (n *Node) updateHeartbeat() {
 	n.heartbeat = time.Now()
+	n.lastHeartbeatOk = true
+	n.heartbeatFailures = 0
+}
+
+// 更新心跳失败状态
+func (n *Node) updateHeartbeatFailed() {
+	n.lastHeartbeatOk = false
+	n.heartbeatFailures++
+}
+
+// 获取节点健康评分 (0-100)
+func (n *Node) getHealthScore() int {
+	if n.heartbeat.IsZero() {
+		return 0
+	}
+
+	// 基础分数：基于时间的新鲜度
+	age := time.Since(n.heartbeat).Seconds() - n.heartbeatInterval
+	timeScore := 100 - int(age*10)
+	if timeScore < 0 {
+		timeScore = 0
+	}
+
+	if n.connection != nil && n.lastHeartbeatOk {
+		timeScore += 20
+	}
+
+	// 失败次数扣分
+	failurePenalty := n.heartbeatFailures * 15
+	timeScore -= failurePenalty
+
+	if timeScore < 0 {
+		timeScore = 0
+	}
+	if timeScore > 100 {
+		timeScore = 100
+	}
+
+	return timeScore
 }
 
 func (n *Node) SendMessage(flag uint8, data interface{}) error {

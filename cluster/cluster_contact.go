@@ -77,17 +77,29 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 
 		switch message.Flag() {
 		case messageAskLeaderRes:
-			c.logger.Debug("[cluster] messageAskLeaderRes nodeName=%s, get leaderNode=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
+			c.logger.Trace("[cluster] messageAskLeaderRes nodeName=%s, get leaderNode=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
 			c.msgChan <- nodeMsg
 		case messageAskVoteRes:
-			c.logger.Debug("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for '%s'", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
+			c.logger.Trace("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for '%s'", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
 			c.msgChan <- nodeMsg
 		case messageBroadcastLeaderRes:
 			if nodeMsg.Success {
-				c.logger.Debug("[cluster] messageBroadcastLeaderRes nodeName=%s, leaderName=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
+				c.logger.Trace("[cluster] messageBroadcastLeaderRes nodeName=%s, leaderName=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
 			}
 			c.msgChan <- nodeMsg
 		case messageHeartbeatRes:
+			if senderNode := c.GetNodeByName(nodeMsg.NodeName); senderNode != nil {
+				if nodeMsg.Success {
+					senderNode.updateHeartbeat()
+				} else if nodeMsg.LeaderNodeName != "" && nodeMsg.LeaderNodeName != c.GetLeaderName() {
+					senderNode.lastHeartbeatOk = true
+					senderNode.heartbeatFailures = 0
+					c.logger.Debug("[cluster] heartbeat from %s, leader changed from %s to %s",
+						nodeMsg.NodeName, c.GetLeaderName(), nodeMsg.LeaderNodeName)
+				} else {
+					senderNode.updateHeartbeatFailed()
+				}
+			}
 			c.msgChan <- nodeMsg
 		default:
 			c.logger.Warn("[cluster] unknown message type: %s", message.Flag())
@@ -123,7 +135,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg.Param = f.param
 			msg.Sync = f.sync
 
-			c.logger.Debug("[cluster] '%s' exec remote func", c.GetMyName())
+			c.logger.Trace("[cluster] '%s' exec remote func", c.GetMyName())
 			c.callLocalFunc(f)
 			msg.Result = f.result
 			msg.Err = f.err
@@ -170,7 +182,9 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 
 			if !c.IsReady() || nodeMsg.Term > c.GetMyTerm() {
 				c.releaseLeader()
-				c.logger.Info("[cluster] accept term %d ask vote req, releaseLeader finished.", nodeMsg.Term)
+				c.logger.Info("[cluster] cluster status %v,accept term %d ask vote req, releaseLeader finished.", c.IsReady(), nodeMsg.Term)
+			} else {
+				msg.Success = false
 			}
 			c.logger.Info("[cluster] accept term %d ask vote req from '%s', vote for '%s'.", nodeMsg.Term, nodeMsg.NodeName, msg.VoteNodeName)
 
@@ -193,7 +207,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 				}
 			}
 
-			c.logger.Debug("[cluster] accept broadcast from '%s', success '%v'.", nodeMsg.NodeName, msg.Success)
+			c.logger.Trace("[cluster] accept broadcast from '%s', success '%v'.", nodeMsg.NodeName, msg.Success)
 			if err := session.WriteMsg(nio.NewMsg(messageBroadcastLeaderRes, msg)); err != nil {
 				c.logger.Warn("[cluster] write msg error: %s", err.Error())
 			}
@@ -201,17 +215,17 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			msg := new(Message)
 			msg.NodeName = c.GetMyName()
 			msg.Term = nodeMsg.Term
-			msg.Success = true
+			msg.LeaderNodeName = c.GetLeaderName()
 
 			if c.GetMyTerm() > nodeMsg.Term {
 				msg.Term = c.GetMyTerm()
 				msg.Success = false
-			} else if c.GetLeaderName() == nodeMsg.NodeName {
-				if !c.curNode.heartbeat.IsZero() {
-					c.curNode.updateHeartbeat()
-				} else {
-					msg.Success = false
-				}
+			} else if c.GetLeaderName() != nodeMsg.NodeName {
+				msg.Success = false
+				c.logger.Debug("[cluster] heartbeat from %s, but leader is now %s", nodeMsg.NodeName, c.GetLeaderName())
+			} else {
+				msg.Success = true
+				c.curNode.updateHeartbeat()
 			}
 
 			if err := session.WriteMsg(nio.NewMsg(messageHeartbeatRes, msg)); err != nil {

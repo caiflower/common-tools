@@ -84,9 +84,9 @@ const (
 )
 
 type Config struct {
-	Mode    string `yaml:"mode" default:"cluster" json:"mode"`
-	Timeout int    `yaml:"timeout" default:"10" json:"timeout"`
-	Enable  string `yaml:"enable" default:"true" json:"enable"`
+	Mode    string        `yaml:"mode" default:"cluster" json:"mode"`
+	Timeout time.Duration `yaml:"timeout" default:"10s" json:"timeout"`
+	Enable  string        `yaml:"enable" default:"true" json:"enable"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string
@@ -140,9 +140,6 @@ type Cluster struct {
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
-	if config.Timeout <= 0 {
-		config.Timeout = 10
-	}
 	if logger == nil {
 		return nil, errors.New("logger required")
 	}
@@ -346,9 +343,52 @@ func (c *Cluster) IsReady() bool {
 	case modeCluster:
 		fallthrough
 	default:
-		return sate == leader || (sate == follower && c.curNode.heartbeat.Add(time.Duration(c.config.Timeout)*time.Second).After(time.Now()))
+		return sate == leader || (sate == follower && c.isNodeHealthy(c.curNode))
 	}
 }
+
+// 增强的节点健康检查
+func (c *Cluster) isNodeHealthy(node *Node) bool {
+	if node == nil || node.heartbeat.IsZero() {
+		return false
+	}
+
+	if !node.heartbeat.Add(c.config.Timeout).After(time.Now()) {
+		return false
+	}
+
+	if node.getHealthScore() < 30 {
+		return false
+	}
+
+	// 检查连续失败次数
+	if node.heartbeatFailures > 3 {
+		return false
+	}
+
+	return true
+}
+
+// 获取节点健康状态详情
+//func (c *Cluster) getNodeHealthStatus(nodeName string) map[string]interface{} {
+//	node := c.GetNodeByName(nodeName)
+//	if node == nil {
+//		return map[string]interface{}{
+//			"healthy": false,
+//			"reason":  "node not found",
+//		}
+//	}
+//
+//	return map[string]interface{}{
+//		"healthy":       c.isNodeHealthy(node),
+//		"healthScore":   node.getHealthScore(),
+//		"lastHeartbeat": node.heartbeat.Format("2006-01-02 15:04:05"),
+//		"failures":      node.heartbeatFailures,
+//		"lastOk":        node.lastHeartbeatOk,
+//		"ageSeconds":    int(time.Since(node.heartbeat).Seconds()),
+//		"hasConnection": node.connection != nil,
+//	}
+//}
 
 func (c *Cluster) IsLeader() bool {
 	return atomic.LoadUint32(&c.sate) == leader
@@ -469,16 +509,6 @@ func (c *Cluster) loadNodes() {
 		c.allNode.Delete(key)
 	}
 
-	for _, n := range c.config.Nodes {
-		node := newNode(n.Ip+":"+strconv.Itoa(n.Port), n.Name)
-		c.allNode.Store(n.Name, node)
-
-		// 如果开启了调试
-		if n.Local {
-			c.curNode = node
-		}
-	}
-
 	var addresses []string
 	replicasDiscovery := &c.config.ReplicasDiscovery
 	if c.enableReplicasDiscovery() {
@@ -488,9 +518,21 @@ func (c *Cluster) loadNodes() {
 		for i := 0; i < replicasDiscovery.Replicas; i++ {
 			domain := strings.Replace(replicasDiscovery.DomainPatten, "{suf}", strconv.Itoa(i), 1)
 			address := fmt.Sprintf("%s:%d", domain, replicasDiscovery.Port)
-			node := newNode(address, domain)
+			node := newNode(address, domain, c.config.Timeout.Seconds()/3)
 			c.allNode.Store(domain, node)
 			addresses = append(addresses, address)
+		}
+	} else {
+		for _, n := range c.config.Nodes {
+			address := n.Ip + ":" + strconv.Itoa(n.Port)
+			node := newNode(address, n.Name, c.config.Timeout.Seconds()/3)
+			c.allNode.Store(n.Name, node)
+			addresses = append(addresses, address)
+
+			// debug
+			if n.Local {
+				c.curNode = node
+			}
 		}
 	}
 
@@ -519,7 +561,7 @@ func (c *Cluster) getQuorum() int {
 func (c *Cluster) findCurNode() {
 	if c.curNode == nil { // 说明没有开启调试
 		if c.config.Mode == modeSingle {
-			c.curNode = newNode("127.0.0.1:10000", "single")
+			c.curNode = newNode("127.0.0.1:10000", "single", c.config.Timeout.Seconds()/3)
 		} else {
 			dns := env.GetLocalDNS()
 			ip := env.GetLocalHostIP()
@@ -592,7 +634,7 @@ func (c *Cluster) fighting() {
 func (c *Cluster) fightingWithRetry(retryCount int) {
 	const maxRetries = 10
 	const alertThreshold = 5
-	
+
 	defer e.OnError("cluster fighting")
 
 	if c.IsReady() || c.IsClose() {
@@ -620,14 +662,14 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.GetLeaderName())
 		} else {
 			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
-			
+
 			// 检查重试次数限制
 			if retryCount < maxRetries && !c.IsClose() {
 				backoff := time.Duration((retryCount+1)*(retryCount+1)) * time.Second
 				if backoff > 30*time.Second {
 					backoff = 30 * time.Second
 				}
-				
+
 				c.logger.Debug("[cluster] fighting failed, retry %d/%d after %v", retryCount+1, maxRetries, backoff)
 				time.Sleep(backoff)
 				go c.fightingWithRetry(retryCount + 1)
@@ -754,7 +796,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			votesCount := 1
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskVoteReq, &Message{NodeName: myNodeName, Term: nextTerm})
 			for _, message := range messages {
-				if message.VoteNodeName == myNodeName {
+				if message.Success && message.VoteNodeName == myNodeName {
 					votesCount++
 				}
 			}
@@ -799,22 +841,35 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 func (c *Cluster) heartbeat() {
 	defer e.OnError("cluster heartbeat")
 
-	ticker := time.NewTicker(time.Second * time.Duration(c.config.Timeout/4))
+	// 使用 backoff 策略调整心跳间隔
+	ticker := time.NewTicker(c.calculateHeartbeatInterval())
 	defer ticker.Stop()
+
+	consecutiveFailures := 0
+	maxConsecutiveFailures := 3
+
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
 			if c.IsLeader() {
-				c.logger.Debug("[cluster] leader %s send heartbeat.", c.GetMyName())
+				c.logger.Trace("[cluster] leader %s send heartbeat.", c.GetMyName())
 				// 向所有follower节点发送心跳
-				messages := c.sendMsgWhitTimeout(2*time.Second, messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
+				messages := c.sendMsgWithBackoffTimeout(messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
+
 				quorum := c.getQuorum()
 				leastCnt := quorum - 1 // 去掉自己，需要收到至少 quorum-1 个其他节点的响应
+
 				if len(messages) < leastCnt {
-					c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", len(messages), leastCnt, c.GetMyName())
-					c.releaseWithNodeName(c.GetMyName())
+					consecutiveFailures++
+					c.logger.Warn("[cluster] heartbeat response insufficient: %d/%d, consecutive failures: %d", len(messages), leastCnt, consecutiveFailures)
+
+					if consecutiveFailures >= maxConsecutiveFailures {
+						c.logger.Info("[cluster] too many consecutive heartbeat failures, releaseLeader %s", c.GetMyName())
+						c.releaseWithNodeName(c.GetMyName())
+						consecutiveFailures = 0
+					}
 				} else {
 					success := 0
 					for _, message := range messages {
@@ -822,11 +877,23 @@ func (c *Cluster) heartbeat() {
 							success++
 						}
 					}
+
 					if success < leastCnt {
-						c.logger.Info("[cluster] heartbeat len: %d, but least need: %d, releaseLeader %s", success, leastCnt, c.GetMyName())
-						c.releaseWithNodeName(c.GetMyName())
+						consecutiveFailures++
+						c.logger.Warn("[cluster] heartbeat success rate low: %d/%d, consecutive failures: %d", success, leastCnt, consecutiveFailures)
+
+						if consecutiveFailures >= maxConsecutiveFailures {
+							c.logger.Info("[cluster] heartbeat success rate too low, releaseLeader %s", c.GetMyName())
+							c.releaseWithNodeName(c.GetMyName())
+							consecutiveFailures = 0
+						}
+					} else {
+						consecutiveFailures = 0
+						c.logger.Trace("[cluster] heartbeat successful: %d/%d responses", success, len(messages))
 					}
 				}
+
+				ticker.Reset(c.calculateHeartbeatInterval())
 			} else if c.IsFollower() {
 				// 如果集群不就绪
 				if !c.IsReady() || c.GetLeaderNode() == nil {
@@ -836,6 +903,92 @@ func (c *Cluster) heartbeat() {
 			}
 		}
 	}
+}
+
+func (c *Cluster) sendMsgWithBackoffTimeout(flag uint8, msg *Message) []*Message {
+	baseTimeout := 2 * time.Second
+
+	unhealthyNodes := 0
+	totalNodes := 0
+
+	c.aliveNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		if node.name != c.GetMyName() {
+			totalNodes++
+			if node.getHealthScore() < 30 {
+				unhealthyNodes++
+			}
+		}
+		return true
+	})
+
+	// 如果有不健康的节点，增加超时时间
+	if unhealthyNodes > 0 && totalNodes > 0 {
+		timeoutMultiplier := 1.0 + (float64(unhealthyNodes)/float64(totalNodes))*2.0
+		baseTimeout = time.Duration(float64(baseTimeout) * timeoutMultiplier)
+		maxTime := c.config.Timeout
+		if baseTimeout > maxTime {
+			baseTimeout = maxTime
+		}
+	}
+
+	messages := c.sendMsgWhitTimeout(baseTimeout, flag, msg)
+	if len(messages) != c.GetAllNodeCount() {
+		c.allNode.Range(func(key, value interface{}) bool {
+			find := false
+			for _, message := range messages {
+				if message.NodeName == key {
+					find = true
+					break
+				}
+			}
+
+			node := value.(*Node)
+			if !find && node.name != c.GetMyName() {
+				c.logger.Warn("[cluster] send message to %s failed, node %s maybe is not alive.", node.name, node.name)
+				node.updateHeartbeatFailed()
+			}
+
+			return true
+		})
+	}
+
+	return messages
+}
+
+// 动态计算心跳间隔
+func (c *Cluster) calculateHeartbeatInterval() time.Duration {
+	baseInterval := c.config.Timeout / 3
+
+	// 检查集群整体健康状况
+	unhealthyCount := 0
+	totalCount := 0
+
+	c.aliveNodes.Range(func(key, value interface{}) bool {
+		node := value.(*Node)
+		totalCount++
+		if node.name != c.GetMyName() && node.getHealthScore() < 30 {
+			unhealthyCount++
+		}
+		return true
+	})
+
+	if unhealthyCount > 0 && totalCount > 0 {
+		adjustmentFactor := 1.0 + (float64(unhealthyCount)/float64(totalCount))*1.5
+		adjustedInterval := time.Duration(float64(baseInterval) * adjustmentFactor)
+
+		maxTime := c.config.Timeout
+		if adjustedInterval > maxTime {
+			adjustedInterval = maxTime
+		}
+
+		c.logger.Debug("[cluster] adjusted heartbeat interval to %v due to %d/%d unhealthy nodes",
+			adjustedInterval, unhealthyCount, totalCount)
+
+		return adjustedInterval
+	}
+
+	return baseInterval
 }
 
 func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
