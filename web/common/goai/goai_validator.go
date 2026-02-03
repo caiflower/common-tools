@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 type Validator interface {
@@ -581,7 +582,7 @@ func valueLen(v reflect.Value) (int, bool) {
 	}
 	switch v.Kind() {
 	case reflect.String:
-		return len(v.String()), true
+		return utf8.RuneCountInString(v.String()), true
 	case reflect.Slice, reflect.Array:
 		if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 {
 			return v.Len(), true
@@ -589,7 +590,7 @@ func valueLen(v reflect.Value) (int, bool) {
 		if v.Type().Elem().Kind() == reflect.String {
 			total := 0
 			for i := 0; i < v.Len(); i++ {
-				total += len(v.Index(i).String())
+				total += utf8.RuneCountInString(v.Index(i).String())
 			}
 			return total, true
 		}

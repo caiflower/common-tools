@@ -201,3 +201,106 @@ func BenchmarkValidate_RecomputeIndexes(b *testing.B) {
 		}
 	}
 }
+
+type chineseValidate struct {
+	Name     string   `json:"name" verf:"required|len:2,10"`
+	Nickname string   `json:"nickname" verf:"len:1,5"`
+	Tags     []string `json:"tags" verf:"itemLen:2,4"`
+}
+
+func TestValidate_Chinese(t *testing.T) {
+	t.Run("chinese string length validation", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三",
+			Nickname: "小明",
+		}
+
+		err := oai.Validate(&target)
+		assert.NoError(t, err)
+	})
+
+	t.Run("chinese string too short", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张",
+			Nickname: "小",
+		}
+
+		err := oai.Validate(&target)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chineseValidate.Name len is less than 2")
+	})
+
+	t.Run("chinese string too long", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三李四王五赵六王九七",
+			Nickname: "小明",
+		}
+
+		err := oai.Validate(&target)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chineseValidate.Name len is greater than 10")
+	})
+
+	t.Run("mixed chinese and english", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "Tom张三",
+			Nickname: "小明",
+		}
+
+		err := oai.Validate(&target)
+		assert.NoError(t, err)
+	})
+
+	t.Run("chinese string slice itemLen validation", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三",
+			Nickname: "明",
+			Tags:     []string{"标签", "测试"},
+		}
+
+		err := oai.Validate(&target)
+		assert.NoError(t, err)
+	})
+
+	t.Run("chinese string slice item too short", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三",
+			Nickname: "小明",
+			Tags:     []string{"标", "测试"},
+		}
+
+		err := oai.Validate(&target)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chineseValidate.Tags[0] len is less than 2")
+	})
+
+	t.Run("chinese string slice item too long", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三",
+			Nickname: "小明",
+			Tags:     []string{"标签测试一", "测试"},
+		}
+
+		err := oai.Validate(&target)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "chineseValidate.Tags[0] len is greater than 4")
+	})
+
+	t.Run("chinese characters count vs bytes", func(t *testing.T) {
+		oai := New()
+		target := chineseValidate{
+			Name:     "张三李四王五赵六王九",
+			Nickname: "小明李四王",
+		}
+
+		err := oai.Validate(&target)
+		assert.NoError(t, err)
+	})
+}
