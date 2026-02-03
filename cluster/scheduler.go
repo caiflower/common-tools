@@ -122,7 +122,6 @@ func (t *DefaultJobTracker) OnStoppedLeading() {
 
 	if t.leaderCancel != nil {
 		t.leaderCancel()
-		t.leaderCancel = nil
 	}
 	for _, caller := range t.callers {
 		go caller.OnStoppedLeading()
@@ -136,7 +135,6 @@ func (t *DefaultJobTracker) OnStoppedFollowing() {
 
 	if t.workerCancel != nil {
 		t.workerCancel()
-		t.workerCancel = nil
 	}
 	for _, caller := range t.callers {
 		go caller.OnStoppedFollowing()
@@ -177,11 +175,9 @@ func (t *DefaultJobTracker) Close() {
 
 	if t.leaderCancel != nil {
 		t.leaderCancel()
-		t.leaderCancel = nil
 	}
 	if t.workerCancel != nil {
 		t.workerCancel()
-		t.workerCancel = nil
 	}
 
 	logger.Info("[DefaultJobTracker] close success.")
