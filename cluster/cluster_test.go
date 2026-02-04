@@ -344,20 +344,16 @@ func TestMockApplication(t *testing.T) {
 	defer cluster3.Close()
 
 	waitForReady := func(c1, c2 *Cluster) {
-		for {
-			if c1.IsReady() && c2.IsReady() {
-				break
-			}
+		for !c1.IsReady() || !c2.IsReady() {
+			time.Sleep(200 * time.Microsecond)
 		}
 		assert.Equal(t, true, c1.GetLeaderName() == c2.GetLeaderName())
 		assert.Equal(t, true, c1.GetMyTerm() == c2.GetMyTerm())
 	}
 
 	waitNextTerm := func(oldTerm int, c1, c2 *Cluster) {
-		for {
-			if c1.GetMyTerm() > oldTerm || c2.GetMyTerm() > oldTerm {
-				break
-			}
+		for c1.GetMyTerm() <= oldTerm || c2.GetMyTerm() <= oldTerm {
+			time.Sleep(200 * time.Microsecond)
 		}
 	}
 

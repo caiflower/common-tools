@@ -79,11 +79,9 @@ func (c *Cluster) redisSyncLeader() {
 	job := crontab.NewRegularJob("redisSyncLeader", fn, crontab.WithInterval(c.config.RedisDiscovery.SyncLeaderInterval), crontab.WithImmediately())
 	job.Run()
 
-	select {
-	case <-c.ctx.Done():
-		c.logger.Info("[cluster-redis] stop sync leader")
-		job.Stop()
-	}
+	<-c.ctx.Done()
+	c.logger.Info("[cluster-redis] stop sync leader")
+	job.Stop()
 }
 
 func (c *Cluster) redisWatchDog() {
@@ -114,9 +112,7 @@ func (c *Cluster) redisWatchDog() {
 	job := crontab.NewRegularJob("redisWatchDog", fn, crontab.WithInterval(c.config.RedisDiscovery.ElectionInterval), crontab.WithImmediately())
 	job.Run()
 
-	select {
-	case <-ctx.Done():
-		c.logger.Info("[cluster-redis] stop redis watch dog")
-		job.Stop()
-	}
+	<-ctx.Done()
+	c.logger.Info("[cluster-redis] stop redis watch dog")
+	job.Stop()
 }

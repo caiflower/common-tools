@@ -724,7 +724,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			if leaderNode != "" {
 				var node *Node
 				if v, ok := c.aliveNodes.Load(leaderNode); ok {
-					node, ok = v.(*Node)
+					node = v.(*Node)
 				} else if leaderNode == c.curNode.name {
 					node = c.curNode
 				}
@@ -812,7 +812,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 				success := true
 				for _, message := range messages1 {
-					if message.Success == false {
+					if !message.Success {
 						success = false
 					}
 				}
@@ -1284,7 +1284,7 @@ func (c *Cluster) reloadAllNodes(data interface{}) (interface{}, error) {
 		err := tools.Unmarshal([]byte(tools.ToJson(data)), &c.config.ReplicasDiscovery.Replicas)
 		if err != nil {
 			c.logger.Error("[cluster] reloadAllNodes failed. Error: %v", err)
-			return nil, errors.New(fmt.Sprintf("%s reloadAllNodes failed", c.GetMyName()))
+			return nil, fmt.Errorf("%s reloadAllNodes failed", c.GetMyName())
 		}
 	}
 

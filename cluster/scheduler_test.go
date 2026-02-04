@@ -136,10 +136,8 @@ func TestClusterJobTracker(t *testing.T) {
 		_ = cluster3.Start()
 	}
 
-	for {
-		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
-			break
-		}
+	for !cluster1.IsReady() || !cluster2.IsReady() || !cluster3.IsReady() {
+		time.Sleep(200 * time.Microsecond)
 	}
 
 	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName())

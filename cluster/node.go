@@ -17,7 +17,6 @@
 package cluster
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -93,7 +92,7 @@ func (n *Node) getHealthScore() int {
 
 func (n *Node) SendMessage(flag uint8, data interface{}) error {
 	if n.connection == nil {
-		return errors.New(fmt.Sprintf("Connection for cluster node %s is not ready.", n.name))
+		return fmt.Errorf("connection for cluster node %s is not ready", n.name)
 	}
 	if err := n.connection.Write(flag, data); err != nil {
 		return err
