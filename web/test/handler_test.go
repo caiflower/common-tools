@@ -809,7 +809,7 @@ func BenchmarkHandler(b *testing.B) {
 		b.Fatalf("Failed to marshal request body: %v", err)
 	}
 
-	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+	fn := func(tc testCase, handler *router.Handler) {
 		// 创建HTTP请求
 		var code int
 		var res []byte
@@ -843,7 +843,7 @@ func BenchmarkHandler(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		fn(casetest, handler, true)
+		fn(casetest, handler)
 	}
 }
 
@@ -901,7 +901,7 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 	ctx.Request.Header.Add("X-Request-Id", requestId)
 	ctx.SetPath(ctx.Request.URI().Path())
 
-	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+	fn := func(tc testCase, handler *router.Handler) {
 		ctx.Response.Reset()
 		handler.Serve(ctx)
 		code := ctx.Response.StatusCode()
@@ -928,7 +928,7 @@ func BenchmarkHandlerOptimization(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		fn(casetest, handler, false)
+		fn(casetest, handler)
 	}
 }
 
@@ -970,7 +970,7 @@ func BenchmarkGrpcMod(b *testing.B) {
 	ctx.Request.Header.Add("X-Request-Id", requestId)
 	ctx.SetPath(ctx.Request.URI().Path())
 
-	fn := func(tc testCase, handler *router.Handler, disableOptimization bool) {
+	fn := func(tc testCase, handler *router.Handler) {
 		ctx.Response.Reset()
 		handler.Serve(ctx)
 		code := ctx.Response.StatusCode()
@@ -997,7 +997,7 @@ func BenchmarkGrpcMod(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		fn(casetest, handler, false)
+		fn(casetest, handler)
 	}
 }
 
@@ -1033,7 +1033,6 @@ type InterceptorController struct{}
 func (ic *InterceptorController) Exec(ctx *app.RequestContext, _ *TestInterceptorResp) {
 	time.Sleep(100 * time.Millisecond)
 	ctx.GetData().(*TestInterceptorResp).Func = time.Now()
-	return
 }
 
 func (ic *InterceptorController) Exec1(ctx *app.RequestContext, _ *TestInterceptorResp) {

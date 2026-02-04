@@ -118,7 +118,7 @@ func TestHttpServerIntegration(t *testing.T) {
 
 	// 启动服务器
 	go func() {
-		err := server.Start()
+		err = server.Start()
 		if err != nil && !strings.Contains(err.Error(), "closed") {
 			t.Logf("Server start error: %v", err)
 		}
@@ -175,6 +175,7 @@ func TestGrpcCode(t *testing.T) {
 	client := NewIServiceClient(conn)
 	search, err := client.Search(context.Background(), &SearchRequest{})
 	assert.NotNil(t, err)
+	assert.Nil(t, search)
 	st, _ := status.FromError(err)
 	assert.Equal(t, codes.OutOfRange, st.Code())
 
