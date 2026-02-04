@@ -288,13 +288,14 @@ func (t *Task) NextSubTasks() ([]*Subtask, bool) {
 	return res, false
 }
 
-func (t *Task) updateSubtaskState(taskId string, taskState string) error {
+func (t *Task) updateSubtaskState(taskId string, state string) error {
 	subtask := t.subtaskMap[taskId]
 	if subtask == nil {
 		return fmt.Errorf("%s Task not found", taskId)
 	}
 
-	if taskState == TaskSucceeded {
+	switch state {
+	case TaskSucceeded:
 		adjacencyMap, err := t.g.AdjacencyMap()
 		if err != nil {
 			return err
@@ -318,11 +319,11 @@ func (t *Task) updateSubtaskState(taskId string, taskState string) error {
 		if err = t.g.RemoveVertex(subtask.GetID()); err != nil {
 			return err
 		}
-	} else if taskState == TaskFailed {
+	case TaskFailed:
 		t.failedSubtask = true
 	}
 
-	subtask.subtask.State = taskState
+	subtask.subtask.State = state
 
 	return nil
 }

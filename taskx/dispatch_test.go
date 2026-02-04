@@ -195,9 +195,9 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 
 	if config.Dialect == "sqlite" {
 		file, _ := os.Open("./dao/table-sqlite.sql")
-		defer file.Close()
 		sql, _ := io.ReadAll(file)
 		_, err = client.DB.ExecContext(context.TODO(), string(sql))
+		_ = file.Close()
 		if err != nil {
 			panic(err)
 		}
@@ -378,6 +378,7 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan
 			for i, subTask := range subtasks {
 				dbSubTaskMap[subTask.ID] = &subtasks[i]
 			}
+			dbSubTasks = subtasks
 			break
 		}
 		time.Sleep(time.Second * 2)
@@ -424,7 +425,6 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan
 
 	done <- struct{}{}
 
-	return
 }
 
 type TaskDemo struct {
@@ -562,11 +562,7 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 	_ = task.AddDirectedEdge(four, five)
 	waitForTask(task, dispatcher1)
 
-	var (
-		dbSubTaskMap map[string]*model.Subtask
-	)
-
-	dbSubTaskMap = make(map[string]*model.Subtask)
+	dbSubTaskMap := make(map[string]*model.Subtask)
 	for {
 		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil {
@@ -605,7 +601,6 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
 
 	done <- struct{}{}
-	return
 }
 
 type TaskNonRetryable struct {

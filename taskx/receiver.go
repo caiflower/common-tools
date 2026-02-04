@@ -507,7 +507,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 
 	var (
 		_output = &Output{}
-		state   = ""
+		state   string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
 	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
@@ -580,7 +580,7 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 
 	var (
 		_output  = &Output{}
-		rollback = ""
+		rollback string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
 	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
