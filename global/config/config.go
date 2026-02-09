@@ -29,6 +29,12 @@ import (
 	"github.com/caiflower/common-tools/telemetry"
 )
 
+type WebConfig struct {
+	Addr          string `yaml:"addr" default:"0.0.0.0:8080"`
+	EnableSwagger bool   `yaml:"enable_swagger"`
+	EnablePprof   bool   `yaml:"enable_pprof"`
+}
+
 type DefaultConfig struct {
 	LoggerConfig     logger.Config    `yaml:"logger" json:"logger"`
 	ClusterConfig    cluster.Config   `yaml:"cluster" json:"cluster"`
@@ -37,6 +43,7 @@ type DefaultConfig struct {
 	RedisConfig      []redisv1.Config `yaml:"redis" json:"redis"`
 	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
 	KafkaConfig      []xkafka.Config  `yaml:"kafka" json:"kafka"`
+	WebConfig        []WebConfig      `yaml:"web" json:"web"`
 }
 
 func LoadDefaultConfig(v *DefaultConfig) (err error) {
