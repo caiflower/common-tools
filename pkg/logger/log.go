@@ -297,8 +297,8 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 	_, file, line, _ := runtime.Caller(2)
 
 	relativePath := file
-	if idx := strings.LastIndex(file, "/common-tools/"); idx != -1 {
-		relativePath = file[idx+1:]
+	if idx := strings.LastIndex(file, "common-tools"); idx != -1 {
+		relativePath = "github.com/caiflower/" + file[idx:]
 	} else {
 		prefixCheckOnce.Do(func() {
 			goPath := os.Getenv("GOPATH")
