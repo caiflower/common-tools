@@ -153,12 +153,15 @@ func (t *Time) Scan(val interface{}) (err error) {
 		*t = Time(_time)
 	} else if _, ok := val.([]byte); ok {
 		str := string(val.([]byte))
-		if str == "" || str == "\"\"" || str == "null" || str == "0000-00-00 00:00:00.000" {
+		if str == "" || str == "\"\"" || str == "null" || str == "0000-00-00 00:00:00.000" || str == "0000-00-00 00:00:00" {
 			return
 		}
 		now, err := time.ParseInLocation(DBTimeFormat, str, time.Local)
 		if err != nil {
-			logger.Error("time type convert error. %s", err)
+			now, err = time.ParseInLocation(TimeFormat, str, time.Local)
+			if err != nil {
+				logger.Error("time type convert error. %s", err)
+			}
 		}
 		*t = Time(now)
 	} else if str, ok := val.(string); ok {
