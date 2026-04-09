@@ -73,6 +73,7 @@ type tableMeta struct {
 
 func main() {
 	opts := parseOptions()
+	fmt.Printf("options: %s", tools.ToJson(opts))
 	if err := run(opts); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "generator failed: %v\n", err)
 		os.Exit(1)
