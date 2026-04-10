@@ -190,7 +190,7 @@ func (ctx *RequestCtx) SetConn(conn network.Conn) *RequestCtx {
 }
 
 func (ctx *RequestCtx) SetContext(c context.Context) *RequestCtx {
-	ctx.Context = ctx
+	ctx.Context = c
 	return ctx
 }
 
