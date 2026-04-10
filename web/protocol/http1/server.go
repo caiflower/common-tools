@@ -40,18 +40,12 @@ type Server struct {
 
 func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 	var (
-		cancel          context.CancelFunc
 		zr              network.Reader
 		connRequestNum  = uint64(0)
 		zw              network.Writer
 		isHTTP11        bool
 		connectionClose bool
 	)
-
-	if s.HandleTimeout != 0 {
-		c, cancel = context.WithTimeout(c, s.HandleTimeout)
-		defer cancel()
-	}
 
 	ctx := s.GetCtxPool().Get().(*app.RequestCtx)
 	ctx = ctx.SetConn(conn).SetContext(c)
