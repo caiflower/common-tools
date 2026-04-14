@@ -31,6 +31,8 @@ type ApiError interface {
 	IsInternalError() bool
 	Error() string
 	GRPCStatus() *status.Status
+	SetMessage(string)
+	SetCode(int)
 }
 
 type Error = apiError
@@ -70,6 +72,14 @@ func (e *apiError) GRPCStatus() *status.Status {
 	return ConvertErrorCodeToGrpcCode(e)
 }
 
+func (e *apiError) SetMessage(s string) {
+	e.Message = s
+}
+
+func (e *apiError) SetCode(code int) {
+	e.Code = code
+}
+
 type ErrorCode struct {
 	Code int
 	Type string
@@ -94,13 +104,16 @@ var (
 	InvalidArgument    = &ErrorCode{Code: http.StatusBadRequest, Type: "InvalidArgument"}
 )
 
-func NewApiError(errCode *ErrorCode, msg string, err error) *Error {
-	return &apiError{
+func NewApiError(errCode *ErrorCode, msg string, err ...error) *Error {
+	_err := &apiError{
 		Code:    errCode.Code,
 		Type:    errCode.Type,
 		Message: msg,
-		Cause:   err,
 	}
+	if len(err) > 0 {
+		_err.Cause = err[0]
+	}
+	return _err
 }
 
 func NewInternalError(err error) *Error {

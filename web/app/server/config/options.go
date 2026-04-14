@@ -295,3 +295,10 @@ func WithPermitProhibitedCipherSuites(permitProhibitedCipherSuites bool) Option 
 		return opts
 	}
 }
+
+func WithMetrics(enabled bool) Option {
+	return func(opts *Options) *Options {
+		opts.EnableMetrics = enabled
+		return opts
+	}
+}

@@ -33,6 +33,7 @@ type WebConfig struct {
 	Addr          string `yaml:"addr" default:"0.0.0.0:8080"`
 	EnableSwagger bool   `yaml:"enable_swagger"`
 	EnablePprof   bool   `yaml:"enable_pprof"`
+	EnableMetrics bool   `yaml:"enable_metrics"`
 }
 
 type DefaultConfig struct {
