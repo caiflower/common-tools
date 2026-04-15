@@ -19,11 +19,14 @@ package metric
 import (
 	"sync"
 
+	"github.com/caiflower/common-tools/pkg/metric"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var metric *HttpMetric
-var once sync.Once
+var (
+	m    *HttpMetric
+	once sync.Once
+)
 
 type HttpMetric struct {
 	httpRequestTotal     *prometheus.CounterVec
@@ -35,30 +38,15 @@ func NewHttpMetric() *HttpMetric {
 	buckets := []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}
 
 	once.Do(func() {
-		metric = &HttpMetric{
+		m = &HttpMetric{
 			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_time_total", Help: "caiflower_server_http_request_time_total counter"}, []string{"web", "code", "method", "path"}),
 			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_total", Help: "caiflower_server_http_request_total counter"}, []string{"web", "code", "method", "path"}),
 			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_http_request_histogram", Help: "caiflower_server_http_request_histogram", Buckets: buckets}),
 		}
-
-		if err := prometheus.Register(metric.httpRequestTotal); err != nil {
-			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
-				metric.httpRequestTotal = are.ExistingCollector.(*prometheus.CounterVec)
-			}
-		}
-		if err := prometheus.Register(metric.httpRequestTimeTotal); err != nil {
-			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
-				metric.httpRequestTimeTotal = are.ExistingCollector.(*prometheus.CounterVec)
-			}
-		}
-		if err := prometheus.Register(metric.costHistogram); err != nil {
-			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
-				metric.costHistogram = are.ExistingCollector.(prometheus.Histogram)
-			}
-		}
+		metric.GetRegistry().MustRegister(m.httpRequestTotal, m.httpRequestTimeTotal, m.costHistogram)
 	})
 
-	return metric
+	return m
 }
 
 func (m *HttpMetric) SaveMetric(web string, code string, method, path string, cost int64) {

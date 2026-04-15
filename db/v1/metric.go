@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/metric"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/uptrace/bun"
 )
@@ -58,5 +59,5 @@ func register() {
 	dbInUseTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "caiflower_db_in_use", Help: "The number of connections currently in use."}, []string{"type", "url", "database"})
 	dbWaitDuration = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_db_wait_total_time", Help: "The total time blocked waiting for a new connection."}, []string{"type", "url", "database"})
 
-	prometheus.MustRegister(dbIdleTotal)
+	metric.GetRegistry().MustRegister(dbIdleTotal)
 }

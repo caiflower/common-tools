@@ -19,6 +19,7 @@ package xkafka
 import (
 	"strings"
 
+	"github.com/caiflower/common-tools/pkg/metric"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -45,10 +46,10 @@ func init() {
 	producerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_kafka_producer_err_count", Help: "Number of errors encountered by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
 	consumerQueueSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "caiflower_kafka_consumer_queue_size", Help: "Size of kafka consumer cache queue", ConstLabels: constLabels}, []string{"name", "url", "key"})
 	consumerConsumedHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_kafka_consumer_consume_duration_ms", Help: "Histogram of kafka consumer message consumption durations in milliseconds.", Buckets: []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}, ConstLabels: constLabels})
-	_ = prometheus.Register(consumerErrCount)
-	_ = prometheus.Register(producerErrCount)
-	_ = prometheus.Register(consumerQueueSize)
-	_ = prometheus.Register(consumerConsumedHistogram)
+	metric.GetRegistry().MustRegister(consumerErrCount)
+	metric.GetRegistry().MustRegister(producerErrCount)
+	metric.GetRegistry().MustRegister(consumerQueueSize)
+	metric.GetRegistry().MustRegister(consumerConsumedHistogram)
 }
 
 func AddConsumerError(cfg *Config, typ string) {
