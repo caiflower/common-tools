@@ -33,7 +33,6 @@ import (
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
 	"github.com/caiflower/common-tools/web/protocol/consts"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -611,7 +610,7 @@ func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, interce
 }
 
 var promHttpHandler = promhttp.HandlerFor(
-	prometheus.Gatherers{prometheus.DefaultGatherer, metric1.GetGather()},
+	metric1.GetGather(),
 	promhttp.HandlerOpts{},
 )
 
