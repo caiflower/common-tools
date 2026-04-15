@@ -14,9 +14,14 @@
  * limitations under the License.
  */
 
- package xkafka
+package xkafka
 
-import "time"
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"os"
+	"time"
+)
 
 type Config struct {
 	Name                      string        `yaml:"name"`
@@ -40,6 +45,9 @@ type Config struct {
 	SaslMechanism             string        `yaml:"saslMechanism"`
 	SaslUsername              string        `yaml:"saslUsername"`
 	SaslPassword              string        `yaml:"saslPassword"`
+	SSLCaFile                 string        `yaml:"sslCaFile"`
+	SSLCertFile               string        `yaml:"sslCertFile"`
+	SSLKeyFile                string        `yaml:"sslKeyFile"`
 }
 
 type Consumer interface {
@@ -51,4 +59,28 @@ type Producer interface {
 	Send(topic string, key string, values ...interface{}) error
 	AsyncSend(topic string, key string, values ...interface{}) error
 	Close()
+}
+
+func NewTLSConfig(caFile, certFile, keyFile string) (*tls.Config, error) {
+	tlsConfig := &tls.Config{}
+
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, err
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsConfig, nil
 }

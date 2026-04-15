@@ -82,6 +82,11 @@ func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 		}
 	}
 
+	if strings.ToUpper(cfg.SecurityProtocol) == "SSL" {
+		config.Net.TLS.Enable = true
+		config.Net.TLS.Config, _ = xkafka.NewTLSConfig(cfg.SSLCaFile, cfg.SSLCertFile, cfg.SSLKeyFile)
+	}
+
 	kafkaClient := &KafkaClient{
 		cfg:          &cfg,
 		saramaConfig: config,

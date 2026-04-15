@@ -78,6 +78,15 @@ func NewConsumerClient(config xkafka.Config) *KafkaClient {
 	if config.SaslPassword != "" {
 		_ = configMap.SetKey("sasl.password", config.SaslPassword)
 	}
+	if config.SSLCaFile != "" {
+		_ = configMap.SetKey("ssl.ca.location", config.SSLCaFile)
+	}
+	if config.SSLCertFile != "" {
+		_ = configMap.SetKey("ssl.certificate.location", config.SSLCertFile)
+	}
+	if config.SSLKeyFile != "" {
+		_ = configMap.SetKey("ssl.key.location", config.SSLKeyFile)
+	}
 
 	consumer, err := kafka.NewConsumer(configMap)
 	if err != nil {
