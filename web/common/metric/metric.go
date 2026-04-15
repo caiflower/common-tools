@@ -19,7 +19,6 @@ package metric
 import (
 	"sync"
 
-	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -33,15 +32,13 @@ type HttpMetric struct {
 }
 
 func NewHttpMetric() *HttpMetric {
-	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP()}
-
 	buckets := []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}
 
 	once.Do(func() {
 		metric = &HttpMetric{
-			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_time_total", Help: "caiflower_server_http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_total", Help: "caiflower_server_http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_http_request_histogram", Help: "caiflower_server_http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_time_total", Help: "caiflower_server_http_request_time_total counter"}, []string{"web", "code", "method", "path"}),
+			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_total", Help: "caiflower_server_http_request_total counter"}, []string{"web", "code", "method", "path"}),
+			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_http_request_histogram", Help: "caiflower_server_http_request_histogram", Buckets: buckets}),
 		}
 
 		if err := prometheus.Register(metric.httpRequestTotal); err != nil {

@@ -19,7 +19,6 @@ package xkafka
 import (
 	"strings"
 
-	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -39,7 +38,7 @@ var consumerQueueSize *prometheus.GaugeVec         //队列大小
 var consumerConsumedHistogram prometheus.Histogram //消费者消费直方图
 
 func init() {
-	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP(), "version": "v2"}
+	constLabels := prometheus.Labels{"version": "v2"}
 	consumerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_kafka_consumer_count", Help: "Number of messages consumed by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
 	producerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_kafka_producer_count", Help: "Number of messages produced by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
 	consumerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_kafka_consumer_err_count", Help: "Number of errors encountered by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
