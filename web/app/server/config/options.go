@@ -36,36 +36,37 @@ const (
 type Option func(*Options) *Options
 
 type Options struct {
-	Name                     string        `yaml:"name" default:"default"`
-	Addr                     string        `yaml:"addr" default:":8080"`
-	HeaderTraceID            string        `yaml:"headerTraceID" default:"X-Request-Id"`
-	ControllerRootPkgName    string        `yaml:"controllerRootPkgName" default:"controller"`
-	RootPath                 string        `yaml:"rootPath"`
-	ReadTimeout              time.Duration `yaml:"readTimeout" default:"20s"`
-	WriteTimeout             time.Duration `yaml:"writeTimeout" default:"35s"`
-	IdleTimeout              time.Duration `yaml:"idleTimeout" default:"60s"`
-	HandleTimeout            time.Duration `yaml:"handleTimeout" default:"60s"`
-	KeepAliveTimeout         time.Duration `yaml:"keepAliveTimeout" default:"180s"`
-	EnableSwagger            bool          `yaml:"enableSwagger"`
-	EnablePprof              bool          `yaml:"enablePprof"`
-	Mode                     ServerMode    `yaml:"mode" default:"netpoll"`
-	LimiterEnabled           bool          `yaml:"limiterEnabled"`
-	Qps                      int           `yaml:"qps"`
-	Network                  string        `yaml:"netWork" default:"tcp"`
-	SenseClientDisconnection bool          `yaml:"senseClientDisconnection"`
-	ListenConfig             *net.ListenConfig
-	OnAccept                 func(conn net.Conn) context.Context
-	OnConnect                func(ctx context.Context, conn network.Conn) context.Context
-	DisableOptimization      bool `yaml:"disableOptimization"`
-	EnableActionController   bool `yaml:"enableActionController"`
-	MaxHeaderBytes           int  `yaml:"maxHeaderBytes" default:"1048576"`
-	MaxRequestBodySize       int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
-	EnableMetrics            bool `yaml:"enableMetrics"`
-	DisableKeepalive         bool `yaml:"disableKeepalive"`
-	EnableTrace              bool `yaml:"enableTrace"`
-	H2C                      bool `yaml:"h2c"`
-	ALPN                     bool `yaml:"alpn"`
-	TLS                      *tls.Config
+	Name                          string        `yaml:"name" default:"default"`
+	Addr                          string        `yaml:"addr" default:":8080"`
+	HeaderTraceID                 string        `yaml:"headerTraceID" default:"X-Request-Id"`
+	ControllerRootPkgName         string        `yaml:"controllerRootPkgName" default:"controller"`
+	RootPath                      string        `yaml:"rootPath"`
+	ReadTimeout                   time.Duration `yaml:"readTimeout" default:"20s"`
+	WriteTimeout                  time.Duration `yaml:"writeTimeout" default:"35s"`
+	IdleTimeout                   time.Duration `yaml:"idleTimeout" default:"60s"`
+	HandleTimeout                 time.Duration `yaml:"handleTimeout" default:"60s"`
+	KeepAliveTimeout              time.Duration `yaml:"keepAliveTimeout" default:"180s"`
+	EnableSwagger                 bool          `yaml:"enableSwagger"`
+	EnablePprof                   bool          `yaml:"enablePprof"`
+	Mode                          ServerMode    `yaml:"mode" default:"netpoll"`
+	LimiterEnabled                bool          `yaml:"limiterEnabled"`
+	Qps                           int           `yaml:"qps"`
+	Network                       string        `yaml:"netWork" default:"tcp"`
+	SenseClientDisconnection      bool          `yaml:"senseClientDisconnection"`
+	ListenConfig                  *net.ListenConfig
+	OnAccept                      func(conn net.Conn) context.Context
+	OnConnect                     func(ctx context.Context, conn network.Conn) context.Context
+	DisableOptimization           bool `yaml:"disableOptimization"`
+	EnableActionController        bool `yaml:"enableActionController"`
+	MaxHeaderBytes                int  `yaml:"maxHeaderBytes" default:"1048576"`
+	MaxRequestBodySize            int  `yaml:"maxRequestBodySize" default:"10485760"` // 10MB
+	EnableMetrics                 bool `yaml:"enableMetrics"`
+	DisableKeepalive              bool `yaml:"disableKeepalive"`
+	EnableTrace                   bool `yaml:"enableTrace"`
+	H2C                           bool `yaml:"h2c"`
+	ALPN                          bool `yaml:"alpn"`
+	TLS                           *tls.Config
+	DisableHeaderNamesNormalizing bool `yaml:"disableHeaderNamesNormalizing"`
 	Http2Options
 }
 
@@ -299,6 +300,14 @@ func WithPermitProhibitedCipherSuites(permitProhibitedCipherSuites bool) Option 
 func WithMetrics(enabled bool) Option {
 	return func(opts *Options) *Options {
 		opts.EnableMetrics = enabled
+		return opts
+	}
+}
+
+// WithDisableHeaderNamesNormalizing is used to set whether disable header names normalizing.
+func WithDisableHeaderNamesNormalizing(disable bool) Option {
+	return func(opts *Options) *Options {
+		opts.DisableHeaderNamesNormalizing = disable
 		return opts
 	}
 }

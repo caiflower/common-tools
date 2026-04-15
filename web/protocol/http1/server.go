@@ -80,6 +80,11 @@ func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 			_ = ctx.GetConn().SetReadTimeout(s.ReadTimeout)
 		}
 
+		if s.DisableHeaderNamesNormalizing {
+			ctx.Request.Header.DisableNormalizing()
+			ctx.Response.Header.DisableNormalizing()
+		}
+
 		if err = req.ReadHeaderWithLimit(&ctx.Request.Header, zr, s.MaxHeaderBytes); err == nil {
 			// Read body
 			//if s.StreamRequestBody {
