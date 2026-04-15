@@ -39,14 +39,26 @@ func NewHttpMetric() *HttpMetric {
 
 	once.Do(func() {
 		metric = &HttpMetric{
-			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_time_total", Help: "caiflower_server_http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_total", Help: "caiflower_server_http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_http_request_histogram", Help: "caiflower_server_http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
 		}
 
-		_ = prometheus.Register(metric.httpRequestTotal)
-		_ = prometheus.Register(metric.httpRequestTimeTotal)
-		_ = prometheus.Register(metric.costHistogram)
+		if err := prometheus.Register(metric.httpRequestTotal); err != nil {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				metric.httpRequestTotal = are.ExistingCollector.(*prometheus.CounterVec)
+			}
+		}
+		if err := prometheus.Register(metric.httpRequestTimeTotal); err != nil {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				metric.httpRequestTimeTotal = are.ExistingCollector.(*prometheus.CounterVec)
+			}
+		}
+		if err := prometheus.Register(metric.costHistogram); err != nil {
+			if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+				metric.costHistogram = are.ExistingCollector.(prometheus.Histogram)
+			}
+		}
 	})
 
 	return metric
