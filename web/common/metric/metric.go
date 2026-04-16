@@ -24,9 +24,9 @@ import (
 var metric *HttpMetric
 
 type HttpMetric struct {
-	httpRequestTotal     *prometheus.CounterVec
-	httpRequestTimeTotal *prometheus.CounterVec
-	costHistogram        prometheus.Histogram
+	httpRequestTotal *prometheus.CounterVec
+	//httpRequestTimeTotal *prometheus.CounterVec
+	costHistogram prometheus.Histogram
 }
 
 func init() {
@@ -35,9 +35,9 @@ func init() {
 	buckets := []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}
 
 	metric = &HttpMetric{
-		httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		//httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		costHistogram: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+		//httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		httpRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		costHistogram:    prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
 	}
 
 	_ = prometheus.Register(metric.httpRequestTotal)
