@@ -17,9 +17,6 @@
 package metric
 
 import (
-	"fmt"
-	"sync"
-
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -27,11 +24,9 @@ import (
 var metric *HttpMetric
 
 type HttpMetric struct {
-	httpRequestTotal *prometheus.CounterVec
-	//httpRequestTimeTotal *prometheus.CounterVec
-	costHistogram prometheus.Histogram
-	counterMap    sync.Map
-	lock          sync.Mutex
+	httpRequestTotal     *prometheus.CounterVec
+	httpRequestTimeTotal *prometheus.CounterVec
+	costHistogram        prometheus.Histogram
 }
 
 func init() {
@@ -40,35 +35,35 @@ func init() {
 	buckets := []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}
 
 	metric = &HttpMetric{
-		//httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		httpRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		costHistogram:    prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+		httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
 	}
 
 	_ = prometheus.Register(metric.httpRequestTotal)
-	//_ = prometheus.Register(metric.httpRequestTimeTotal)
+	_ = prometheus.Register(metric.httpRequestTimeTotal)
 	_ = prometheus.Register(metric.costHistogram)
 
 }
 
 func SaveMetric(web string, code string, method, path string, cost int64) {
-	key := fmt.Sprintf("%s_%s_%s_%s", web, code, method, path)
-	_counter, ok := metric.counterMap.Load(key)
+	//key := fmt.Sprintf("%s_%s_%s_%s", web, code, method, path)
+	//_counter, ok := metric.counterMap.Load(key)
+	//
+	//if !ok {
+	//	metric.lock.Lock()
+	//	_counter, ok = metric.counterMap.Load(key)
+	//	if !ok {
+	//		c := metric.httpRequestTotal.WithLabelValues(web, code, method, path)
+	//		metric.counterMap.Store(key, c)
+	//		_counter = c
+	//		metric.lock.Unlock()
+	//	}
+	//}
 
-	if !ok {
-		metric.lock.Lock()
-		_counter, ok = metric.counterMap.Load(key)
-		if !ok {
-			c := metric.httpRequestTotal.WithLabelValues(web, code, method, path)
-			metric.counterMap.Store(key, c)
-			_counter = c
-			metric.lock.Unlock()
-		}
-	}
+	//counter := _counter.(prometheus.Counter)
 
-	counter := _counter.(prometheus.Counter)
-
-	counter.Inc()
-	//metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
+	metric.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
+	metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
 	metric.costHistogram.Observe(float64(cost))
 }
