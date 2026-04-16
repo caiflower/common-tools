@@ -20,7 +20,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/metric"
+	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/uptrace/bun"
 )
@@ -55,9 +55,10 @@ func startMetric(ctx context.Context, db *bun.DB, config *Config) {
 }
 
 func register() {
-	dbIdleTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "caiflower_db_idle", Help: "The number of idle connections."}, []string{"type", "url", "database"})
-	dbInUseTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "caiflower_db_in_use", Help: "The number of connections currently in use."}, []string{"type", "url", "database"})
-	dbWaitDuration = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_db_wait_total_time", Help: "The total time blocked waiting for a new connection."}, []string{"type", "url", "database"})
+	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP()}
+	dbIdleTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "db_idle", Help: "The number of idle connections.", ConstLabels: constLabels}, []string{"type", "url", "database"})
+	dbInUseTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "db_in_use", Help: "The number of connections currently in use.", ConstLabels: constLabels}, []string{"type", "url", "database"})
+	dbWaitDuration = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "db_wait_total_time", Help: "The total time blocked waiting for a new connection.", ConstLabels: constLabels}, []string{"type", "url", "database"})
 
-	metric.GetRegistry().MustRegister(dbIdleTotal)
+	prometheus.MustRegister(dbIdleTotal)
 }

@@ -38,7 +38,6 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/limiter"
 	"github.com/caiflower/common-tools/pkg/logger"
-	metric1 "github.com/caiflower/common-tools/pkg/metric"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/app"
@@ -90,15 +89,12 @@ type LimiterConfig struct {
 	Qos    int  `yaml:"qos" default:"1000"`
 }
 
-var metrics = metric.NewHttpMetric()
-
 func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 	commonHandler := &Handler{
 		config:                    &config,
 		controllers:               make(map[string]*controller.Controller),
 		restfulPaths:              make(map[string]struct{}),
 		logger:                    logger,
-		metric:                    metrics,
 		oai:                       goai.Default(),
 		afterDispatchCallbackFunc: resp.DefaultResultCallback,
 	}
@@ -609,10 +605,7 @@ func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, interce
 	}
 }
 
-var promHttpHandler = promhttp.HandlerFor(
-	metric1.GetGather(),
-	promhttp.HandlerOpts{},
-)
+var promHttpHandler = promhttp.Handler()
 
 func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	path := ctx.GetPath()
@@ -685,6 +678,6 @@ func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
 		// fix: 关闭协程提升性能
-		h.metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
+		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
 	}
 }

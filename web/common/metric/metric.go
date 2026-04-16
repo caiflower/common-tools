@@ -17,16 +17,11 @@
 package metric
 
 import (
-	"sync"
-
-	"github.com/caiflower/common-tools/pkg/metric"
+	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var (
-	m    *HttpMetric
-	once sync.Once
-)
+var metric *HttpMetric
 
 type HttpMetric struct {
 	httpRequestTotal     *prometheus.CounterVec
@@ -34,23 +29,25 @@ type HttpMetric struct {
 	costHistogram        prometheus.Histogram
 }
 
-func NewHttpMetric() *HttpMetric {
+func init() {
+	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP()}
+
 	buckets := []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}
 
-	once.Do(func() {
-		m = &HttpMetric{
-			httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_time_total", Help: "caiflower_server_http_request_time_total counter"}, []string{"web", "code", "method", "path"}),
-			httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "caiflower_http_request_total", Help: "caiflower_server_http_request_total counter"}, []string{"web", "code", "method", "path"}),
-			costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "caiflower_http_request_histogram", Help: "caiflower_server_http_request_histogram", Buckets: buckets}),
-		}
-		metric.GetRegistry().MustRegister(m.httpRequestTotal, m.httpRequestTimeTotal, m.costHistogram)
-	})
+	metric = &HttpMetric{
+		httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+	}
 
-	return m
+	_ = prometheus.Register(metric.httpRequestTotal)
+	_ = prometheus.Register(metric.httpRequestTimeTotal)
+	_ = prometheus.Register(metric.costHistogram)
+
 }
 
-func (m *HttpMetric) SaveMetric(web string, code string, method, path string, cost int64) {
-	m.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
-	m.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
-	m.costHistogram.Observe(float64(cost))
+func SaveMetric(web string, code string, method, path string, cost int64) {
+	metric.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
+	metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
+	metric.costHistogram.Observe(float64(cost))
 }
