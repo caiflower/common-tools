@@ -17,6 +17,7 @@
 package router
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -72,16 +73,17 @@ var (
 type CallbackFunc func(ctx *app.RequestContext) bool
 
 type HandlerCfg struct {
-	Name                   string        `yaml:"name" default:"default"`
-	RootPath               string        `yaml:"rootPath"` // 可以为空
-	HeaderTraceID          string        `yaml:"headerTraceID" default:"X-Request-Id"`
-	ControllerRootPkgName  string        `yaml:"controllerRootPkgName" default:"controller"`
-	EnablePprof            bool          `yaml:"enablePprof"`
-	WebLimiter             LimiterConfig `yaml:"webLimiter"`
-	EnableMetrics          bool          `yaml:"enableMetrics"`
-	DisableOptimization    bool          `yaml:"disableOptimization"`
-	EnableActionController bool          `yaml:"enableActionController"`
-	EnableSwagger          bool          `yaml:"enableSwagger"`
+	Name                          string        `yaml:"name" default:"default"`
+	RootPath                      string        `yaml:"rootPath"` // 可以为空
+	HeaderTraceID                 string        `yaml:"headerTraceID" default:"X-Request-Id"`
+	ControllerRootPkgName         string        `yaml:"controllerRootPkgName" default:"controller"`
+	EnablePprof                   bool          `yaml:"enablePprof"`
+	WebLimiter                    LimiterConfig `yaml:"webLimiter"`
+	EnableMetrics                 bool          `yaml:"enableMetrics"`
+	DisableOptimization           bool          `yaml:"disableOptimization"`
+	EnableActionController        bool          `yaml:"enableActionController"`
+	EnableSwagger                 bool          `yaml:"enableSwagger"`
+	DisableHeaderNamesNormalizing bool          `yaml:"disableHeaderNamesNormalizing"`
 }
 
 type LimiterConfig struct {
@@ -105,6 +107,7 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 			Paths: make(param.Params, 0, 10),
 		}
 		ctx.SetNetWorkType("standard")
+		ctx.SetDisableHeaderNamesNormalizing(config.DisableHeaderNamesNormalizing)
 		return ctx
 	}
 
@@ -156,6 +159,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := h.getRequestContext()
 	ctx = initCtx(ctx, w, r)
+	ctx.SetContext(context.TODO())
 	defer h.putRequestContext(ctx)
 
 	if h.specialRequest(ctx) {
@@ -169,10 +173,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// dispatch
 	h.Dispatch(ctx)
 
-	if err := ctx.GetError(); err != nil {
-		h.writeError(ctx, err)
+	if h.afterDispatchCallbackFunc != nil {
+		h.afterDispatchCallbackFunc(ctx)
 	} else {
-		h.writeResponse(ctx)
+		if err := ctx.GetError(); err != nil {
+			h.writeError(ctx, err)
+		} else {
+			h.writeResponse(ctx)
+		}
 	}
 
 	// record metric

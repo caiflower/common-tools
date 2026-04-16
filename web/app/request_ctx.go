@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/app/server/render"
 	"github.com/caiflower/common-tools/web/common/adaptor"
@@ -56,8 +57,9 @@ type RequestCtx struct {
 
 	special int8
 	// enableTrace defines whether enable trace.
-	enableTrace bool
-	networkType string
+	enableTrace                   bool
+	networkType                   string
+	disableHeaderNamesNormalizing bool
 }
 
 func (ctx *RequestCtx) ConvertToWebCtx() *Context {
@@ -70,7 +72,11 @@ func (ctx *RequestCtx) SetHeader(key, value string) {
 		return
 	}
 
-	ctx.writer.Header().Set(key, value)
+	if ctx.disableHeaderNamesNormalizing {
+		ctx.writer.Header()[key] = []string{value}
+	} else {
+		ctx.writer.Header().Set(key, value)
+	}
 }
 
 func (ctx *RequestCtx) Write(bytes []byte) (int, error) {
@@ -286,6 +292,10 @@ func (ctx *RequestCtx) SetNetWorkType(networkType string) {
 	ctx.networkType = networkType
 }
 
+func (ctx *RequestCtx) SetDisableHeaderNamesNormalizing(disable bool) {
+	ctx.disableHeaderNamesNormalizing = disable
+}
+
 func (ctx *RequestCtx) IsNetpoll() bool {
 	return ctx.networkType == ""
 }
@@ -339,5 +349,13 @@ func (ctx *RequestContext) Render(code int, r render.Render) {
 //
 // It also sets the Content-Type as "application/json".
 func (ctx *RequestContext) JSON(code int, obj interface{}) {
-	ctx.Render(code, render.JSONRender{Data: obj})
+	if ctx.IsNetpoll() {
+		ctx.Render(code, render.JSONRender{Data: obj})
+		return
+	}
+
+	ctx.SetHeader(consts.HeaderContentType, consts.MIMEApplicationJSONUTF8)
+	ctx.SetStatusCode(code)
+	toByte, _ := tools.ToByte(obj)
+	ctx.Write(toByte)
 }

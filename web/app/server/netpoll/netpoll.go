@@ -160,10 +160,11 @@ func (s *HttpServer) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
-		EnableMetrics:          options.EnableMetrics,
-		DisableOptimization:    options.DisableOptimization,
-		EnableActionController: options.EnableActionController,
-		EnableSwagger:          options.EnableSwagger,
+		EnableMetrics:                 options.EnableMetrics,
+		DisableOptimization:           options.DisableOptimization,
+		EnableActionController:        options.EnableActionController,
+		EnableSwagger:                 options.EnableSwagger,
+		DisableHeaderNamesNormalizing: options.DisableHeaderNamesNormalizing,
 	}
 }
 

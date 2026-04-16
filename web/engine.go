@@ -77,9 +77,10 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 			Enable: options.LimiterEnabled,
 			Qos:    options.Qps,
 		},
-		EnableMetrics:          options.EnableMetrics,
-		DisableOptimization:    true,
-		EnableActionController: options.EnableActionController,
-		EnableSwagger:          options.EnableSwagger,
+		EnableMetrics:                 options.EnableMetrics,
+		DisableOptimization:           true,
+		EnableActionController:        options.EnableActionController,
+		EnableSwagger:                 options.EnableSwagger,
+		DisableHeaderNamesNormalizing: options.DisableHeaderNamesNormalizing,
 	}
 }
