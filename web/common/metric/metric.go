@@ -36,8 +36,8 @@ func init() {
 
 	metric = &HttpMetric{
 		httpRequestTimeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_time_total", Help: "http_request_time_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
-		costHistogram:        prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
+		//httpRequestTotal:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_request_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "path"}),
+		costHistogram: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_histogram", Help: "http_request_histogram", Buckets: buckets, ConstLabels: constLabels}),
 	}
 
 	_ = prometheus.Register(metric.httpRequestTotal)
@@ -48,6 +48,6 @@ func init() {
 
 func SaveMetric(web string, code string, method, path string, cost int64) {
 	metric.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
-	metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
+	//metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
 	metric.costHistogram.Observe(float64(cost))
 }
