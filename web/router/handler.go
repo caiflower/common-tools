@@ -31,9 +31,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
 	"github.com/caiflower/common-tools/web/protocol/consts"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/caiflower/common-tools/pkg/bean"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -617,6 +619,12 @@ var promHttpHandler = promhttp.Handler()
 
 func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	path := ctx.GetPath()
+
+	if ctx.IsNetpoll() && h.config.EnableMetrics && path == "/metrics" {
+		handler := adaptor.HertzHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError}))
+		handler(ctx.GetContext(), ctx)
+		return true
+	}
 
 	if h.config.EnableMetrics && path == "/metrics" {
 		w, r := ctx.GetResponseWriterAndRequest()

@@ -129,6 +129,11 @@ func (s *Server) Serve(c context.Context, conn network.Conn) (err error) {
 }
 
 func writeResponse(ctx *app.RequestCtx, w network.Writer) error {
+	// Skip default response writing logic if it has been hijacked
+	if ctx.Response.GetHijackWriter() != nil {
+		return ctx.Response.GetHijackWriter().Finalize()
+	}
+
 	resp := &ctx.Response
 
 	body := resp.Body()

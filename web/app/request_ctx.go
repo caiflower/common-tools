@@ -19,12 +19,14 @@ package app
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
+	"reflect"
+	"sync"
 
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/app/server/render"
-	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/network"
@@ -32,6 +34,10 @@ import (
 	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/caiflower/common-tools/web/router/param"
 )
+
+var zeroTCPAddr = &net.TCPAddr{
+	IP: net.IPv4zero,
+}
 
 type RequestCtx struct {
 	context.Context
@@ -101,7 +107,7 @@ func (ctx *RequestCtx) SetPath(path []byte) {
 }
 
 func (ctx *RequestCtx) GetPath() string {
-	return bytesconv.B2s(ctx.path)
+	return string(ctx.path)
 }
 
 func (ctx *RequestCtx) GetParams() map[string][]string {
@@ -140,7 +146,7 @@ func (ctx *RequestCtx) SetMethod(method []byte) {
 }
 
 func (ctx *RequestCtx) GetMethod() string {
-	return bytesconv.B2s(ctx.method)
+	return string(ctx.method)
 }
 
 func (ctx *RequestCtx) Method() []byte {
@@ -157,9 +163,10 @@ func (ctx *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http
 		return ctx.writer, ctx.httpRequest
 	}
 
-	request, _ := adaptor.GetCompatRequest(&ctx.Request)
-	response := adaptor.GetCompatResponseWriter(&ctx.Response)
-	return response, request
+	//request, _ := adaptor.GetCompatRequest(&ctx.Request)
+	//response := adaptor.GetCompatResponseWriter(&ctx.Response)
+	//return response, request
+	return nil, nil
 }
 
 func (ctx *RequestCtx) UpgradeWebsocket() {
@@ -358,4 +365,88 @@ func (ctx *RequestContext) JSON(code int, obj interface{}) {
 	ctx.SetStatusCode(code)
 	toByte, _ := tools.ToByte(obj)
 	ctx.Write(toByte)
+}
+
+// SetBodyString sets response body to the given value.
+func (ctx *RequestContext) SetBodyString(body string) {
+	ctx.Response.SetBodyString(body)
+}
+
+// RemoteAddr returns client address for the given request.
+//
+// If address is nil, it will return zeroTCPAddr.
+func (ctx *RequestContext) RemoteAddr() net.Addr {
+	if ctx.conn == nil {
+		return zeroTCPAddr
+	}
+	addr := ctx.conn.RemoteAddr()
+	if addr == nil {
+		return zeroTCPAddr
+	}
+	return addr
+}
+
+type HandlerFunc func(c context.Context, ctx *RequestContext)
+
+// HandlersChain defines a HandlerFunc array.
+type HandlersChain []HandlerFunc
+
+type HandlerNameOperator interface {
+	SetHandlerName(handler HandlerFunc, name string)
+	GetHandlerName(handler HandlerFunc) string
+}
+
+func SetHandlerNameOperator(o HandlerNameOperator) {
+	inbuiltHandlerNameOperator = o
+}
+
+type inbuiltHandlerNameOperatorStruct struct {
+	handlerNames map[uintptr]string
+}
+
+func (o *inbuiltHandlerNameOperatorStruct) SetHandlerName(handler HandlerFunc, name string) {
+	o.handlerNames[getFuncAddr(handler)] = name
+}
+
+func (o *inbuiltHandlerNameOperatorStruct) GetHandlerName(handler HandlerFunc) string {
+	return o.handlerNames[getFuncAddr(handler)]
+}
+
+type concurrentHandlerNameOperatorStruct struct {
+	handlerNames map[uintptr]string
+	lock         sync.RWMutex
+}
+
+func (o *concurrentHandlerNameOperatorStruct) SetHandlerName(handler HandlerFunc, name string) {
+	o.lock.Lock()
+	defer o.lock.Unlock()
+	o.handlerNames[getFuncAddr(handler)] = name
+}
+
+func (o *concurrentHandlerNameOperatorStruct) GetHandlerName(handler HandlerFunc) string {
+	o.lock.RLock()
+	defer o.lock.RUnlock()
+	return o.handlerNames[getFuncAddr(handler)]
+}
+
+func SetConcurrentHandlerNameOperator() {
+	SetHandlerNameOperator(&concurrentHandlerNameOperatorStruct{handlerNames: map[uintptr]string{}})
+}
+
+func init() {
+	inbuiltHandlerNameOperator = &inbuiltHandlerNameOperatorStruct{handlerNames: map[uintptr]string{}}
+}
+
+var inbuiltHandlerNameOperator HandlerNameOperator
+
+func SetHandlerName(handler HandlerFunc, name string) {
+	inbuiltHandlerNameOperator.SetHandlerName(handler, name)
+}
+
+func GetHandlerName(handler HandlerFunc) string {
+	return inbuiltHandlerNameOperator.GetHandlerName(handler)
+}
+
+func getFuncAddr(v interface{}) uintptr {
+	return reflect.ValueOf(reflect.ValueOf(v)).Field(1).Pointer()
 }
