@@ -17,6 +17,9 @@
 package metric
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -27,6 +30,8 @@ type HttpMetric struct {
 	httpRequestTotal *prometheus.CounterVec
 	//httpRequestTimeTotal *prometheus.CounterVec
 	costHistogram prometheus.Histogram
+	counterMap    sync.Map
+	lock          sync.Mutex
 }
 
 func init() {
@@ -47,7 +52,23 @@ func init() {
 }
 
 func SaveMetric(web string, code string, method, path string, cost int64) {
-	metric.httpRequestTotal.WithLabelValues(web, code, method, path).Inc()
+	key := fmt.Sprintf("%s_%s_%s_%s", web, code, method, path)
+	_counter, ok := metric.counterMap.Load(key)
+
+	if !ok {
+		metric.lock.Lock()
+		_counter, ok = metric.counterMap.Load(key)
+		if !ok {
+			c := metric.httpRequestTotal.WithLabelValues(web, code, method, path)
+			metric.counterMap.Store(key, c)
+			_counter = c
+			metric.lock.Unlock()
+		}
+	}
+
+	counter := _counter.(prometheus.Counter)
+
+	counter.Inc()
 	//metric.httpRequestTimeTotal.WithLabelValues(web, code, method, path).Add(float64(cost))
 	metric.costHistogram.Observe(float64(cost))
 }
