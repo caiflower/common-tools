@@ -41,7 +41,7 @@ func init() {
 	}
 
 	_ = prometheus.Register(metric.httpRequestTotal)
-	_ = prometheus.Register(metric.httpRequestTimeTotal)
+	//_ = prometheus.Register(metric.httpRequestTimeTotal)
 	_ = prometheus.Register(metric.costHistogram)
 
 }
