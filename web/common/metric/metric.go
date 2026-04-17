@@ -41,7 +41,7 @@ func init() {
 	}
 
 	metric = &HttpMetric{
-		httpRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_requests_total", Help: "http_requests_total counter", ConstLabels: constLabels}, []string{"web", "code", "method", "handler"}),
+		httpRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "http_request_total", Help: "http_requests_total counter", ConstLabels: constLabels}, []string{"web", "status", "method", "handler"}),
 	}
 
 	_ = prometheus.Register(metric.httpRequestTotal)
