@@ -33,6 +33,8 @@ var (
 	ConfigPath  string
 	AESKey      string
 	Replicas    int // 服务副本数，用于控制cluster
+	Namespace   string
+	App         string
 )
 
 func init() {
@@ -93,6 +95,8 @@ func initEnv() {
 	LocalDNS = os.Getenv("LOCAL_DNS")
 	LocalhostIP = os.Getenv("LOCAL_HOST_IP")
 	Replicas, _ = strconv.Atoi(os.Getenv("REPLICAS"))
+	Namespace = os.Getenv("POD_NAMESPACE")
+	App = os.Getenv("POD_APP")
 
 	AESKey = os.Getenv("AES_KEY")
 	if AESKey != "" && len(AESKey) != 32 && len(AESKey) != 24 && len(AESKey) != 16 {
@@ -119,4 +123,12 @@ func GetReplicas() int {
 
 func SetDefaultConfigPath(path string) {
 	ConfigPath = path
+}
+
+func GetNamespace() string {
+	return Namespace
+}
+
+func GetApp() string {
+	return App
 }
