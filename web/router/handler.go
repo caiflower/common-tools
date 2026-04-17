@@ -694,6 +694,6 @@ func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
 		// fix: 关闭协程提升性能
-		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds())
+		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds(), sub.Seconds())
 	}
 }
