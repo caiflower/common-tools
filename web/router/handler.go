@@ -675,9 +675,9 @@ func (h *Handler) IsRunning() bool {
 func (h *Handler) SetRunning(val bool) bool {
 	if val {
 		return atomic.CompareAndSwapUint32(&h.status, statusInitialized, statusRunning)
-	} else {
-		return atomic.CompareAndSwapUint32(&h.status, statusRunning, statusClosed)
 	}
+
+	return atomic.CompareAndSwapUint32(&h.status, statusRunning, statusClosed)
 }
 
 func (h *Handler) GetCtxPool() *sync.Pool {
@@ -694,6 +694,6 @@ func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
 		// fix: 关闭协程提升性能
-		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), sub.Milliseconds(), sub.Seconds())
+		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), 0, sub.Seconds())
 	}
 }
