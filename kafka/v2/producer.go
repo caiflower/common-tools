@@ -34,7 +34,7 @@ func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 
 	if strings.ToUpper(cfg.Enable) != "TRUE" {
 		logger.Warn("[kafka-product] producer '%s' is disable", cfg.Name)
-		return &KafkaClient{}
+		return &KafkaClient{cfg: &cfg}
 	}
 
 	config := sarama.NewConfig()
