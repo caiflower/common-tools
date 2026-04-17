@@ -61,7 +61,7 @@ func SaveMetric(web string, code string, method, path string, cost int64) {
 			}
 			constLabels["handler"] = path
 
-			_costHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_duration_seconds_bucket", Help: "http_request_duration_seconds_bucket", Buckets: buckets, ConstLabels: constLabels})
+			_costHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "http_request_duration_seconds", Help: "http_request_duration_seconds_bucket", Buckets: buckets, ConstLabels: constLabels})
 			prometheus.Register(_costHistogram.(prometheus.Histogram))
 			metric.costHistograms.Store(path, _costHistogram)
 			metric.lock.Unlock()
