@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/caiflower/common-tools/global"
@@ -68,12 +69,15 @@ type Config struct {
 	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
 	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"80s" json:"maxConnAge"`
 	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
+	EnableMetrics         string        `yaml:"enableMetrics" default:"true"`
 }
 
 type redisClient struct {
 	config        *Config
 	client        *redis.Client
 	clusterClient *redis.ClusterClient
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 func NewRedisClient(config Config) RedisClient {
@@ -119,6 +123,12 @@ func NewRedisClient(config Config) RedisClient {
 	defer cancelFunc()
 	if ping := c.GetRedis().Ping(timeout); ping.Err() != nil {
 		panic("connect redis failed. Error: " + ping.Err().Error())
+	}
+
+	if strings.ToLower(config.EnableMetrics) == "true" {
+		c.AddHook(newMetricsHook(c.config))
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+		startPoolMetrics(c.ctx, c)
 	}
 
 	global.DefaultResourceManger.Add(c)
@@ -179,6 +189,10 @@ func (c *redisClient) encodingValues(keyWithPrefix bool, values ...interface{}) 
 }
 
 func (c *redisClient) Close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+
 	var err error
 	switch c.config.Mode {
 	case ClusterMode:
@@ -190,6 +204,7 @@ func (c *redisClient) Close() {
 	if err != nil {
 		logger.Error("close redis client failed. err: %s", err.Error())
 	}
+	logger.Info("redis client closed successfully")
 }
 
 func (c *redisClient) GetRedis() redis.Cmdable {
