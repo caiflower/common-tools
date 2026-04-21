@@ -234,8 +234,7 @@ func (c *Cluster) Start() error {
 
 	// HPA 支持：启动时通过 headless service DNS 重新加载节点，并启动后台轮询
 	if c.enableReplicasDiscovery() {
-		c.loadNodes()
-		c.reconnect()
+		c.reloadAllNodes(nil)
 		go c.watchReplicas()
 
 		for _, v := range c.GetAliveNodeNames() {
@@ -506,14 +505,8 @@ func (c *Cluster) RemoveJobTracker(v JobTracker) {
 }
 
 func (c *Cluster) loadNodes() {
-	var keys []interface{}
-	c.allNode.Range(func(key, value interface{}) bool {
-		keys = append(keys, key)
-		return true
-	})
-	for _, key := range keys {
-		c.allNode.Delete(key)
-	}
+	// clear all node and reload
+	c.allNode.Clear()
 
 	var addresses []string
 	replicasDiscovery := &c.config.ReplicasDiscovery
@@ -1175,6 +1168,7 @@ func (c *Cluster) consumeEvent() {
 			c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 		case eventNameSignFollower:
 			c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
 				jobTracker.OnStartedFollowing(ev.leaderName)
@@ -1182,6 +1176,7 @@ func (c *Cluster) consumeEvent() {
 			})
 		case eventNameSignMaster:
 			c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.updateMetrics(true)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
 				jobTracker.OnStartedLeading()
@@ -1189,6 +1184,7 @@ func (c *Cluster) consumeEvent() {
 			})
 		case eventNameUnsignMaster:
 			c.logger.Debug("[cluster] %s unsign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
 				jobTracker.OnStoppedLeading()
@@ -1200,6 +1196,7 @@ func (c *Cluster) consumeEvent() {
 			c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
 		case eventNameUnsignFollower:
 			c.logger.Debug("[cluster] %s unsign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				tracker := value.(JobTracker)
 				tracker.OnStoppedFollowing()
@@ -1360,8 +1357,7 @@ func (c *Cluster) watchReplicas() {
 
 			c.logger.Info("[cluster] replicas changed: %d -> %d, reloading nodes", currentReplicas, replicas)
 			c.currentReplicas.Store(replicas)
-			c.loadNodes()
-			c.reconnect()
+			c.reloadAllNodes(nil)
 		}
 	}
 }
