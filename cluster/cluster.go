@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -106,35 +107,36 @@ type RedisDiscovery struct {
 }
 
 type ReplicasDiscovery struct {
-	DomainPatten string `yaml:"domainPatten"`
-	Port         int    `yaml:"port" default:"8081"`
-	Replicas     int    `yaml:"replicas"`
+	DomainPatten string        `yaml:"domainPatten"`
+	Port         int           `yaml:"port" default:"8081"`
+	PollInterval time.Duration `yaml:"pollInterval" default:"30s"` // HPA 支持：轮询 headless service DNS 的间隔
 }
 
 type Cluster struct {
-	lock           sync.Locker                                            // 启动关闭锁
-	fightingState  uint32                                                 // 选举锁
-	config         *Config                                                // 配置文件
-	curNode        *Node                                                  // 当前节点
-	leaderNode     *Node                                                  // 领导节点
-	leaderLock     sync.RWMutex                                           // leader锁
-	lostLeaderTime time.Time                                              // 没有leader的时间
-	allNode        *sync.Map                                              // 所有的节点
-	aliveNodes     *sync.Map                                              // 所有存活的节点
-	term           int                                                    // 当前任期
-	sate           uint32                                                 // 集群状态
-	server         nio.IServer                                            // 服务端口
-	logger         logger.ILog                                            // 日志框架
-	msgChan        chan *Message                                          // 消息通信chan
-	votesMap       map[int]string                                         // 投票map term->nodeName
-	votesLock      sync.Locker                                            // 投票锁
-	localFuncs     map[string]func(data interface{}) (interface{}, error) // 本地函数
-	Redis          redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
-	ctx            context.Context
-	cancelFunc     context.CancelFunc
-	events         chan *event
-	jobTrackers    *sync.Map
-	closeSuccess   chan bool
+	lock            sync.Locker                                            // 启动关闭锁
+	fightingState   uint32                                                 // 选举锁
+	config          *Config                                                // 配置文件
+	curNode         *Node                                                  // 当前节点
+	leaderNode      *Node                                                  // 领导节点
+	leaderLock      sync.RWMutex                                           // leader锁
+	lostLeaderTime  time.Time                                              // 没有leader的时间
+	allNode         *sync.Map                                              // 所有的节点
+	aliveNodes      *sync.Map                                              // 所有存活的节点
+	term            int                                                    // 当前任期
+	sate            uint32                                                 // 集群状态
+	server          nio.IServer                                            // 服务端口
+	logger          logger.ILog                                            // 日志框架
+	msgChan         chan *Message                                          // 消息通信chan
+	votesMap        map[int]string                                         // 投票map term->nodeName
+	votesLock       sync.Locker                                            // 投票锁
+	localFuncs      map[string]func(data interface{}) (interface{}, error) // 本地函数
+	Redis           redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	ctx             context.Context
+	cancelFunc      context.CancelFunc
+	events          chan *event
+	jobTrackers     *sync.Map
+	closeSuccess    chan bool
+	currentReplicas atomic.Value
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -230,12 +232,16 @@ func (c *Cluster) Start() error {
 		c.reconnect()
 	}
 
-	// 扩容情况
-	if c.enableReplicasDiscovery() && env.Kubernetes {
+	// HPA 支持：启动时通过 headless service DNS 重新加载节点，并启动后台轮询
+	if c.enableReplicasDiscovery() {
+		c.loadNodes()
+		c.reconnect()
+		go c.watchReplicas()
+
 		for _, v := range c.GetAliveNodeNames() {
 			if v != c.GetMyName() {
-				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second).IgnoreNotReady()); err != nil {
-					logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
+					c.logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
 				}
 			}
 		}
@@ -284,12 +290,12 @@ func (c *Cluster) Close() {
 		return
 	}
 
-	// 缩容或者重启
-	//if c.enableReplicasDiscovery() && env.Kubernetes {
+	// 缩容或者重启：通知其他存活节点重新加载拓扑（各节点将通过 DNS 自行发现新的副本数）
+	//if c.enableReplicasDiscovery() {
 	//	for _, v := range c.GetAliveNodeNames() {
 	//		if v != c.GetMyName() {
-	//			if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, c.config.ReplicasDiscovery.Replicas, 2*time.Second)); err != nil {
-	//				logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+	//			if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
+	//				c.logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
 	//			}
 	//		}
 	//	}
@@ -512,10 +518,14 @@ func (c *Cluster) loadNodes() {
 	var addresses []string
 	replicasDiscovery := &c.config.ReplicasDiscovery
 	if c.enableReplicasDiscovery() {
-		if replicasDiscovery.Replicas <= 0 {
-			replicasDiscovery.Replicas = env.GetReplicas()
+		replicas := c.discoverReplicasFromDNS()
+		if replicas <= 0 {
+			replicas = env.GetReplicas()
 		}
-		for i := 0; i < replicasDiscovery.Replicas; i++ {
+		c.currentReplicas.Store(replicas)
+
+		c.logger.Info("replicas discovery enabled, current replicas: %d", replicas)
+		for i := 0; i < replicas; i++ {
 			domain := strings.Replace(replicasDiscovery.DomainPatten, "{suf}", strconv.Itoa(i), 1)
 			address := fmt.Sprintf("%s:%d", domain, replicasDiscovery.Port)
 			node := newNode(address, domain, c.config.Timeout.Seconds()/3)
@@ -547,7 +557,7 @@ func (c *Cluster) IsEnable() bool {
 }
 
 func (c *Cluster) enableReplicasDiscovery() bool {
-	return c.config.ReplicasDiscovery.DomainPatten != "" && c.config.ReplicasDiscovery.Port > 0
+	return c.config.ReplicasDiscovery.DomainPatten != "" && c.config.ReplicasDiscovery.Port > 0 && env.Kubernetes
 }
 
 func (c *Cluster) getQuorum() int {
@@ -702,7 +712,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 		count := c.GetAliveNodeCount()
 		quorum := c.getQuorum()
-		logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
+		c.logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
 			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
@@ -769,7 +779,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 	// 开始获取选票
 	for {
 		if c.IsReady() || c.IsClose() {
-			logger.Info("cluster is ready or close")
+			c.logger.Info("cluster is ready or close")
 			return
 		}
 
@@ -777,7 +787,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 		count := c.GetAliveNodeCount()
 		quorum := c.getQuorum()
-		logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
+		c.logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
 			myNodeName := c.GetMyName()
@@ -806,7 +816,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 				// 开始广播自己为 leader
 				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
 				if len(messages1)+1 < quorum { // +1是包括了自己
-					logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
+					c.logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
 					return
 				}
 
@@ -1277,19 +1287,71 @@ func (c *Cluster) callRemoteFunc(f *FuncSpec) {
 	}
 }
 
-func (c *Cluster) reloadAllNodes(data interface{}) (interface{}, error) {
-	if replicas, ok := data.(int); ok {
-		c.config.ReplicasDiscovery.Replicas = replicas
-	} else {
-		err := tools.Unmarshal([]byte(tools.ToJson(data)), &c.config.ReplicasDiscovery.Replicas)
-		if err != nil {
-			c.logger.Error("[cluster] reloadAllNodes failed. Error: %v", err)
-			return nil, fmt.Errorf("%s reloadAllNodes failed", c.GetMyName())
-		}
-	}
-
-	c.logger.Info("[cluster] do reloadAllNodes, replicas: %d", c.config.ReplicasDiscovery.Replicas)
+func (c *Cluster) reloadAllNodes(_ interface{}) (interface{}, error) {
+	c.logger.Info("[cluster] do reloadAllNodes")
 	c.loadNodes()
 	c.reconnect()
 	return nil, nil
+}
+
+// getHeadlessServiceDomain 从 DomainPatten 中提取 headless service 域名。
+// 例如：algo-invoker-{suf}.algo-invoker-headless.pixon.svc.cluster.local
+// 提取后：algo-invoker-headless.pixon.svc.cluster.local
+func (c *Cluster) getHeadlessServiceDomain() string {
+	pattern := c.config.ReplicasDiscovery.DomainPatten
+	const placeholder = "{suf}."
+	idx := strings.Index(pattern, placeholder)
+	if idx < 0 {
+		return ""
+	}
+	return pattern[idx+len(placeholder):]
+}
+
+// discoverReplicasFromDNS 通过查询 headless service DNS 获取当前 ready 的副本数。
+// K8s headless service 的 DNS 解析返回所有 ready pod 的 IP 列表，len 即为副本数。
+func (c *Cluster) discoverReplicasFromDNS() int {
+	domain := c.getHeadlessServiceDomain()
+	c.logger.Info("[cluster] discoverReplicasFromDNS: domain=%s", domain)
+
+	if domain == "" {
+		return 0
+	}
+	addrs, err := net.LookupHost(domain)
+	if err != nil {
+		c.logger.Error("[cluster] DNS lookup for headless service %s failed: %v", domain, err)
+		return 0
+	}
+	return len(addrs)
+}
+
+// watchReplicas 后台轮询 headless service DNS，检测 HPA 引起的副本数变化并触发集群拓扑更新。
+func (c *Cluster) watchReplicas() {
+	interval := c.config.ReplicasDiscovery.PollInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	c.currentReplicas.Store(c.discoverReplicasFromDNS())
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			replicas := c.discoverReplicasFromDNS()
+			currentReplicas := c.currentReplicas.Load().(int)
+
+			if replicas <= 0 || replicas == currentReplicas {
+				c.logger.Info("[cluster] discoverReplicasFromDNS: current replicas=%d", replicas)
+				continue
+			}
+
+			c.logger.Info("[cluster] replicas changed: %d -> %d, reloading nodes", currentReplicas, replicas)
+			c.currentReplicas.Store(replicas)
+			c.loadNodes()
+			c.reconnect()
+		}
+	}
 }
