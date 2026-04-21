@@ -108,17 +108,21 @@ func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error 
 }
 
 func (h *consumerGroupHandler) Cleanup(session sarama.ConsumerGroupSession) error {
+	h.sessionMu.Lock()
+	h.consumerSession = nil
+	h.sessionMu.Unlock()
 	return nil
 }
 
 // ConsumeClaim sarama 调度时，对应每一个 partition，会启动一个 ConsumeClaim 协程，参数 claim 就代表一个分区
 func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	h.sessionMu.Lock()
 	h.consumerSession = session
+	h.sessionMu.Unlock()
 	for {
 		select {
 		case msg, ok := <-claim.Messages():
 			if !ok {
-				h.consumerSession = nil
 				return nil
 			}
 			logger.Trace("Message receive event : [name=%s] [group=%s] [topic=%s] [partition=%d] [offset=%d] [msg=%s]", h.cfg.Name, h.cfg.GroupID, msg.Topic, msg.Partition, msg.Offset, string(msg.Value))
@@ -140,7 +144,6 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			}
 			queue.(*basic.SafeRingQueue).BlockEnqueue(item)
 		case <-session.Context().Done(): //表示内部会话已关闭，这里一定要退出去，否则会导致 rebalance 超时
-			h.consumerSession = nil
 			return nil
 		}
 	}
@@ -246,9 +249,12 @@ func (c *KafkaClient) monitorOffset() {
 				// 提交过的offset的消息
 				if lastDoneMsg != nil {
 					logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
-					if c.consumerSession != nil {
-						c.consumerSession.MarkMessage(lastDoneMsg, "")
-						c.consumerSession.Commit()
+					c.sessionMu.RLock()
+					session := c.consumerSession
+					c.sessionMu.RUnlock()
+					if session != nil {
+						session.MarkMessage(lastDoneMsg, "")
+						session.Commit()
 					}
 				}
 			}

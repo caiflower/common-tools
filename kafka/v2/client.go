@@ -41,6 +41,7 @@ type KafkaClient struct {
 	msgChan             chan *msgItem
 	msgQueue            sync.Map
 	consumerSession     sarama.ConsumerGroupSession
+	sessionMu           sync.RWMutex
 	monitorOffsetJob    crontab.RegularJob
 	monitorQueueSizeJob crontab.RegularJob
 	commitOffsetFunc    func()
