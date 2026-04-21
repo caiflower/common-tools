@@ -42,6 +42,8 @@ func init() {
 	initEnv()
 	findLocalHostIP()
 	findLocalDNS()
+
+	fmt.Sprintf("LocalDNS=%s, LocalhostIP=%s, Replicas=%d, Namespace=%s, App=%s", LocalDNS, LocalhostIP, Replicas, Namespace, App)
 }
 
 func initConfigPath() {

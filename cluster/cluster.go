@@ -587,6 +587,16 @@ func (c *Cluster) findCurNode() {
 				}
 				return true
 			})
+
+			if c.curNode == nil {
+				domain := env.GetLocalDNS()
+				address := fmt.Sprintf("%s:%d", domain, c.config.ReplicasDiscovery.Port)
+				node := newNode(address, domain, c.config.Timeout.Seconds()/3)
+				c.allNode.Store(domain, node)
+				c.curNode = node
+
+				c.logger.Info("[cluster] set default localhost, address = %s", address)
+			}
 		}
 	}
 }
