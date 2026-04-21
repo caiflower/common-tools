@@ -626,6 +626,8 @@ func (c *Cluster) reconnect() {
 		}
 		return true
 	})
+
+	c.updateMetrics(c.IsLeader())
 }
 
 func (c *Cluster) listen() {
