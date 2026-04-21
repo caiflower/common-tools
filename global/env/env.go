@@ -79,7 +79,7 @@ func findLocalDNS() {
 		if err == nil {
 			hostLines := strings.Split(result.Stdout.String(), "\n")
 			for _, hostLine := range hostLines {
-				if strings.Contains(hostLine, "cluster.local") {
+				if strings.Contains(hostLine, "cluster.local") && strings.Contains(hostLine, LocalhostIP) {
 					strs := strings.Fields(hostLine)
 					for _, str := range strs {
 						if strings.Contains(str, "cluster.local") {
