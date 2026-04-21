@@ -1326,6 +1326,12 @@ func (c *Cluster) discoverReplicasFromDNS() int {
 	addrs, err := net.LookupHost(domain)
 	if err != nil {
 		c.logger.Error("[cluster] DNS lookup for headless service %s failed: %v", domain, err)
+
+		// If DNS lookup failed, return the current replicas number.
+		if v := c.currentReplicas.Load(); v != nil {
+			return v.(int)
+		}
+
 		return 0
 	}
 	return len(addrs)
