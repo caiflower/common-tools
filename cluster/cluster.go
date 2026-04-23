@@ -506,7 +506,10 @@ func (c *Cluster) RemoveJobTracker(v JobTracker) {
 
 func (c *Cluster) loadNodes() {
 	// clear all node and reload
-	c.allNode.Clear()
+	c.allNode.Range(func(key, value interface{}) bool {
+		c.allNode.Delete(key)
+		return true
+	})
 
 	var addresses []string
 	replicasDiscovery := &c.config.ReplicasDiscovery
