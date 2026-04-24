@@ -386,6 +386,14 @@ func (ctx *RequestContext) RemoteAddr() net.Addr {
 	return addr
 }
 
+func (ctx *RequestContext) GetStatusCode() int {
+	if ctx.IsNetpoll() {
+		return ctx.Response.Header.StatusCode()
+	}
+
+	return 200
+}
+
 type HandlerFunc func(c context.Context, ctx *RequestContext)
 
 // HandlersChain defines a HandlerFunc array.
