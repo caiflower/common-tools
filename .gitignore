@@ -25,3 +25,4 @@ go.work
 .vscode/**
 .trae
 .claude
+.qoder

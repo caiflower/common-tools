@@ -26,6 +26,7 @@ import (
 	"runtime/debug"
 	runtimepprof "runtime/pprof"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -694,6 +695,6 @@ func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
 		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
 		// fix: 关闭协程提升性能
-		metric.SaveMetric(h.config.Name, "200", ctx.GetMethod(), ctx.GetPath(), 0, sub.Seconds())
+		metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.GetStatusCode()), ctx.GetMethod(), ctx.GetPath(), 0, sub.Seconds())
 	}
 }
