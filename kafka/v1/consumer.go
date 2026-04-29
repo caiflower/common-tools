@@ -24,6 +24,7 @@ import (
 
 	"github.com/caiflower/common-tools/global"
 	xkafka "github.com/caiflower/common-tools/kafka"
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/crontab"
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -118,34 +119,47 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.running = true
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.closeChan = make(chan struct{}, c.config.ConsumerWorkerNum)
-	c.fn = fn
+	// 1 个 reader goroutine + ConsumerWorkerNum 个 worker goroutine
+	c.closeChan = make(chan struct{}, 1+c.config.ConsumerWorkerNum)
+	c.msgChan = make(chan *msgItem, c.config.ConsumerQueueSize)
 
-	// 开始消费
-	c.doListen()
+	c.doListen(fn)
 	c.monitorOffset()
 }
 
+// monitorOffset 定期扫描每个 partition 的有序队列，将队头连续已完成的消息提交 offset。
+// 只有队头的消息 done=true 才推进，保证不跳过未完成的消息。
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
 		e.OnError("kafka consumer monitorOffset")
 		var commitOffsets []kafka.TopicPartition
-		c.offsets.Range(func(k, v interface{}) bool {
-			tp := v.(kafka.TopicPartition)
-			logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, k.(string), tp.Offset)
-			tp.Offset += 1
-			commitOffsets = append(commitOffsets, tp)
+		c.msgQueue.Range(func(key, value interface{}) bool {
+			queue := value.(*basic.SafeRingQueue)
+			var lastDoneMsg *kafka.Message
+			for {
+				head, err := queue.Peek()
+				if err != nil {
+					break
+				}
+				item := head.(*msgItem)
+				if !item.done {
+					break
+				}
+				lastDoneMsg = item.msg
+				queue.Dequeue()
+			}
+			if lastDoneMsg != nil {
+				tp := lastDoneMsg.TopicPartition
+				tp.Offset++
+				logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, key.(string), lastDoneMsg.TopicPartition.Offset)
+				commitOffsets = append(commitOffsets, tp)
+			}
 			return true
 		})
 		if len(commitOffsets) > 0 {
 			_, err := c.Consumer.CommitOffsets(commitOffsets)
 			if err != nil {
 				logger.Error("[kafka-consumer] commit offsets failed. Error: %s", err.Error())
-			} else {
-				c.offsets.Range(func(k, v interface{}) bool {
-					c.offsets.Delete(k)
-					return true
-				})
 			}
 		}
 	}
@@ -154,39 +168,70 @@ func (c *KafkaClient) monitorOffset() {
 	c.monitorOffsetJob.Run()
 }
 
-func (c *KafkaClient) doListen() {
-	runThread := func(tid int) {
-		defer e.OnError("")
-		logger.Info("[kafka-consumer] consumer [%s-%d] started.", c.config.Name, tid)
-
+func (c *KafkaClient) doListen(fn func(message interface{})) {
+	// 单 goroutine 读消息，分发到 msgChan
+	go func() {
+		defer func() {
+			c.closeChan <- struct{}{}
+			logger.Info("[kafka-consumer] reader [%s] stopped.", c.config.Name)
+		}()
+		logger.Info("[kafka-consumer] reader [%s] started.", c.config.Name)
 		for {
 			select {
 			case <-c.ctx.Done():
-				logger.Info("[kafka-consumer] consumer [%s-%d] stopped.", c.config.Name, tid)
-				c.closeChan <- struct{}{}
 				return
 			default:
 				msg, err := c.Consumer.ReadMessage(100 * time.Millisecond)
-				if err == nil {
-					func() {
-						defer e.OnError(fmt.Sprintf("[kafka-consumer] [%s-%d] consumer listen", c.config.Name, tid))
-						startTime := time.Now()
-						c.fn(msg)
-						xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
-						xkafka.CountConsumer(c.config)
-					}()
+				if err != nil {
+					if !err.(kafka.Error).IsTimeout() {
+						logger.Error("[kafka-consumer] [%s] read failed. Error: %v", c.config.Name, err)
+						xkafka.AddConsumerError(c.config, xkafka.ConsumeErr)
+					}
+					continue
+				}
 
-					c.offsets.Store(getTopicPartitionKey(&msg.TopicPartition), msg.TopicPartition)
-				} else if !err.(kafka.Error).IsTimeout() {
-					logger.Error("[kafka-consumer] [%s-%d] failed. Error: %v", c.config.Name, tid, err)
-					xkafka.AddConsumerError(c.config, xkafka.ConsumeErr)
+				item := &msgItem{msg: msg, done: false}
+
+				// 按 partition 维护有序队列，用于 offset 追踪
+				key := getTopicPartitionKey(&msg.TopicPartition)
+				queue, ok := c.msgQueue.Load(key)
+				if !ok {
+					queue = basic.NewSafeRingQueue(c.config.ConsumerQueueSize)
+					c.msgQueue.Store(key, queue)
+				}
+				queue.(*basic.SafeRingQueue).BlockEnqueue(item)
+
+				// 分发给 worker pool
+				select {
+				case <-c.ctx.Done():
+					return
+				case c.msgChan <- item:
 				}
 			}
+		}
+	}()
+
+	// worker pool：并发处理消息，处理完标记 done=true
+	runWorker := func(tid int) {
+		defer func() {
+			c.closeChan <- struct{}{}
+			logger.Info("[kafka-consumer] worker [%s-%d] stopped.", c.config.Name, tid)
+		}()
+		logger.Info("[kafka-consumer] worker [%s-%d] started.", c.config.Name, tid)
+		for item := range c.msgChan {
+			func() {
+				defer e.OnError(fmt.Sprintf("[kafka-consumer] [%s-%d] consumer listen", c.config.Name, tid))
+				startTime := time.Now()
+				fn(item.msg)
+				xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
+				xkafka.CountConsumer(c.config)
+			}()
+			item.done = true
 		}
 	}
 
 	for i := 1; i <= c.config.ConsumerWorkerNum; i++ {
-		go runThread(i)
+		go runWorker(i)
 	}
 }
 

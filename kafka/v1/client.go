@@ -33,6 +33,11 @@ import (
  * 2、消费者支持设置consumer_worker_num, 消费者数量
  */
 
+type msgItem struct {
+	msg  *kafka.Message
+	done bool
+}
+
 type KafkaClient struct {
 	lock    sync.Locker
 	config  *xkafka.Config
@@ -41,8 +46,8 @@ type KafkaClient struct {
 	running bool
 
 	Consumer         *kafka.Consumer
-	fn               func(message interface{})
-	offsets          sync.Map
+	msgChan          chan *msgItem
+	msgQueue         sync.Map
 	closeChan        chan struct{}
 	commitOffsetFunc func()
 	monitorOffsetJob crontab.RegularJob
@@ -67,8 +72,24 @@ func (c *KafkaClient) Close() {
 	if c.cancel != nil {
 		c.cancel()
 		c.cancel = nil
-		for i := 1; i <= c.config.ConsumerWorkerNum; i++ {
+
+		// 先等 reader 退出，确保不再往 msgChan 写
+		<-c.closeChan
+
+		// reader 退出后关闭 msgChan，触发 worker 的 range 结束
+		if c.msgChan != nil {
+			close(c.msgChan)
+			c.msgChan = nil
+		}
+
+		// 再等所有 worker 退出
+		for i := 0; i < c.config.ConsumerWorkerNum; i++ {
 			<-c.closeChan
+		}
+
+		if c.commitOffsetFunc != nil {
+			logger.Info("[kafka-consumer-close] commit offset before close, name='%s'", c.config.Name)
+			c.commitOffsetFunc()
 		}
 		c.closeChan = nil
 	}
