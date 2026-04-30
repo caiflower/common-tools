@@ -98,8 +98,9 @@ type consumerGroupHandler struct {
 }
 
 type msgItem struct {
-	msg  *sarama.ConsumerMessage
-	done bool
+	msg        *sarama.ConsumerMessage
+	done       bool
+	retryCount int
 }
 
 func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
@@ -200,7 +201,12 @@ label:
 	}
 }
 
-func (c *KafkaClient) consume(fn func(message interface{})) {
+func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
+	var dlHandler xkafka.DeadLetterHandler
+	if len(deadLetterHandler) > 0 {
+		dlHandler = deadLetterHandler[0]
+	}
+
 	runThread := func(tid int) {
 		logger.Debug("[kafka-consumer] [%s-%d] started.", c.cfg.Name, tid)
 		defer func() {
@@ -210,18 +216,40 @@ func (c *KafkaClient) consume(fn func(message interface{})) {
 
 		for item := range c.msgChan {
 			if c.running == false {
-				// 不再消费直接退出
+				// 不再消费直接退出 / Stop consuming and exit
 				return
 			}
 
-			func() {
+			completed := func() bool {
 				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
 				startTime := time.Now()
-				fn(item.msg)
+				if err := fn(item.msg); err != nil {
+					item.retryCount++
+					if item.retryCount < c.cfg.ConsumerRetryCount {
+						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
+						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), re-enqueuing. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, err)
+						select {
+						case <-c.ctx.Done():
+							return false
+						case c.msgChan <- item:
+						}
+						return false
+					}
+					// All retries exhausted / 重试次数耗尽
+					logger.Error("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] after %d retries. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, c.cfg.ConsumerRetryCount, err)
+					if dlHandler != nil {
+						// Call dead letter handler / 调用死信回调
+						dlHandler(item.msg, err)
+					}
+					// Mark done to allow offset commit, preventing rebalance / 标记完成以允许 offset 提交，避免 rebalance
+				}
 				xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
 				xkafka.CountConsumer(c.cfg)
+				return true
 			}()
-			item.done = true
+			if completed {
+				item.done = true
+			}
 		}
 	}
 	for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
@@ -280,7 +308,7 @@ func (c *KafkaClient) monitorMsgQueueSize() {
 	c.monitorQueueSizeJob.Run()
 }
 
-func (c *KafkaClient) Listen(fn func(message interface{})) {
+func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if c.running || strings.ToUpper(c.cfg.Enable) != "TRUE" {
@@ -296,7 +324,7 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.ctx = ctx
 
 	go c.openConsume()
-	go c.consume(fn)
+	go c.consume(fn, deadLetterHandler...)
 	c.monitorOffset()
 	c.monitorMsgQueueSize()
 }

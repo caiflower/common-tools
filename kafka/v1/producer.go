@@ -119,6 +119,7 @@ func (c *KafkaClient) Send(topic string, key string, values ...interface{}) erro
 
 	var err error
 	event := make(chan kafka.Event, len(values))
+	defer close(event)
 
 	for _, value := range values {
 		xkafka.CountProducer(c.config, topic)

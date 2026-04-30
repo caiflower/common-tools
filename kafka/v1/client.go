@@ -34,8 +34,9 @@ import (
  */
 
 type msgItem struct {
-	msg  *kafka.Message
-	done bool
+	msg        *kafka.Message
+	done       bool
+	retryCount int
 }
 
 type KafkaClient struct {

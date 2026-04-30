@@ -52,7 +52,7 @@ func TestMock(t *testing.T) {
 		SaslPassword:     "3JVZWh98fe",
 	}
 	cClient := NewConsumerClient(consumerConfig)
-	cClient.Listen(func(message interface{}) {
+	cClient.Listen(func(message interface{}) error {
 		if v, ok := message.(*KafkaMessage); ok {
 			m := Message{}
 			if err := tools.Unmarshal(v.Value, &m); err != nil {
@@ -63,6 +63,7 @@ func TestMock(t *testing.T) {
 			fmt.Println("unknown message")
 		}
 
+		return nil
 	})
 
 	defer cClient.Close()
@@ -129,7 +130,7 @@ func TestMock1(t *testing.T) {
 		ConsumerAutoOffsetReset: "earliest",
 	}
 	cClient := NewConsumerClient(consumerConfig)
-	cClient.Listen(func(message interface{}) {
+	cClient.Listen(func(message interface{}) error {
 		if v, ok := message.(*KafkaMessage); ok {
 			m := Message{}
 			if err := tools.Unmarshal(v.Value, &m); err != nil {
@@ -140,6 +141,7 @@ func TestMock1(t *testing.T) {
 			fmt.Println("unknown message")
 		}
 
+		return nil
 	})
 
 	defer cClient.Close()

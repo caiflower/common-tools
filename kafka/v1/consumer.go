@@ -110,7 +110,7 @@ func (c *KafkaClient) GetConsumer() *kafka.Consumer {
 	return c.Consumer
 }
 
-func (c *KafkaClient) Listen(fn func(message interface{})) {
+func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if c.running || strings.ToUpper(c.config.Enable) != "TRUE" {
@@ -123,7 +123,7 @@ func (c *KafkaClient) Listen(fn func(message interface{})) {
 	c.closeChan = make(chan struct{}, 1+c.config.ConsumerWorkerNum)
 	c.msgChan = make(chan *msgItem, c.config.ConsumerQueueSize)
 
-	c.doListen(fn)
+	c.doListen(fn, deadLetterHandler...)
 	c.monitorOffset()
 }
 
@@ -168,7 +168,7 @@ func (c *KafkaClient) monitorOffset() {
 	c.monitorOffsetJob.Run()
 }
 
-func (c *KafkaClient) doListen(fn func(message interface{})) {
+func (c *KafkaClient) doListen(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
 	// 单 goroutine 读消息，分发到 msgChan
 	go func() {
 		defer func() {
@@ -212,6 +212,12 @@ func (c *KafkaClient) doListen(fn func(message interface{})) {
 	}()
 
 	// worker pool：并发处理消息，处理完标记 done=true
+	// Worker pool: concurrent message processing, mark done=true when completed
+	var dlHandler xkafka.DeadLetterHandler
+	if len(deadLetterHandler) > 0 {
+		dlHandler = deadLetterHandler[0]
+	}
+
 	runWorker := func(tid int) {
 		defer func() {
 			c.closeChan <- struct{}{}
@@ -219,14 +225,36 @@ func (c *KafkaClient) doListen(fn func(message interface{})) {
 		}()
 		logger.Info("[kafka-consumer] worker [%s-%d] started.", c.config.Name, tid)
 		for item := range c.msgChan {
-			func() {
+			completed := func() bool {
 				defer e.OnError(fmt.Sprintf("[kafka-consumer] [%s-%d] consumer listen", c.config.Name, tid))
 				startTime := time.Now()
-				fn(item.msg)
+				if err := fn(item.msg); err != nil {
+					item.retryCount++
+					if item.retryCount < c.config.ConsumerRetryCount {
+						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
+						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), re-enqueuing. Error: %v", c.config.Name, tid, *item.msg.TopicPartition.Topic, item.msg.TopicPartition.Partition, item.msg.TopicPartition.Offset, item.retryCount, c.config.ConsumerRetryCount, err)
+						select {
+						case <-c.ctx.Done():
+							return false
+						case c.msgChan <- item:
+						}
+						return false
+					}
+					// All retries exhausted / 重试次数耗尽
+					logger.Error("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] after %d retries. Error: %v", c.config.Name, tid, *item.msg.TopicPartition.Topic, item.msg.TopicPartition.Partition, item.msg.TopicPartition.Offset, c.config.ConsumerRetryCount, err)
+					if dlHandler != nil {
+						// Call dead letter handler / 调用死信回调
+						dlHandler(item.msg, err)
+					}
+					// Mark done to allow offset commit, preventing rebalance / 标记完成以允许 offset 提交，避免 rebalance
+				}
 				xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
 				xkafka.CountConsumer(c.config)
+				return true
 			}()
-			item.done = true
+			if completed {
+				item.done = true
+			}
 		}
 	}
 
