@@ -131,6 +131,7 @@ func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandl
 // 只有队头的消息 done=true 才推进，保证不跳过未完成的消息。
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
+		c.commitCycleCount++
 		e.OnError("kafka consumer monitorOffset")
 		var commitOffsets []kafka.TopicPartition
 		c.msgQueue.Range(func(key, value interface{}) bool {
@@ -151,7 +152,10 @@ func (c *KafkaClient) monitorOffset() {
 			if lastDoneMsg != nil {
 				tp := lastDoneMsg.TopicPartition
 				tp.Offset++
-				logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, key.(string), lastDoneMsg.TopicPartition.Offset)
+				if c.commitCycleCount%10 == 0 {
+					c.commitCycleCount = 0
+					logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, key.(string), lastDoneMsg.TopicPartition.Offset)
+				}
 				commitOffsets = append(commitOffsets, tp)
 			}
 			return true

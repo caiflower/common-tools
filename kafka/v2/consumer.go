@@ -259,6 +259,7 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
+		c.commitCycleCount++
 		c.msgQueue.Range(func(key, value interface{}) bool {
 			if msgQueue := value.(*basic.SafeRingQueue); msgQueue.Size() >= 0 {
 				var lastDoneMsg *sarama.ConsumerMessage = nil
@@ -276,7 +277,10 @@ func (c *KafkaClient) monitorOffset() {
 
 				// 提交过的offset的消息
 				if lastDoneMsg != nil {
-					logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
+					if c.commitCycleCount%10 == 0 {
+						c.commitCycleCount = 0
+						logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
+					}
 					c.sessionMu.RLock()
 					session := c.consumerSession
 					c.sessionMu.RUnlock()

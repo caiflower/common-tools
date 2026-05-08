@@ -52,6 +52,7 @@ type KafkaClient struct {
 	closeChan        chan struct{}
 	commitOffsetFunc func()
 	monitorOffsetJob crontab.RegularJob
+	commitCycleCount int
 
 	Producer *kafka.Producer
 }
