@@ -19,6 +19,7 @@ package v2
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -88,10 +89,12 @@ func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 	}
 
 	kafkaClient := &KafkaClient{
-		cfg:          &cfg,
-		saramaConfig: config,
-		running:      true,
+		cfg:                  &cfg,
+		saramaConfig:         config,
+		running:              atomic.Bool{}, // default false, set to true below / 默认 false，在下方设置为 true
+		monitorOffsetRunning: atomic.Bool{},
 	}
+	kafkaClient.running.Store(true)
 	logger.Info("[kafka-product] producer '%s' config: %s", cfg.Name, tools.ToJson(cfg))
 
 	kafkaClient.openSyncProducer()
@@ -107,7 +110,7 @@ func (c *KafkaClient) openSyncProducer() {
 	var err error
 label:
 	for {
-		if c.running == false {
+		if !c.running.Load() {
 			return
 		}
 		c.resetRetryVersion()
@@ -133,7 +136,7 @@ func (c *KafkaClient) openASyncProducer() {
 label:
 	for {
 		var err error
-		if c.running == false {
+		if !c.running.Load() {
 			return
 		}
 		c.resetRetryVersion()

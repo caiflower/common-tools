@@ -22,6 +22,7 @@ import (
 	"crypto/sha512"
 	"hash"
 	"sync"
+	"sync/atomic"
 
 	"github.com/IBM/sarama"
 	xkafka "github.com/caiflower/common-tools/kafka"
@@ -32,10 +33,11 @@ import (
 )
 
 type KafkaClient struct {
-	cfg          *xkafka.Config
-	saramaConfig *sarama.Config
-	lock         sync.Mutex
-	running      bool
+	cfg                  *xkafka.Config
+	saramaConfig         *sarama.Config
+	lock                 sync.Mutex
+	running              atomic.Bool
+	monitorOffsetRunning atomic.Bool
 
 	consumerGroup       sarama.ConsumerGroup
 	msgChan             chan *msgItem
@@ -63,10 +65,10 @@ func (c *KafkaClient) Close() {
 	logger.Info("[Kafka client close] name='%s'", c.cfg.Name)
 	defer e.OnError("")
 
-	if c.running == false {
+	if !c.running.Load() {
 		return
 	}
-	c.running = false
+	c.running.Store(false)
 
 	if c.msgChan != nil {
 		c.cancelFunc()

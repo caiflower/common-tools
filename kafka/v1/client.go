@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/crontab"
@@ -40,11 +41,12 @@ type msgItem struct {
 }
 
 type KafkaClient struct {
-	lock    sync.Locker
-	config  *xkafka.Config
-	ctx     context.Context
-	cancel  context.CancelFunc
-	running bool
+	lock                 sync.Locker
+	config               *xkafka.Config
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	running              bool
+	monitorOffsetRunning atomic.Bool
 
 	Consumer         *kafka.Consumer
 	msgChan          chan *msgItem

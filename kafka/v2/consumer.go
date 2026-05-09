@@ -156,7 +156,7 @@ func (c *KafkaClient) openConsume() {
 	var err error
 label:
 	for {
-		if c.running == false {
+		if !c.running.Load() {
 			return
 		}
 		c.resetRetryVersion()
@@ -186,7 +186,7 @@ label:
 	c.consumerGroup = consumerGroup
 	ctx := context.Background()
 	for {
-		if c.running == false {
+		if !c.running.Load() {
 			logger.Info("[ConsumerGroup] consumer is closed, name=%s", c.cfg.Name)
 			break
 		}
@@ -215,17 +215,16 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 		}()
 
 		for item := range c.msgChan {
-			if c.running == false {
-				// 不再消费直接退出 / Stop consuming and exit
-				return
-			}
-
 			completed := func() bool {
 				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
 				startTime := time.Now()
 				if err := fn(item.msg); err != nil {
 					item.retryCount++
 					if item.retryCount < c.cfg.ConsumerRetryCount {
+						// Check if consumer is still running before retry, avoid writing to closed channel / 消费者关闭时不再重试，避免向已关闭 channel 写入
+						if !c.running.Load() {
+							return false
+						}
 						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
 						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), re-enqueuing. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, err)
 						select {
@@ -259,6 +258,12 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
+		if c.monitorOffsetRunning.Load() {
+			return
+		}
+		c.monitorOffsetRunning.Store(true)
+		defer c.monitorOffsetRunning.Store(false)
+
 		c.commitCycleCount++
 		c.msgQueue.Range(func(key, value interface{}) bool {
 			if msgQueue := value.(*basic.SafeRingQueue); msgQueue.Size() >= 0 {
@@ -318,10 +323,10 @@ func (c *KafkaClient) monitorMsgQueueSize() {
 func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.running || strings.ToUpper(c.cfg.Enable) != "TRUE" {
+	if c.running.Load() || strings.ToUpper(c.cfg.Enable) != "TRUE" {
 		return
 	}
-	c.running = true
+	c.running.Store(true)
 
 	c.msgChan = make(chan *msgItem, c.cfg.ConsumerQueueSize)
 	c.closeChan = make(chan struct{}, c.cfg.ConsumerWorkerNum)

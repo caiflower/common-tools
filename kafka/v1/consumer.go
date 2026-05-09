@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/global"
@@ -48,8 +49,9 @@ func NewConsumerClient(config xkafka.Config) *KafkaClient {
 	}
 
 	kafkaClient := &KafkaClient{
-		config: &config,
-		lock:   syncx.NewSpinLock(),
+		config:               &config,
+		lock:                 syncx.NewSpinLock(),
+		monitorOffsetRunning: atomic.Bool{},
 	}
 	if strings.ToUpper(config.Enable) != "TRUE" {
 		logger.Warn("[kafka-consumer] consumer '%s' is disable", config.Name)
@@ -131,6 +133,12 @@ func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandl
 // 只有队头的消息 done=true 才推进，保证不跳过未完成的消息。
 func (c *KafkaClient) monitorOffset() {
 	fn := func() {
+		if c.monitorOffsetRunning.Load() {
+			return
+		}
+		c.monitorOffsetRunning.Store(true)
+		defer c.monitorOffsetRunning.Store(false)
+
 		c.commitCycleCount++
 		e.OnError("kafka consumer monitorOffset")
 		var commitOffsets []kafka.TopicPartition
