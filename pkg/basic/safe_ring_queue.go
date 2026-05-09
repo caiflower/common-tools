@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
 	"errors"
@@ -109,5 +109,7 @@ func (q *SafeRingQueue) BlockDequeue() interface{} {
 }
 
 func (q *SafeRingQueue) Size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
 	return q.size
 }
