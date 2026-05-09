@@ -27,7 +27,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
 	"github.com/caiflower/common-tools/web/app/server/render"
-	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/network"
@@ -164,9 +163,9 @@ func (ctx *RequestCtx) GetResponseWriterAndRequest() (http.ResponseWriter, *http
 		return ctx.writer, ctx.httpRequest
 	}
 
-	request, _ := adaptor.GetCompatRequest(&ctx.Request)
-	response := adaptor.GetCompatResponseWriter(&ctx.Response)
-	return response, request
+	//request, _ := adaptor.GetCompatRequest(&ctx.Request)
+	//response := adaptor.GetCompatResponseWriter(&ctx.Response)
+	//return response, request
 	return nil, nil
 }
 
