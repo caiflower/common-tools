@@ -636,27 +636,32 @@ func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 		return true
 	} else if h.config.EnablePprof {
 		handleName := strings.Replace(path, "/debug/pprof/", "", 1)
-		w, r := ctx.GetResponseWriterAndRequest()
 		switch handleName {
 		case "":
-			pprof.Index(w, r)
+			handler := adaptor.HertzHandler(http.HandlerFunc(pprof.Index))
+			handler(ctx.GetContext(), ctx)
 			return true
 		case "profile":
-			pprof.Profile(w, r)
+			handler := adaptor.HertzHandler(http.HandlerFunc(pprof.Profile))
+			handler(ctx.GetContext(), ctx)
 			return true
 		case "cmdline":
-			pprof.Cmdline(w, r)
+			handler := adaptor.HertzHandler(http.HandlerFunc(pprof.Cmdline))
+			handler(ctx.GetContext(), ctx)
 			return true
 		case "trace":
-			pprof.Trace(w, r)
+			handler := adaptor.HertzHandler(http.HandlerFunc(pprof.Trace))
+			handler(ctx.GetContext(), ctx)
 			return true
 		case "symbol":
-			pprof.Symbol(w, r)
+			handler := adaptor.HertzHandler(http.HandlerFunc(pprof.Symbol))
+			handler(ctx.GetContext(), ctx)
 			return true
 		}
 
 		if runtimepprof.Lookup(handleName) != nil {
-			pprof.Handler(handleName).ServeHTTP(w, r)
+			handler := adaptor.HertzHandler(pprof.Handler(handleName))
+			handler(ctx.GetContext(), ctx)
 			return true
 		}
 	}
