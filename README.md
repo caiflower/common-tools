@@ -26,6 +26,7 @@ go get github.com/caiflower/common-tools
 | **redis-client** | `github.com/caiflower/common-tools/redis/v1` | Redis客户端封装 | |
 | **db-client** | `github.com/caiflower/common-tools/db/v1` | 数据库连接客户端，基于bun实现，支持MySQL/PostgreSQL/Oracle等 | |
 | **clickhouse-client** | `github.com/caiflower/common-tools/ck/v1` | ClickHouse客户端封装 | |
+| **kafka-client**      | `github.com/caiflower/common-tools/kafka/` | 分为v1和v2版本，v1依赖cgo，v2不依赖 | |
 
 ### 🧰 工具包（pkg）
 
