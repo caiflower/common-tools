@@ -278,7 +278,6 @@ func (c *KafkaClient) monitorOffset() {
 				// 提交过的offset的消息
 				if lastDoneMsg != nil {
 					if c.commitCycleCount%10 == 0 {
-						c.commitCycleCount = 0
 						logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
 					}
 					c.sessionMu.RLock()
@@ -292,6 +291,10 @@ func (c *KafkaClient) monitorOffset() {
 			}
 			return true
 		})
+
+		if c.commitCycleCount%10 == 0 {
+			c.commitCycleCount = 0
+		}
 	}
 	c.commitOffsetFunc = fn
 	c.monitorOffsetJob = crontab.NewRegularJob("MonitorOffset", fn, crontab.WithInterval(c.cfg.ConsumerCommitInterval), crontab.WithIgnorePanic(), crontab.WithImmediately())

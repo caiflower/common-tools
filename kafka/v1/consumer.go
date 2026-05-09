@@ -153,13 +153,15 @@ func (c *KafkaClient) monitorOffset() {
 				tp := lastDoneMsg.TopicPartition
 				tp.Offset++
 				if c.commitCycleCount%10 == 0 {
-					c.commitCycleCount = 0
 					logger.Info("%s Commit offset [key=%s] [offset=%d]", c.config.Name, key.(string), lastDoneMsg.TopicPartition.Offset)
 				}
 				commitOffsets = append(commitOffsets, tp)
 			}
 			return true
 		})
+		if c.commitCycleCount%10 == 0 {
+			c.commitCycleCount = 0
+		}
 		if len(commitOffsets) > 0 {
 			_, err := c.Consumer.CommitOffsets(commitOffsets)
 			if err != nil {
