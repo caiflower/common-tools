@@ -140,7 +140,7 @@ func NewRedisClient(config Config) RedisClient {
 		startPoolMetrics(c.ctx, c)
 	}
 
-	global.DefaultResourceManger.Add(c)
+	global.DefaultResourceManger.AddWithOrder(c, 1000)
 	return c
 }
 
@@ -214,6 +214,13 @@ func (c *redisClient) Close() {
 		logger.Error("close redis client failed. err: %s", err.Error())
 	}
 	logger.Info("redis client closed successfully")
+}
+
+// Order returns the close order for graceful shutdown.
+// Redis clients should close after Kafka consumers (lower order) to ensure
+// consumers can finish processing messages that may need Redis access.
+func (c *redisClient) Order() int {
+	return 1000
 }
 
 func (c *redisClient) GetRedis() redis.Cmdable {

@@ -25,6 +25,7 @@ import (
 
 	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/crontab"
+	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
@@ -62,6 +63,14 @@ type KafkaClient struct {
 	Producer *kafka.Producer
 }
 
+// Order returns the close order for graceful shutdown.
+// Lower order value means earlier close.
+// Kafka consumers should close first (lower order) to stop consuming messages
+// before Redis/DB clients are closed.
+func (c *KafkaClient) Order() int {
+	return 100
+}
+
 func getTopicPartitionKey(topicPartition *kafka.TopicPartition) string {
 	var topic string
 	if topicPartition.Topic != nil {
@@ -73,13 +82,17 @@ func getTopicPartitionKey(topicPartition *kafka.TopicPartition) string {
 func (c *KafkaClient) Close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	defer e.OnError("")
 
+	if !c.running.Load() {
+		return
+	}
+	c.running.Store(false)
 	logger.Info("[kafka-consumer-close] name='%s'", c.config.Name)
 
 	if c.cancel != nil {
 		c.cancel()
 		c.cancel = nil
-		c.running.Store(false)
 
 		// 先等 reader 退出，确保不再往 msgChan 写
 		<-c.closeChan

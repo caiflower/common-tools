@@ -121,7 +121,7 @@ func NewDBClient(config Config) (c *Client, err error) {
 		}
 	}
 
-	global.DefaultResourceManger.Add(c)
+	global.DefaultResourceManger.AddWithOrder(c, 1000)
 	return c, nil
 }
 
@@ -234,6 +234,13 @@ func (c *Client) Close() {
 	if err != nil {
 		logger.Warn(" *** db Client Close Failed *** \n err: %s", err)
 	}
+}
+
+// Order returns the close order for graceful shutdown.
+// DB clients should close after Kafka consumers (lower order) to ensure
+// consumers can finish processing messages that may need DB access.
+func (c *Client) Order() int {
+	return 1000
 }
 
 func (c *Client) GetSelect(model interface{}) *bun.SelectQuery {

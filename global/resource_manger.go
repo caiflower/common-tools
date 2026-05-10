@@ -34,6 +34,15 @@ type Resource interface {
 	Close()
 }
 
+// ResourceWithOrder is an optional interface that resources can implement to specify their close order.
+// Higher order values mean the resource will be closed earlier.
+// Resources implementing this interface will have their Order() method called to determine close priority.
+// If not implemented, the resource will use the default order provided when adding to the manager.
+type ResourceWithOrder interface {
+	Resource
+	Order() int
+}
+
 type DaemonResource interface {
 	Resource
 	Name() string
@@ -76,6 +85,17 @@ type resourceManger struct {
 var DefaultResourceManger = &resourceManger{lock: syncx.NewSpinLock()}
 
 func (rm *resourceManger) Add(resource Resource) {
+	rm.AddWithOrder(resource, 1000000000)
+}
+
+// AddWithOrder adds a resource with a specific close order.
+// Higher order values mean the resource will be closed earlier.
+// Recommended order values:
+//   - Kafka consumers: 500000 (close first to stop consuming)
+//   - HTTP servers: 100000 (close second to stop accepting requests)
+//   - Redis/DB clients: 1000 (close last, after consumers and servers)
+//   - Default: 1000000000
+func (rm *resourceManger) AddWithOrder(resource Resource, order int) {
 	rm.lock.Lock()
 	defer rm.lock.Unlock()
 
@@ -86,7 +106,13 @@ func (rm *resourceManger) Add(resource Resource) {
 	}
 
 	rm.resources = append(rm.resources, resource)
-	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: 1000000000})
+
+	// If resource implements ResourceWithOrder, use its Order() method
+	if rwo, ok := resource.(ResourceWithOrder); ok {
+		rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: rwo.Order()})
+	} else {
+		rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: order})
+	}
 }
 
 func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {

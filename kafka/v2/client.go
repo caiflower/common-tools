@@ -59,16 +59,24 @@ type KafkaClient struct {
 	retryVersions map[string]interface{}
 }
 
+// Order returns the close order for graceful shutdown.
+// Lower order value means earlier close.
+// Kafka consumers should close first (lower order) to stop consuming messages
+// before Redis/DB clients are closed.
+func (c *KafkaClient) Order() int {
+	return 100
+}
+
 func (c *KafkaClient) Close() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	logger.Info("[Kafka client close] name='%s'", c.cfg.Name)
 	defer e.OnError("")
 
 	if !c.running.Load() {
 		return
 	}
 	c.running.Store(false)
+	logger.Info("[Kafka client close] name='%s'", c.cfg.Name)
 
 	if c.msgChan != nil {
 		c.cancelFunc()
