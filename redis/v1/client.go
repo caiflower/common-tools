@@ -67,7 +67,8 @@ type Config struct {
 	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s" json:"writeTimeout"`
 	PoolSize              int           `yaml:"poolSize" json:"poolSize"`
 	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
-	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"80s" json:"maxConnAge"`
+	MaxConnAge            time.Duration `yaml:"maxConnAge" json:"maxConnAge" default:"1800s" json:"maxConnAge"`
+	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"`
 	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
 	EnableMetrics         string        `yaml:"enableMetrics" default:"true"`
 }
@@ -97,17 +98,21 @@ func NewRedisClient(config Config) RedisClient {
 	}
 	switch config.Mode {
 	case ClusterMode:
-		c.clusterClient = redis.NewClusterClient(&redis.ClusterOptions{
+		opts := &redis.ClusterOptions{
 			Addrs:        config.Addrs,
 			Password:     password,
 			ReadTimeout:  config.ReadTimeout,
 			WriteTimeout: config.WriteTimeout,
 			PoolSize:     config.PoolSize,
 			MinIdleConns: config.MinIdleConns,
-			MaxConnAge:   config.MaxConnAge,
-		})
+			IdleTimeout:  config.IdleTimeout,
+		}
+		if config.MaxConnAge > 0 {
+			opts.MaxConnAge = config.MaxConnAge
+		}
+		c.clusterClient = redis.NewClusterClient(opts)
 	default:
-		c.client = redis.NewClient(&redis.Options{
+		opts := &redis.Options{
 			Addr:         config.Addrs[0],
 			Password:     password,
 			DB:           config.DB,
@@ -115,8 +120,12 @@ func NewRedisClient(config Config) RedisClient {
 			WriteTimeout: config.WriteTimeout,
 			PoolSize:     config.PoolSize,
 			MinIdleConns: config.MinIdleConns,
-			MaxConnAge:   config.MaxConnAge,
-		})
+			IdleTimeout:  config.IdleTimeout,
+		}
+		if config.MaxConnAge > 0 {
+			opts.MaxConnAge = config.MaxConnAge
+		}
+		c.client = redis.NewClient(opts)
 	}
 
 	timeout, cancelFunc := context.WithTimeout(context.Background(), config.ReadTimeout)
