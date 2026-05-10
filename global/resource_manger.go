@@ -91,8 +91,7 @@ func (rm *resourceManger) Add(resource Resource) {
 // AddWithOrder adds a resource with a specific close order.
 // Higher order values mean the resource will be closed earlier.
 // Recommended order values:
-//   - Kafka consumers: 500000 (close first to stop consuming)
-//   - HTTP servers: 100000 (close second to stop accepting requests)
+//   - Kafka consumers: 100 (close first to stop consuming)
 //   - Redis/DB clients: 1000 (close last, after consumers and servers)
 //   - Default: 1000000000
 func (rm *resourceManger) AddWithOrder(resource Resource, order int) {
