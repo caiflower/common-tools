@@ -98,9 +98,11 @@ type consumerGroupHandler struct {
 }
 
 type msgItem struct {
-	msg        *sarama.ConsumerMessage
-	done       bool
-	retryCount int
+	msg           *sarama.ConsumerMessage
+	done          bool
+	retryCount    int
+	lastRetryTime time.Time
+	retryDelay    time.Duration
 }
 
 func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
@@ -225,13 +227,26 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 						if !c.running.Load() {
 							return false
 						}
-						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
-						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), re-enqueuing. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, err)
-						select {
-						case <-c.ctx.Done():
-							return false
-						case c.msgChan <- item:
+						// Calculate exponential backoff delay: 1s, 2s, 4s, 8s, 16s... (max 30s)
+						backoffSeconds := 1 << (item.retryCount - 1) // 2^(retryCount-1)
+						if backoffSeconds > 30 {
+							backoffSeconds = 30
 						}
+						item.retryDelay = time.Duration(backoffSeconds) * time.Second
+						item.lastRetryTime = time.Now()
+
+						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
+						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), will retry after %v. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, item.retryDelay, err)
+						// Use goroutine to delay re-enqueue without blocking the worker
+						// 使用 goroutine 延迟入队，不阻塞当前 worker 协程
+						go func(msg *msgItem) {
+							time.Sleep(msg.retryDelay)
+							select {
+							case <-c.ctx.Done():
+								return
+							case c.msgChan <- msg:
+							}
+						}(item)
 						return false
 					}
 					// All retries exhausted / 重试次数耗尽

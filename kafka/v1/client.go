@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	xkafka "github.com/caiflower/common-tools/kafka"
 	"github.com/caiflower/common-tools/pkg/crontab"
@@ -35,9 +36,11 @@ import (
  */
 
 type msgItem struct {
-	msg        *kafka.Message
-	done       bool
-	retryCount int
+	msg           *kafka.Message
+	done          bool
+	retryCount    int
+	lastRetryTime time.Time
+	retryDelay    time.Duration
 }
 
 type KafkaClient struct {
