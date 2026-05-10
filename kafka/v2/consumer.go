@@ -217,6 +217,11 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 		}()
 
 		for item := range c.msgChan {
+			// if close， return immediately
+			if !c.running.Load() {
+				return
+			}
+
 			completed := func() bool {
 				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
 				startTime := time.Now()

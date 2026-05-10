@@ -48,7 +48,7 @@ type KafkaClient struct {
 	config               *xkafka.Config
 	ctx                  context.Context
 	cancel               context.CancelFunc
-	running              bool
+	running              atomic.Bool
 	monitorOffsetRunning atomic.Bool
 
 	Consumer         *kafka.Consumer
@@ -79,6 +79,7 @@ func (c *KafkaClient) Close() {
 	if c.cancel != nil {
 		c.cancel()
 		c.cancel = nil
+		c.running.Store(false)
 
 		// 先等 reader 退出，确保不再往 msgChan 写
 		<-c.closeChan
@@ -120,5 +121,4 @@ func (c *KafkaClient) Close() {
 		c.Producer.Close()
 		c.Producer = nil
 	}
-	c.running = false
 }

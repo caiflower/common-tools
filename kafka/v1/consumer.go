@@ -115,10 +115,10 @@ func (c *KafkaClient) GetConsumer() *kafka.Consumer {
 func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandler ...xkafka.DeadLetterHandler) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if c.running || strings.ToUpper(c.config.Enable) != "TRUE" {
+	if c.running.Load() || strings.ToUpper(c.config.Enable) != "TRUE" {
 		return
 	}
-	c.running = true
+	c.running.Store(true)
 
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	// 1 个 reader goroutine + ConsumerWorkerNum 个 worker goroutine
@@ -239,6 +239,11 @@ func (c *KafkaClient) doListen(fn func(message interface{}) error, deadLetterHan
 		}()
 		logger.Info("[kafka-consumer] worker [%s-%d] started.", c.config.Name, tid)
 		for item := range c.msgChan {
+			// if close， return immediately
+			if !c.running.Load() {
+				return
+			}
+
 			completed := func() bool {
 				defer e.OnError(fmt.Sprintf("[kafka-consumer] [%s-%d] consumer listen", c.config.Name, tid))
 				startTime := time.Now()

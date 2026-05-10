@@ -102,7 +102,7 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 	}()
 
 	kafkaClient.Producer = producer
-	kafkaClient.running = true
+	kafkaClient.running.Store(true)
 
 	global.DefaultResourceManger.Add(kafkaClient)
 	return kafkaClient
