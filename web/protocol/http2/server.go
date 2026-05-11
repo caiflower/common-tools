@@ -1913,7 +1913,7 @@ func (sc *serverConn) runHandler(rw *responseWriter, reqCtx *app2.RequestCtx, ha
 				buf := make([]byte, size)
 				buf = buf[:runtime.Stack(buf, false)]
 				err = fmt.Errorf("HTTP2: panic serving %v: %v\n%s", sc.conn.RemoteAddr(), e, buf)
-				logger.Error(err.Error())
+				logger.Error("%s", err.Error())
 			}
 			return
 		}

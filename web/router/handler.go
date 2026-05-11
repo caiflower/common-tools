@@ -385,41 +385,49 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 			arg     reflect.Type
 		)
 
+		onlyCtx := false
+
 		inputValue = make([]reflect.Value, argLen)
 		if argLen == 2 {
 			inputValue[0] = reflect.ValueOf(ctx)
 			arg = targetM.GetArgs()[1]
 		} else {
 			arg = targetM.GetArgs()[0]
-		}
-
-		switch arg.Kind() {
-		case reflect.Ptr:
-			v := reflect.New(arg.Elem())
-			inputValue[len(inputValue)-1] = v
-			inputArg = v.Interface()
-		case reflect.Struct:
-			v := reflect.New(arg)
-			inputArg = v.Interface()
-			inputValue[len(inputValue)-1] = v.Elem()
-		default:
-			ctx.SetError(e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
-			return
-		}
-
-		// set args
-		if err := setArgsOptimized(ctx, inputArg, targetM.GetArgInfo(0)); err != nil {
-			if err.IsInternalError() {
-				h.logger.Warn("setArgsOptimized failed. Error: %v", err)
+			if arg.ConvertibleTo(reflect.TypeOf(ctx)) {
+				inputValue[0] = reflect.ValueOf(ctx)
+				onlyCtx = true
 			}
-			ctx.SetError(err)
-			return
 		}
 
-		// valid args
-		if err := validArgs(inputArg); err != nil {
-			ctx.SetError(err)
-			return
+		if !onlyCtx {
+			switch arg.Kind() {
+			case reflect.Ptr:
+				v := reflect.New(arg.Elem())
+				inputValue[len(inputValue)-1] = v
+				inputArg = v.Interface()
+			case reflect.Struct:
+				v := reflect.New(arg)
+				inputArg = v.Interface()
+				inputValue[len(inputValue)-1] = v.Elem()
+			default:
+				ctx.SetError(e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
+				return
+			}
+
+			// set args
+			if err := setArgsOptimized(ctx, inputArg, targetM.GetArgInfo(0)); err != nil {
+				if err.IsInternalError() {
+					h.logger.Warn("setArgsOptimized failed. Error: %v", err)
+				}
+				ctx.SetError(err)
+				return
+			}
+
+			// valid args
+			if err := validArgs(inputArg); err != nil {
+				ctx.SetError(err)
+				return
+			}
 		}
 	}
 

@@ -176,6 +176,10 @@ func setupTestServer(disableOptimization bool) (*web.Engine, *router.Handler) {
 
 	handler := router.NewHandler(handlerCfg, logger.DefaultLogger())
 
+	if disableOptimization {
+		handler.SetAfterDispatchCallBack(nil)
+	}
+
 	// 添加控制器
 	if handler != nil {
 		handler.AddController(&UserController{})

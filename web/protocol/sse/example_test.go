@@ -53,7 +53,7 @@ type Request struct {
 type sseController struct {
 }
 
-func (c *sseController) Dail(ctx *app.RequestContext, any *Request) {
+func (c *sseController) Dail(ctx *app.RequestContext) {
 
 	ctx.Abort()
 	println("Server Got LastEventID", GetLastEventID(&ctx.Request))
