@@ -51,6 +51,11 @@ type RequestCtx struct {
 	Request  protocol.Request
 	conn     network.Conn
 
+	// keys is a key/value pair exclusively for the context of each request.
+	keys map[string]interface{}
+	// This mutex protect keys map.
+	mu sync.RWMutex
+
 	data interface{}
 	err  e.ApiError
 
@@ -66,10 +71,6 @@ type RequestCtx struct {
 	enableTrace                   bool
 	networkType                   string
 	disableHeaderNamesNormalizing bool
-}
-
-func (ctx *RequestCtx) ConvertToWebCtx() *Context {
-	return &Context{RequestContext: ctx}
 }
 
 func (ctx *RequestCtx) SetHeader(key, value string) {
@@ -191,6 +192,7 @@ func (ctx *RequestCtx) Reset() {
 	ctx.Response.Reset()
 	ctx.Request.Reset()
 	ctx.enableTrace = false
+	ctx.keys = nil
 }
 
 func (ctx *RequestCtx) GetConn() network.Conn {
@@ -392,6 +394,27 @@ func (ctx *RequestContext) GetStatusCode() int {
 	}
 
 	return 200
+}
+
+// Set is used to store a new key/value pair exclusively for this context.
+// It also lazy initializes  c.Keys if it was not used previously.
+func (ctx *RequestContext) Set(key string, value interface{}) {
+	ctx.mu.Lock()
+	if ctx.keys == nil {
+		ctx.keys = make(map[string]interface{})
+	}
+
+	ctx.keys[key] = value
+	ctx.mu.Unlock()
+}
+
+// Get returns the value for the given key, ie: (value, true).
+// If the value does not exist it returns (nil, false)
+func (ctx *RequestContext) Get(key string) (value interface{}, exists bool) {
+	ctx.mu.RLock()
+	value, exists = ctx.keys[key]
+	ctx.mu.RUnlock()
+	return
 }
 
 type HandlerFunc func(c context.Context, ctx *RequestContext)

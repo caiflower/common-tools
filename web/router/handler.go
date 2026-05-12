@@ -377,7 +377,6 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 		return
 	}
 
-	webContext := ctx.ConvertToWebCtx()
 	if m.GetType() == method.DefaultTypeOfMethod && m.HasArgs() {
 		var (
 			targetM = m.GetTargetMethod()
@@ -431,7 +430,7 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 		}
 	}
 
-	defer h.onDoTargetMethodCrash("doTargetMethod", ctx, webContext, e.NewApiError(e.Internal, "InternalError", nil))
+	defer h.onDoTargetMethodCrash("doTargetMethod", ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	// doTargetMethod
 	targetMethod := func() e.ApiError {
@@ -439,7 +438,7 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 	}
 
 	// aop
-	if err := h.interceptors.DoInterceptor(webContext, targetMethod); err != nil {
+	if err := h.interceptors.DoInterceptor(ctx, targetMethod); err != nil {
 		ctx.SetError(err)
 		return
 	}
@@ -607,13 +606,13 @@ func (h *Handler) onCrash(txt string, ctx *app.RequestCtx, e e.ApiError) {
 	}
 }
 
-func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, interceptorCtx *app.Context, defaultErr e.ApiError) {
+func (h *Handler) onDoTargetMethodCrash(txt string, ctx *app.RequestCtx, defaultErr e.ApiError) {
 	if err := recover(); err != nil {
 		h.logger.Fatal("Got a runtime error %s, %v. \n%s", txt, err, string(debug.Stack()))
 
 		// onPanic
 		for _, v := range h.interceptors {
-			apiError := v.Interceptor.OnPanic(interceptorCtx, err)
+			apiError := v.Interceptor.OnPanic(ctx, err)
 			if apiError != nil {
 				defaultErr = apiError
 				break

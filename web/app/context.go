@@ -17,22 +17,4 @@
 package app
 
 type RequestContext = RequestCtx
-
-type Context struct {
-	*RequestContext
-	Attributes map[string]interface{}
-}
-
-func (c *Context) Put(key string, value interface{}) {
-	if c.Attributes == nil {
-		c.Attributes = make(map[string]interface{})
-	}
-	c.Attributes[key] = value
-}
-
-func (c *Context) Get(key string) interface{} {
-	if c.Attributes == nil {
-		c.Attributes = make(map[string]interface{})
-	}
-	return c.Attributes[key]
-}
+type Context = RequestCtx

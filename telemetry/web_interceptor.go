@@ -54,15 +54,18 @@ func (wi *WebInterceptor) Before(ctx *app.Context) e.ApiError {
 	traceId := golocalv1.GetTraceID()
 
 	span := DefaultClient.Start(traceId, "github.com/caiflower/common-tools/web/v1", ctx.GetAction(), trace.SpanKindServer)
-	ctx.Put(uptraceSpan, span)
-	ctx.Put(uptraceContent, content)
+	ctx.Set(uptraceSpan, span)
+	ctx.Set(uptraceContent, content)
 
 	return nil
 }
 
 func (wi *WebInterceptor) After(ctx *app.Context, err e.ApiError) e.ApiError {
-	span := ctx.Get(uptraceSpan).(trace.Span)
-	content := ctx.Get(uptraceContent).(*Content)
+	_span, _ := ctx.Get(uptraceSpan)
+	span := _span.(trace.Span)
+	_content, _ := ctx.Get(uptraceContent)
+	content := _content.(*Content)
+
 	defer DefaultClient.End(span, content)
 
 	if err != nil {
@@ -78,8 +81,11 @@ func (wi *WebInterceptor) After(ctx *app.Context, err e.ApiError) e.ApiError {
 }
 
 func (wi *WebInterceptor) OnPanic(ctx *app.Context, recover interface{}) e.ApiError {
-	span := ctx.Get(uptraceSpan).(trace.Span)
-	content := ctx.Get(uptraceContent).(*Content)
+	_span, _ := ctx.Get(uptraceSpan)
+	span := _span.(trace.Span)
+	_content, _ := ctx.Get(uptraceContent)
+	content := _content.(*Content)
+
 	defer DefaultClient.End(span, content)
 
 	content.Attrs[4] = semconv.HTTPStatusCodeKey.Int(http.StatusInternalServerError)
