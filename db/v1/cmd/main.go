@@ -668,8 +668,8 @@ func renderStructBlocks(tables []tableMeta) string {
 				b.WriteString(fmt.Sprintf("\treturn f\n"))
 				b.WriteString("}\n\n")
 
-				b.WriteString(fmt.Sprintf("func (f *%s) With%s(v ...%s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
-				b.WriteString(fmt.Sprintf("\tf.%s = v\n", c.GoName))
+				b.WriteString(fmt.Sprintf("func (f *%s) With%s(start, end %s) *%s {\n", filterName, c.GoName, c.GoType, filterName))
+				b.WriteString(fmt.Sprintf("\tf.%s = []%s{start, end}\n", c.GoName, c.GoType))
 				b.WriteString(fmt.Sprintf("\treturn f\n"))
 				b.WriteString("}\n\n")
 				continue
