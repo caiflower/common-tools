@@ -58,7 +58,7 @@ import (
 )
 
 const (
-	dispatchBeginTime = "web/handler/dispatch_begin_time"
+	dispatchBeginTime = "common-tools:web:handler:dispatchBeginTime"
 )
 
 const (
@@ -222,7 +222,7 @@ func (h *Handler) serverCommon(ctx *app.RequestCtx) bool {
 
 	golocalv1.PutTraceID(traceID)
 	if h.config.EnableMetrics {
-		golocalv1.Put(dispatchBeginTime, time.Now())
+		ctx.Set(dispatchBeginTime, time.Now())
 	}
 	golocalv1.PutContext(ctx.GetContext())
 
@@ -705,8 +705,9 @@ func (h *Handler) RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interfa
 
 func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
-		sub := time.Now().Sub(golocalv1.Get(dispatchBeginTime).(time.Time))
+		beginTime, _ := ctx.Get(dispatchBeginTime)
+		sub := time.Now().Sub(beginTime.(time.Time))
 		// fix: 关闭协程提升性能
-		metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.GetStatusCode()), ctx.GetMethod(), ctx.GetPath(), 0, sub.Seconds())
+		metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.GetStatusCode()), ctx.GetMethod(), ctx.GetPath(), sub.Seconds())
 	}
 }

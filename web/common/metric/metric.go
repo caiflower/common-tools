@@ -49,7 +49,7 @@ func init() {
 	_ = prometheus.Register(metric.httpRequestTotal)
 }
 
-func SaveMetric(web string, code string, method, path string, millSeconds int64, seconds float64) {
+func SaveMetric(web string, code string, method, path string, seconds float64) {
 	//_costHistogram, ok := metric.costHistograms.Load(path)
 	_costSecondHistogram, ok := metric.secondsHistogram.Load(path)
 

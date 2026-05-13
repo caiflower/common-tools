@@ -39,7 +39,7 @@ func (itemList ItemSort) Len() int {
 }
 
 func (itemList ItemSort) Less(i, j int) bool {
-	return itemList[i].Order < itemList[j].Order
+	return itemList[i].Order > itemList[j].Order
 }
 
 func (itemList ItemSort) Swap(i, j int) {
