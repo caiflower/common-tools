@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -135,13 +134,13 @@ func (s *HttpServer) Start() error {
 }
 
 func (s *HttpServer) Close() {
-	s.logger.Info("      **** netpoll http server shutdown, wait at most 5s ****")
+	s.logger.Info("      **** netpoll http server shutdown, wait at most %.0fs ****", s.Options.ExitWaitTimeout.Seconds())
 
 	if !s.SetRunning(false) {
 		return
 	}
 
-	timeout, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
+	timeout, cancelFunc := context.WithTimeout(context.Background(), s.Options.ExitWaitTimeout)
 	defer cancelFunc()
 	if err := s.transporter.Shutdown(timeout); err != nil {
 		s.logger.Error("http server shutdown failed. Error: %s", err.Error())

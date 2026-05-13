@@ -66,7 +66,8 @@ type Options struct {
 	H2C                           bool `yaml:"h2c"`
 	ALPN                          bool `yaml:"alpn"`
 	TLS                           *tls.Config
-	DisableHeaderNamesNormalizing bool `yaml:"disableHeaderNamesNormalizing"`
+	DisableHeaderNamesNormalizing bool          `yaml:"disableHeaderNamesNormalizing"`
+	ExitWaitTimeout               time.Duration `yaml:"exitWaitTimeout" default:"5s"`
 	Http2Options
 }
 
@@ -308,6 +309,17 @@ func WithMetrics(enabled bool) Option {
 func WithDisableHeaderNamesNormalizing(disable bool) Option {
 	return func(opts *Options) *Options {
 		opts.DisableHeaderNamesNormalizing = disable
+		return opts
+	}
+}
+
+// WithExitWaitTime sets timeout for graceful shutdown.
+//
+// The server may exit ahead after all connections closed.
+// All responses after shutdown will be added 'Connection: close' header.
+func WithExitWaitTime(timeout time.Duration) Option {
+	return func(opts *Options) *Options {
+		opts.ExitWaitTimeout = timeout
 		return opts
 	}
 }
