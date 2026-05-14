@@ -185,7 +185,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	// redis beanName
 	if config.Mode == modeRedis && config.RedisDiscovery.BeanName != "" {
 		if b := bean.GetBean(config.RedisDiscovery.BeanName); b == nil {
-			panic(fmt.Sprintf("[cluster] redis mode, can not find redis bean %s." + config.RedisDiscovery.BeanName))
+			panic(fmt.Sprintf("[cluster] redis mode, can not find redis bean %s.", config.RedisDiscovery.BeanName))
 		} else {
 			cluster.Redis = b.(redisv1.RedisClient)
 		}
@@ -613,10 +613,10 @@ func (c *Cluster) reconnect() {
 		nodeName := key.(string)
 		if _, ex := c.aliveNodes.Load(nodeName); c.curNode.name != nodeName && !ex {
 			node := value.(*Node)
-			client := nio.NewClient(&nio.Config{
+			client := nio.NewClientWithAllArgs(&nio.Config{
 				Addr:    node.address,
 				Timeout: 1,
-			}, c.getClientHandler(nodeName))
+			}, syncx.NewSpinLock(), c.logger, c.getClientHandler(nodeName))
 
 			if err := client.Connect(); err != nil {
 				c.logger.Error("[cluster] connect node %s error: %v", node.address, err)
@@ -631,9 +631,9 @@ func (c *Cluster) reconnect() {
 }
 
 func (c *Cluster) listen() {
-	server := nio.NewServer(&nio.Config{
+	server := nio.NewServerWithAllArgs(&nio.Config{
 		Addr: c.curNode.address,
-	}, c.getServerHandler())
+	}, syncx.NewSpinLock(), c.logger, c.getServerHandler())
 
 	if err := server.Open(); err != nil {
 		c.logger.Error("[cluster] open server %s error: %v", c.curNode.address, err)
