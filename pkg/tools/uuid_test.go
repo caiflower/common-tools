@@ -33,6 +33,12 @@ func BenchmarkUUID(b *testing.B) {
 	}
 }
 
+func BenchmarkGenerateId(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		GenerateId("t")
+	}
+}
+
 func TestGenerateId(t *testing.T) {
 	m := make(map[string]struct{})
 	pre := ""

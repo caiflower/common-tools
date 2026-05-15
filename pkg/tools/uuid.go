@@ -18,9 +18,15 @@ package tools
 
 import (
 	"encoding/hex"
+	"math/big"
 
 	"github.com/google/uuid"
 )
+
+const base62Chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+const base62Len = 22
+
+var base62 = big.NewInt(62)
 
 func init() {
 	uuid.EnableRandPool()
@@ -36,8 +42,15 @@ func UUID() string {
 func GenerateId(prefix string) string {
 	v7, _ := uuid.NewV7()
 
-	var buf [32]byte
-	encodeHex(buf[:], v7)
+	var num big.Int
+	num.SetBytes(v7[:])
+
+	var buf [base62Len]byte
+	var mod big.Int
+	for i := base62Len - 1; i >= 0; i-- {
+		num.DivMod(&num, base62, &mod)
+		buf[i] = base62Chars[mod.Int64()]
+	}
 
 	return prefix + "-" + string(buf[:])
 }
