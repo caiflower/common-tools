@@ -31,6 +31,7 @@ import (
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/pkg/shell"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 
 	"github.com/caiflower/common-tools/pkg/cache"
@@ -1336,7 +1337,26 @@ func (c *Cluster) discoverReplicasFromDNS() int {
 
 		return 0
 	}
-	return len(addrs)
+
+	discoverHosts := func() int {
+		cnt := 0
+		result, err1 := shell.Exec("cat", "/etc/hosts")
+
+		if err1 == nil {
+			hostLines := strings.Split(result.Stdout.String(), "\n")
+			for _, hostLine := range hostLines {
+				if strings.Contains(hostLine, "cluster.local") {
+					cnt++
+				}
+			}
+		}
+		return cnt
+	}
+	hostsLen := discoverHosts()
+
+	c.logger.Debug("[cluster] discoverReplicasFromDNS, hostsLen=%d, addrsLen=%d", hostsLen, len(addrs))
+
+	return max(len(addrs), hostsLen)
 }
 
 // watchReplicas 后台轮询 headless service DNS，检测 HPA 引起的副本数变化并触发集群拓扑更新。
