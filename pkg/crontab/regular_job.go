@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package crontab
+package crontab
 
 import (
 	"context"
@@ -41,7 +41,6 @@ type regularJob struct {
 	// immediately do job immediately
 	immediately bool
 	delay       time.Duration
-	running     bool
 	ctx         context.Context
 	cancel      context.CancelFunc
 	fn          func()
@@ -106,15 +105,10 @@ func (j *regularJob) Run() {
 			}
 		}()
 
-		j.running = true
-		defer func() {
-			j.running = false
-		}()
-
 		logger.Info("%s regular job start", j.name)
 
 		if j.immediately {
-			go j.fn()
+			j.fn()
 		}
 
 		ticker := time.NewTicker(j.interval)
@@ -134,9 +128,9 @@ func (j *regularJob) Run() {
 }
 
 func (j *regularJob) Stop() {
-	if j.running {
-		j.cancel()
-	}
+	// context.CancelFunc 是幂等的，多次调用安全，无需检查 running 状态
+	// 避免对 running 字段的 data race
+	j.cancel()
 }
 
 func (j *regularJob) Close() {

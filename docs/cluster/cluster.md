@@ -6,7 +6,7 @@
 
 ## 架构图
 
-![Cluster 架构图](./images/cluster_architecture.png)
+![Cluster 架构图](../images/cluster_architecture.png)
 
 ## 核心特性
 

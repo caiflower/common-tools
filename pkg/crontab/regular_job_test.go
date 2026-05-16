@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package crontab
+package crontab
 
 import (
 	"testing"
@@ -28,7 +28,7 @@ func TestRegularJob(t *testing.T) {
 		logger.Info("do testRegularJob")
 	}
 
-	job := NewRegularJob("testRegularJob", fn, WithInterval(time.Second*2))
+	job := NewRegularJob("testRegularJob", fn, WithInterval(time.Second*2), WithImmediately())
 
 	job.Run()
 

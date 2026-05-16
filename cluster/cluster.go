@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -100,11 +101,15 @@ type Config struct {
 }
 
 type RedisDiscovery struct {
-	BeanName           string        `yaml:"beanName"`                         // 如果为空，则Ioc分配
-	DataPath           string        `yaml:"dataPath"`                         // redis key
-	ElectionInterval   time.Duration `yaml:"electionInterval" default:"15s"`   //多久进行一次选主/续约
-	ElectionPeriod     time.Duration `yaml:"electionPeriod" default:"30s"`     //选主/续约后有效租期时间
-	SyncLeaderInterval time.Duration `yaml:"syncLeaderInterval" default:"10s"` //多久同步一次leader
+	BeanName            string        `yaml:"beanName"`                          // 如果为空，则Ioc分配
+	DataPath            string        `yaml:"dataPath"`                          // redis key 前缀
+	Port                int           `yaml:"port" default:"8081"`               // 节点通信端口
+	ElectionInterval    time.Duration `yaml:"electionInterval" default:"15s"`    //多久进行一次选主/续约
+	ElectionPeriod      time.Duration `yaml:"electionPeriod" default:"30s"`      //选主/续约后有效租期时间
+	SyncLeaderInterval  time.Duration `yaml:"syncLeaderInterval" default:"10s"`  //多久同步一次leader
+	NodeRegisterTTL     time.Duration `yaml:"nodeRegisterTTL" default:"60s"`     // 节点注册信息的过期时间
+	NodeSyncInterval    time.Duration `yaml:"nodeSyncInterval" default:"30s"`    // 多久同步一次节点信息
+	NodeHeartbeatPeriod time.Duration `yaml:"nodeHeartbeatPeriod" default:"20s"` // 节点心跳续约周期
 }
 
 type ReplicasDiscovery struct {
@@ -114,30 +119,32 @@ type ReplicasDiscovery struct {
 }
 
 type Cluster struct {
-	lock            sync.Locker                                            // 启动关闭锁
-	fightingState   uint32                                                 // 选举锁
-	config          *Config                                                // 配置文件
-	curNode         *Node                                                  // 当前节点
-	leaderNode      *Node                                                  // 领导节点
-	leaderLock      sync.RWMutex                                           // leader锁
-	lostLeaderTime  time.Time                                              // 没有leader的时间
-	allNode         *sync.Map                                              // 所有的节点
-	aliveNodes      *sync.Map                                              // 所有存活的节点
-	term            int                                                    // 当前任期
-	sate            uint32                                                 // 集群状态
-	server          nio.IServer                                            // 服务端口
-	logger          logger.ILog                                            // 日志框架
-	msgChan         chan *Message                                          // 消息通信chan
-	votesMap        map[int]string                                         // 投票map term->nodeName
-	votesLock       sync.Locker                                            // 投票锁
-	localFuncs      map[string]func(data interface{}) (interface{}, error) // 本地函数
-	Redis           redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
-	ctx             context.Context
-	cancelFunc      context.CancelFunc
-	events          chan *event
-	jobTrackers     *sync.Map
-	closeSuccess    chan bool
-	currentReplicas atomic.Value
+	lock               sync.Locker                                            // 启动关闭锁
+	fightingState      uint32                                                 // 选举状态锁（modeCluster使用）
+	redisFightingState uint32                                                 // 选举状态锁（modeRedis使用）
+	redisWatchDogState uint32                                                 // WatchDog状态锁（modeRedis使用）
+	config             *Config                                                // 配置文件
+	curNode            *Node                                                  // 当前节点
+	leaderNode         *Node                                                  // 领导节点
+	leaderLock         sync.RWMutex                                           // leader锁
+	lostLeaderTime     time.Time                                              // 没有leader的时间
+	allNode            *sync.Map                                              // 所有的节点
+	aliveNodes         *sync.Map                                              // 所有存活的节点
+	term               int                                                    // 当前任期
+	sate               uint32                                                 // 集群状态
+	server             nio.IServer                                            // 服务端口
+	logger             logger.ILog                                            // 日志框架
+	msgChan            chan *Message                                          // 消息通信chan
+	votesMap           map[int]string                                         // 投票map term->nodeName
+	votesLock          sync.Locker                                            // 投票锁
+	localFuncs         map[string]func(data interface{}) (interface{}, error) // 本地函数
+	Redis              redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	ctx                context.Context
+	cancelFunc         context.CancelFunc
+	events             chan *event
+	jobTrackers        *sync.Map
+	closeSuccess       chan bool
+	currentReplicas    atomic.Value
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -290,16 +297,7 @@ func (c *Cluster) Close() {
 		return
 	}
 
-	// 缩容或者重启：通知其他存活节点重新加载拓扑（各节点将通过 DNS 自行发现新的副本数）
-	//if c.enableReplicasDiscovery() {
-	//	for _, v := range c.GetAliveNodeNames() {
-	//		if v != c.GetMyName() {
-	//			if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
-	//				c.logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
-	//			}
-	//		}
-	//	}
-	//}
+	// 缩容或重启时，其他节点会通过各自的心跳/发现机制感知到拓扑变化，无需显式通知
 
 	if c.cancelFunc != nil {
 		c.cancelFunc()
@@ -511,6 +509,13 @@ func (c *Cluster) loadNodes() {
 
 	var addresses []string
 	replicasDiscovery := &c.config.ReplicasDiscovery
+
+	// Redis 模式：节点信息从 Redis 中动态获取，跳过配置文件加载
+	if c.config.Mode == modeRedis {
+		c.logger.Info("[cluster] redis mode: nodes will be discovered from Redis dynamically")
+		return
+	}
+
 	if c.enableReplicasDiscovery() {
 		replicas := c.discoverReplicasFromDNS()
 		if replicas <= 0 {
@@ -566,6 +571,37 @@ func (c *Cluster) findCurNode() {
 	if c.curNode == nil { // 说明没有开启调试
 		if c.config.Mode == modeSingle {
 			c.curNode = newNode("127.0.0.1:10000", "single", c.config.Timeout.Seconds()/3)
+		} else if c.config.Mode == modeRedis {
+			// Redis 模式：根据本地信息创建当前节点
+			dns := env.GetLocalDNS()
+			ip := env.GetLocalHostIP()
+
+			// 优先使用 DNS 名称作为节点名
+			nodeName := dns
+			if nodeName == "" {
+				nodeName = ip
+			}
+			if nodeName == "" {
+				hostname, _ := os.Hostname()
+				if hostname != "" {
+					nodeName = hostname
+				} else {
+					nodeName = fmt.Sprintf("redis-node-%d", time.Now().Unix())
+				}
+			}
+
+			// 使用 RedisDiscovery 中配置的端口
+			port := c.config.RedisDiscovery.Port
+			if port == 0 {
+				port = 8081 // 默认端口
+			}
+
+			address := fmt.Sprintf("%s:%d", ip, port)
+			node := newNode(address, nodeName, c.config.Timeout.Seconds()/3)
+			c.allNode.Store(nodeName, node)
+			c.curNode = node
+
+			c.logger.Info("[cluster] redis mode: set current node, name=%s, address=%s", nodeName, address)
 		} else {
 			dns := env.GetLocalDNS()
 			ip := env.GetLocalHostIP()
