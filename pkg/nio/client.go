@@ -151,6 +151,10 @@ func (c *Client) syncSession(ctx context.Context, session *Session) error {
 }
 
 func (c *Client) Write(flag uint8, data interface{}) error {
+	if c.session == nil {
+		return errors.New("[client] session is nil")
+	}
+
 	if err := c.session.WriteMsg(&Msg{flag: flag, body: data}); err != nil {
 		c.logger.Error("[client] Write err: %s", err.Error())
 	}

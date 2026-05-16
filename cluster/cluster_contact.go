@@ -222,7 +222,7 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 				msg.Success = false
 			} else if c.GetLeaderName() != nodeMsg.NodeName {
 				msg.Success = false
-				c.logger.Debug("[cluster] heartbeat from %s, but leader is now %s", nodeMsg.NodeName, c.GetLeaderName())
+				c.logger.Debug("[cluster] heartbeat from %s, but leader is now '%s'", nodeMsg.NodeName, c.GetLeaderName())
 			} else {
 				msg.Success = true
 				c.curNode.updateHeartbeat()

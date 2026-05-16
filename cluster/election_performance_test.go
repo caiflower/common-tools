@@ -194,8 +194,13 @@ func TestElectionPerformance100Nodes(t *testing.T) {
 		// 关闭剩余节点
 		t.Log("[清理] 关闭所有剩余节点...")
 		for _, c := range remaining {
-			go c.Close()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.Close()
+			}()
 		}
+		wg.Wait()
 	}
 
 	t.Log("========== 100节点选主性能测试 结束 ==========")
@@ -257,13 +262,22 @@ func TestElectionScalability(t *testing.T) {
 			}
 			_ = failoverStart
 			for _, c := range remaining {
-				go c.Close()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					c.Close()
+				}()
 			}
 		} else {
 			for _, c := range clusters {
-				go c.Close()
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					c.Close()
+				}()
 			}
 		}
+		wg.Wait()
 
 		var r result
 		r.size = n

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"runtime/debug"
@@ -32,10 +33,10 @@ import (
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
+	"github.com/caiflower/common-tools/pkg/cache"
 	"github.com/caiflower/common-tools/pkg/shell"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 
-	"github.com/caiflower/common-tools/pkg/cache"
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/nio"
 
@@ -88,7 +89,7 @@ const (
 
 type Config struct {
 	Mode    string        `yaml:"mode" default:"cluster" json:"mode"`
-	Timeout time.Duration `yaml:"timeout" default:"10s" json:"timeout"`
+	Timeout time.Duration `yaml:"timeout" default:"5s" json:"timeout"`
 	Enable  string        `yaml:"enable" default:"true" json:"enable"`
 	Nodes   []*struct {
 		Name  string
@@ -310,8 +311,8 @@ func (c *Cluster) Close() {
 	// close nio
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
-		if node.name != c.GetMyName() && node.connection != nil {
-			node.connection.Close()
+		if node.name != c.GetMyName() {
+			node.close()
 		}
 		return true
 	})
@@ -357,7 +358,7 @@ func (c *Cluster) isNodeHealthy(node *Node) bool {
 		return false
 	}
 
-	if !node.heartbeat.Add(c.config.Timeout).After(time.Now()) {
+	if !node.isReady(c.config.Timeout) {
 		return false
 	}
 
@@ -656,10 +657,11 @@ func (c *Cluster) reconnect() {
 			}, syncx.NewSpinLock(), c.logger, c.getClientHandler(nodeName))
 
 			if err := client.Connect(); err != nil {
-				c.logger.Error("[cluster] connect node %s error: %v", node.address, err)
+				c.logger.Error("[cluster] connect node %s failed. error: %v", node.address, err)
+				return true
 			}
 
-			node.connection = client
+			node.setConnection(client)
 		}
 		return true
 	})
@@ -717,9 +719,9 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 			// 检查重试次数限制
 			if retryCount < maxRetries && !c.IsClose() {
-				backoff := time.Duration((retryCount+1)*(retryCount+1)) * time.Second
-				if backoff > 30*time.Second {
-					backoff = 30 * time.Second
+				backoff := time.Duration((retryCount+1)*(retryCount+1)) * time.Millisecond * 20
+				if backoff > 100*time.Millisecond {
+					backoff = 100 * time.Millisecond
 				}
 
 				c.logger.Debug("[cluster] fighting failed, retry %d/%d after %v", retryCount+1, maxRetries, backoff)
@@ -730,9 +732,6 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			}
 		}
 	}()
-
-	// 随机休眠一下，防止所有节点同时开始竞选
-	time.Sleep(time.Duration(tools.RandInt(1, 3)) * time.Second)
 
 	// 如果集群已经就绪或者关闭了，那么直接返回即可
 	if c.IsReady() || c.IsClose() {
@@ -792,17 +791,21 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 				c.term = term
 				break
 			}
+		} else {
+			if sleepTimes%10 == 0 {
+				c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+			}
+			sleepTimes++
 		}
 
-		if sleepTimes%10 == 0 {
-			c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
-		}
-		sleepTimes++
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 	}
 
 	// 等待查询结果
-	time.Sleep(500 * time.Millisecond)
+	//time.Sleep(500 * time.Millisecond)
+
+	// 随机休眠一下，防止所有节点同时开始竞选
+	time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
 
 	// 如果集群已经就绪或者关闭了，那么直接返回即可
 	if c.IsReady() || c.IsClose() {
@@ -886,7 +889,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		}
 
 		sleepTimes++
-		time.Sleep(2 * time.Second)
+		time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 	}
 }
 
@@ -1057,7 +1060,7 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 			return true
 		}
 		go func(n *Node) {
-			if err := n.connection.Write(flag, msg); err != nil {
+			if err := n.sendMessage(flag, msg); err != nil {
 				c.logger.Error("[cluster] send message to %s error: %v", n.address, err)
 			}
 		}(node)
@@ -1283,9 +1286,11 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 
 	} else { // 远程调用
 		c.logger.Debug("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
-		cache.LocalCache.Set(remoteCall+f.uuid, f, f.timeout+(5*time.Second)) //写缓存，TTL时间比超时时间富余一些。
 		c.callRemoteFunc(f)
 	}
+
+	cache.LocalCache.Set(remoteCall+f.uuid, f, f.timeout+(5*time.Second)) //写缓存，TTL时间比超时时间富余一些。
+
 	f.wait()
 	return f.result, f.err
 }
@@ -1320,7 +1325,7 @@ func (c *Cluster) callRemoteFunc(f *FuncSpec) {
 	c.aliveNodes.Range(func(key, val interface{}) bool {
 		if _node, ok := val.(*Node); ok && _node.name == f.nodeName {
 			send = true
-			if err := _node.SendMessage(messageRemoteCallReq, msg); err != nil {
+			if err := _node.sendMessage(messageRemoteCallReq, msg); err != nil {
 				f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
 				c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
 			}

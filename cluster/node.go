@@ -18,18 +18,21 @@ package cluster
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/nio"
 )
 
 type Node struct {
-	address           string      // 节点通信地址, ip:port
-	name              string      // 节点名称
+	address           string // 节点通信地址, ip:port
+	name              string // 节点名称
+	connectLock       sync.RWMutex
 	connection        nio.IClient // 连接
-	heartbeat         time.Time   // 主节点发送给自己的心跳时间
-	lastHeartbeatOk   bool        // 上次心跳是否成功
-	heartbeatFailures int         // 心跳失败次数统计
+	heartbreakLock    sync.RWMutex
+	heartbeat         time.Time // 主节点发送给自己的心跳时间
+	lastHeartbeatOk   bool      // 上次心跳是否成功
+	heartbeatFailures int       // 心跳失败次数统计
 	heartbeatInterval float64
 }
 
@@ -44,10 +47,18 @@ func newNode(address, name string, heartbeatInterval float64) *Node {
 }
 
 func (n *Node) clean() {
+	n.heartbreakLock.Lock()
+	defer n.heartbreakLock.Unlock()
+
 	n.heartbeat = time.Time{}
+	n.lastHeartbeatOk = false
+	n.heartbeatFailures = 0
 }
 
 func (n *Node) updateHeartbeat() {
+	n.heartbreakLock.Lock()
+	defer n.heartbreakLock.Unlock()
+
 	n.heartbeat = time.Now()
 	n.lastHeartbeatOk = true
 	n.heartbeatFailures = 0
@@ -61,41 +72,70 @@ func (n *Node) updateHeartbeatFailed() {
 
 // 获取节点健康评分 (0-100)
 func (n *Node) getHealthScore() int {
+	n.heartbreakLock.RLock()
+	defer n.heartbreakLock.RUnlock()
+
 	if n.heartbeat.IsZero() {
 		return 0
 	}
 
 	// 基础分数：基于时间的新鲜度
-	age := time.Since(n.heartbeat).Seconds() - n.heartbeatInterval
-	timeScore := 100 - int(age*10)
-	if timeScore < 0 {
-		timeScore = 0
-	}
+	//age := time.Since(n.heartbeat).Seconds() - n.heartbeatInterval
+	//timeScore := 100 - int(age*10)
+	//if timeScore < 0 {
+	//	timeScore = 0
+	//}
+	//
+	//if n.connection != nil && n.lastHeartbeatOk {
+	//	timeScore += 20
+	//}
+	//
+	//// 失败次数扣分
+	//failurePenalty := n.heartbeatFailures * 15
+	//timeScore -= failurePenalty
+	//
+	//if timeScore < 0 {
+	//	timeScore = 0
+	//}
+	//if timeScore > 100 {
+	//	timeScore = 100
+	//}
 
-	if n.connection != nil && n.lastHeartbeatOk {
-		timeScore += 20
-	}
-
-	// 失败次数扣分
-	failurePenalty := n.heartbeatFailures * 15
-	timeScore -= failurePenalty
-
-	if timeScore < 0 {
-		timeScore = 0
-	}
-	if timeScore > 100 {
-		timeScore = 100
-	}
-
-	return timeScore
+	return 100
 }
 
-func (n *Node) SendMessage(flag uint8, data interface{}) error {
+func (n *Node) setConnection(conn nio.IClient) {
+	n.connectLock.Lock()
+	defer n.connectLock.Unlock()
+	n.connection = conn
+}
+
+func (n *Node) sendMessage(flag uint8, data interface{}) error {
+	n.connectLock.RLock()
+	defer n.connectLock.RUnlock()
+
 	if n.connection == nil {
 		return fmt.Errorf("connection for cluster node %s is not ready", n.name)
 	}
+
 	if err := n.connection.Write(flag, data); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (n *Node) close() {
+	n.connectLock.Lock()
+	defer n.connectLock.Unlock()
+	if n.connection != nil {
+		n.connection.Close()
+		n.connection = nil
+	}
+}
+
+func (n *Node) isReady(timeout time.Duration) bool {
+	n.heartbreakLock.RLock()
+	defer n.heartbreakLock.RUnlock()
+
+	return n.heartbeat.Add(timeout).After(time.Now())
 }
