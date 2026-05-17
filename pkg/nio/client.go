@@ -98,7 +98,9 @@ func (c *Client) Connect() error {
 		client:     c,
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(c.timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.timeout)*time.Second)
+	defer cancel()
+
 	if err = c.syncSession(ctx, session); err != nil {
 		c.logger.Error("[client] syncSession failed. addr: %s err: %s", c.addr, err.Error())
 		connection.Close()

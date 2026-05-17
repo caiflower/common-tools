@@ -203,6 +203,7 @@ func TestElectionPerformance100Nodes(t *testing.T) {
 		wg.Wait()
 	}
 
+	time.Sleep(time.Second * 4)
 	t.Log("========== 100节点选主性能测试 结束 ==========")
 }
 
@@ -331,7 +332,9 @@ func waitForConsensus(clusters []*Cluster, timeout time.Duration) (time.Duration
 	deadline := start.Add(timeout)
 
 	for time.Now().Before(deadline) {
+		//fmt.Println("begin collectLeaderStats")
 		stats := collectLeaderStats(clusters)
+		//fmt.Printf("collectLeaderStats result: %v\n", stats)
 		// 找票数最多的 leader
 		maxCount := 0
 		maxLeader := ""

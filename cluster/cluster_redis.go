@@ -215,9 +215,7 @@ func (c *Cluster) updateNodesFromRedis(newNodes map[string]*Node) {
 	})
 
 	// 建立节点连接
-	if c.needReconnect() {
-		c.reconnect()
-	}
+	c.reconnect()
 }
 
 func (c *Cluster) redisFighting() {

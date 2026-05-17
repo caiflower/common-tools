@@ -78,15 +78,21 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 		switch message.Flag() {
 		case messageAskLeaderRes:
 			c.logger.Trace("[cluster] messageAskLeaderRes nodeName=%s, get leaderNode=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
-			c.msgChan <- nodeMsg
+			if ch, ok := c.msgChan.Load().(chan *Message); ok && ch != nil {
+				ch <- nodeMsg
+			}
 		case messageAskVoteRes:
 			c.logger.Trace("[cluster] messageAskVoteRes term=%d nodeName=%s, vote for '%s'", nodeMsg.Term, nodeMsg.NodeName, nodeMsg.VoteNodeName)
-			c.msgChan <- nodeMsg
+			if ch, ok := c.msgChan.Load().(chan *Message); ok && ch != nil {
+				ch <- nodeMsg
+			}
 		case messageBroadcastLeaderRes:
 			if nodeMsg.Success {
 				c.logger.Trace("[cluster] messageBroadcastLeaderRes nodeName=%s, leaderName=%s", nodeMsg.NodeName, nodeMsg.LeaderNodeName)
 			}
-			c.msgChan <- nodeMsg
+			if ch, ok := c.msgChan.Load().(chan *Message); ok && ch != nil {
+				ch <- nodeMsg
+			}
 		case messageHeartbeatRes:
 			if senderNode := c.GetNodeByName(nodeMsg.NodeName); senderNode != nil {
 				if nodeMsg.Success {
@@ -100,7 +106,9 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 					senderNode.updateHeartbeatFailed()
 				}
 			}
-			c.msgChan <- nodeMsg
+			if ch, ok := c.msgChan.Load().(chan *Message); ok && ch != nil {
+				ch <- nodeMsg
+			}
 		default:
 			c.logger.Warn("[cluster] unknown message type: %s", message.Flag())
 		}
@@ -200,9 +208,20 @@ func (c *Cluster) getServerHandler() *nio.Handler {
 			if c.GetMyTerm() > nodeMsg.Term {
 				msg.Term = c.GetMyTerm()
 			} else {
+				// 优先从 aliveNodes 查，找不到则从 allNode 查（连接可能还未建立）
+				var leaderNode *Node
 				if v, ok := c.aliveNodes.Load(nodeMsg.LeaderNodeName); ok {
+					leaderNode = v.(*Node)
+				} else if nodeMsg.LeaderNodeName == c.GetMyName() {
+					leaderNode = c.curNode
+				} else if v, ok := c.allNode.Load(nodeMsg.LeaderNodeName); ok {
+					leaderNode = v.(*Node)
+					// 触发后台重连，让后续心跳能正常通信
+					go c.reconnect()
+				}
+				if leaderNode != nil {
 					msg.Success = true
-					c.signLeader(v.(*Node), nodeMsg.Term)
+					c.signLeader(leaderNode, nodeMsg.Term)
 					msg.LeaderNodeName = nodeMsg.LeaderNodeName
 				}
 			}

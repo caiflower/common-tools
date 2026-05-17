@@ -135,7 +135,7 @@ type Cluster struct {
 	sate               uint32                                                 // 集群状态
 	server             nio.IServer                                            // 服务端口
 	logger             logger.ILog                                            // 日志框架
-	msgChan            chan *Message                                          // 消息通信chan
+	msgChan            atomic.Value                                           // 消息通信chan (存储 chan *Message，per-call)
 	votesMap           map[int]string                                         // 投票map term->nodeName
 	votesLock          sync.Locker                                            // 投票锁
 	localFuncs         map[string]func(data interface{}) (interface{}, error) // 本地函数
@@ -146,6 +146,7 @@ type Cluster struct {
 	jobTrackers        *sync.Map
 	closeSuccess       chan bool
 	currentReplicas    atomic.Value
+	connectLock        sync.Mutex
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -255,7 +256,7 @@ func (c *Cluster) Start() error {
 		}
 	}
 
-	c.events = make(chan *event, 20)
+	c.events = make(chan *event, 100)
 
 	switch c.config.Mode {
 	case modeSingle:
@@ -646,6 +647,9 @@ func (c *Cluster) needReconnect() (need bool) {
 
 // connect 集群建立连接
 func (c *Cluster) reconnect() {
+	c.connectLock.Lock()
+	defer c.connectLock.Unlock()
+
 	c.allNode.Range(func(key, value interface{}) bool {
 		// 排除自己
 		nodeName := key.(string)
@@ -686,7 +690,6 @@ func (c *Cluster) fighting() {
 }
 
 func (c *Cluster) fightingWithRetry(retryCount int) {
-	const maxRetries = 10
 	const alertThreshold = 5
 
 	defer e.OnError("cluster fighting")
@@ -708,7 +711,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 	// 重试计数器监控
 	if retryCount >= alertThreshold {
-		c.logger.Warn("[cluster] high fighting retry count: %d/%d for node %s", retryCount, maxRetries, c.GetMyName())
+		c.logger.Warn("[cluster] high fighting retry count: %d for node %s", retryCount, c.GetMyName())
 	}
 
 	defer func() {
@@ -717,18 +720,15 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		} else {
 			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
 
-			// 检查重试次数限制
-			if retryCount < maxRetries && !c.IsClose() {
-				backoff := time.Duration((retryCount+1)*(retryCount+1)) * time.Millisecond * 20
-				if backoff > 100*time.Millisecond {
-					backoff = 100 * time.Millisecond
+			if !c.IsClose() {
+				// 指数退避，上限 200ms，避免 100 个节点同时重试造成风暴
+				backoff := time.Duration((retryCount+1)*(retryCount+1)) * 20 * time.Millisecond
+				if backoff > 200*time.Millisecond {
+					backoff = 200 * time.Millisecond
 				}
-
-				c.logger.Debug("[cluster] fighting failed, retry %d/%d after %v", retryCount+1, maxRetries, backoff)
+				c.logger.Debug("[cluster] fighting failed, retry %d after %v", retryCount+1, backoff)
 				time.Sleep(backoff)
 				go c.fightingWithRetry(retryCount + 1)
-			} else {
-				c.logger.Error("[cluster] fighting stopped after %d retries or cluster closed", retryCount)
 			}
 		}
 	}()
@@ -756,7 +756,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		c.logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
-			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
+			messages := c.sendMsgWhitTimeout(500*time.Millisecond, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
 			if len(messages) < quorum {
 				// 跳过
 				break
@@ -798,14 +798,11 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			sleepTimes++
 		}
 
-		time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+		time.Sleep(time.Duration(rand.Intn(20)) * time.Millisecond)
 	}
 
-	// 等待查询结果
-	//time.Sleep(500 * time.Millisecond)
-
 	// 随机休眠一下，防止所有节点同时开始竞选
-	time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
+	time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
 
 	// 如果集群已经就绪或者关闭了，那么直接返回即可
 	if c.IsReady() || c.IsClose() {
@@ -849,7 +846,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 			// get vote from other node
 			votesCount := 1
-			messages := c.sendMsgWhitTimeout(2*time.Second, messageAskVoteReq, &Message{NodeName: myNodeName, Term: nextTerm})
+			messages := c.sendMsgWhitTimeout(500*time.Millisecond, messageAskVoteReq, &Message{NodeName: myNodeName, Term: nextTerm})
 			for _, message := range messages {
 				if message.Success && message.VoteNodeName == myNodeName {
 					votesCount++
@@ -859,25 +856,24 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 			if votesCount >= quorum {
 				// 开始广播自己为 leader
-				messages1 := c.sendMsgWhitTimeout(2*time.Second, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				if len(messages1)+1 < quorum { // +1是包括了自己
-					c.logger.Info("[cluster] send leader broadcast failed, count: %d", len(messages1))
-					return
-				}
-
-				success := true
+				messages1 := c.sendMsgWhitTimeout(1000*time.Millisecond, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
+				successCount := 1 // 自己算一票
 				for _, message := range messages1 {
-					if !message.Success {
-						success = false
+					if message.Success {
+						successCount++
 					}
 				}
 
-				if success && c.signLeader(c.curNode, nextTerm) {
-					c.logger.Info("[cluster] sign myself: %s to be leader. ", c.GetMyName())
-					return
+				// 只要广播到达了 quorum 个节点（包括自己），leader 就可以上任
+				// 未响应或拒绝的 follower 会通过后续心跳感知到 leader
+				if successCount >= quorum {
+					if c.signLeader(c.curNode, nextTerm) {
+						c.logger.Info("[cluster] sign myself: %s to be leader (broadcast ack %d/%d).", c.GetMyName(), successCount, c.GetAliveNodeCount())
+						return
+					}
 				}
 
-				c.logger.Info("[cluster] broadcast myself to leader failed, go to next term...")
+				c.logger.Info("[cluster] broadcast myself to leader failed (ack %d/%d quorum %d), go to next term...", successCount, len(messages1)+1, quorum)
 			}
 
 			// fix bug, go to next term
@@ -896,8 +892,10 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 func (c *Cluster) heartbeat() {
 	defer e.OnError("cluster heartbeat")
 
-	// 使用 backoff 策略调整心跳间隔
-	ticker := time.NewTicker(c.calculateHeartbeatInterval())
+	leaderHeartbeatInterval := c.config.Timeout / 3
+	const followerCheckInterval = 500 * time.Millisecond
+
+	ticker := time.NewTicker(followerCheckInterval)
 	defer ticker.Stop()
 
 	consecutiveFailures := 0
@@ -910,11 +908,10 @@ func (c *Cluster) heartbeat() {
 		case <-ticker.C:
 			if c.IsLeader() {
 				c.logger.Trace("[cluster] leader %s send heartbeat.", c.GetMyName())
-				// 向所有follower节点发送心跳
 				messages := c.sendMsgWithBackoffTimeout(messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
 
 				quorum := c.getQuorum()
-				leastCnt := quorum - 1 // 去掉自己，需要收到至少 quorum-1 个其他节点的响应
+				leastCnt := quorum - 1
 
 				if len(messages) < leastCnt {
 					consecutiveFailures++
@@ -948,24 +945,22 @@ func (c *Cluster) heartbeat() {
 					}
 				}
 
-				ticker.Reset(c.calculateHeartbeatInterval())
+				ticker.Reset(leaderHeartbeatInterval)
 			} else if c.IsFollower() {
-				// 如果集群不就绪
 				if !c.IsReady() || c.GetLeaderNode() == nil {
 					c.logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
 					go c.fighting()
 				}
+				ticker.Reset(followerCheckInterval)
 			}
 
-			if c.needReconnect() {
-				c.reconnect()
-			}
+			c.reconnect()
 		}
 	}
 }
 
 func (c *Cluster) sendMsgWithBackoffTimeout(flag uint8, msg *Message) []*Message {
-	baseTimeout := 2 * time.Second
+	baseTimeout := 1000 * time.Millisecond
 
 	unhealthyNodes := 0
 	totalNodes := 0
@@ -1015,78 +1010,41 @@ func (c *Cluster) sendMsgWithBackoffTimeout(flag uint8, msg *Message) []*Message
 	return messages
 }
 
-// 动态计算心跳间隔
-func (c *Cluster) calculateHeartbeatInterval() time.Duration {
-	baseInterval := c.config.Timeout / 3
-
-	// 检查集群整体健康状况
-	unhealthyCount := 0
-	totalCount := 0
-
+func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
+	// 先快照当前存活节点，避免发送过程中 aliveNodes 变化导致计数不一致
+	type nodeEntry struct{ node *Node }
+	var targets []nodeEntry
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
-		totalCount++
-		if node.name != c.GetMyName() && node.getHealthScore() < 30 {
-			unhealthyCount++
+		if node.name != c.GetMyName() {
+			targets = append(targets, nodeEntry{node})
 		}
 		return true
 	})
 
-	if unhealthyCount > 0 && totalCount > 0 {
-		adjustmentFactor := 1.0 + (float64(unhealthyCount)/float64(totalCount))*1.5
-		adjustedInterval := time.Duration(float64(baseInterval) * adjustmentFactor)
+	// 每次调用创建独立 channel，注册为当前活跃 channel 供 handler 写入
+	ch := make(chan *Message, len(targets)+1)
+	c.msgChan.Store(ch)
 
-		maxTime := c.config.Timeout
-		if adjustedInterval > maxTime {
-			adjustedInterval = maxTime
-		}
-
-		c.logger.Debug("[cluster] adjusted heartbeat interval to %v due to %d/%d unhealthy nodes",
-			adjustedInterval, unhealthyCount, totalCount)
-
-		return adjustedInterval
-	}
-
-	return baseInterval
-}
-
-func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
-	withTimeout, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	c.aliveNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node.name == c.GetMyName() {
-			return true
-		}
+	for _, t := range targets {
 		go func(n *Node) {
 			if err := n.sendMessage(flag, msg); err != nil {
 				c.logger.Error("[cluster] send message to %s error: %v", n.address, err)
 			}
-		}(node)
-		return true
-	})
+		}(t.node)
+	}
 
-	// 每次都重新生成，防止上次请求超时消息到这次里面来了
-	c.msgChan = make(chan *Message, c.GetAliveNodeCount())
-	msgResponseList := make([]*Message, 0)
-
-	// 添加定时器避免忙等待
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
+	msgResponseList := make([]*Message, 0, len(targets))
+	withTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	for {
 		select {
 		case <-withTimeout.Done():
 			return msgResponseList
-		case m := <-c.msgChan:
+		case m := <-ch:
 			msgResponseList = append(msgResponseList, m)
-			if len(msgResponseList) == c.GetAliveNodeCount() {
-				return msgResponseList
-			}
-		case <-ticker.C:
-			// 定期检查是否收集完所有响应
-			if len(msgResponseList) == c.GetAliveNodeCount() {
+			if len(msgResponseList) == len(targets) {
 				return msgResponseList
 			}
 		}
@@ -1094,77 +1052,97 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 }
 
 func (c *Cluster) signLeader(node *Node, term int) bool {
+	var eventsToSend []struct{ name, leader string }
+
 	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
 
 	if node == nil {
+		c.leaderLock.Unlock()
 		return false
 	}
 
 	if term < c.GetMyTerm() {
+		c.leaderLock.Unlock()
 		return false
 	}
 
-	c.releaseLeaderNoLock()
+	// collect events from releaseLeaderNoLock without sending them under the lock
+	if c.leaderNode != nil {
+		c.lostLeaderTime = time.Now()
+		if c.leaderNode.name == c.GetMyName() {
+			eventsToSend = append(eventsToSend, struct{ name, leader string }{eventNameUnsignMaster, ""})
+		} else {
+			eventsToSend = append(eventsToSend, struct{ name, leader string }{eventNameUnsignFollower, ""})
+		}
+		c.leaderNode = nil
+	}
 
 	if node.name == c.GetMyName() {
 		atomic.StoreUint32(&c.sate, leader)
-		c.createEvent(eventNameSignMaster, node.name)
+		eventsToSend = append(eventsToSend, struct{ name, leader string }{eventNameSignMaster, node.name})
 	} else {
 		atomic.StoreUint32(&c.sate, follower)
 		c.curNode.updateHeartbeat()
-		c.createEvent(eventNameSignFollower, node.name)
+		eventsToSend = append(eventsToSend, struct{ name, leader string }{eventNameSignFollower, node.name})
 	}
 
 	c.lostLeaderTime = time.Time{}
 	c.leaderNode = node
 	c.term = term
+	c.leaderLock.Unlock()
+
+	for _, ev := range eventsToSend {
+		c.createEvent(ev.name, ev.leader)
+	}
 	return true
 }
 
 func (c *Cluster) releaseWithNodeName(name string) {
+	var evName string
+
 	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
 
 	if c.leaderNode == nil || c.leaderNode.name != name {
+		c.leaderLock.Unlock()
 		return
 	}
 
 	if !atomic.CompareAndSwapUint32(&c.sate, leader, follower) {
+		c.leaderLock.Unlock()
 		return
 	}
 
 	c.lostLeaderTime = time.Now()
 	if c.leaderNode.name == c.GetMyName() {
-		c.createEvent(eventNameUnsignMaster, "")
+		evName = eventNameUnsignMaster
 	} else {
-		c.createEvent(eventNameUnsignFollower, "")
+		evName = eventNameUnsignFollower
 	}
 	c.leaderNode = nil
+	c.leaderLock.Unlock()
+
+	c.createEvent(evName, "")
 }
 
 func (c *Cluster) releaseLeader() {
 	c.leaderLock.Lock()
-	defer c.leaderLock.Unlock()
-
 	atomic.StoreUint32(&c.sate, follower)
 
-	c.releaseLeaderNoLock()
-}
-
-func (c *Cluster) releaseLeaderNoLock() {
-	if c.leaderNode == nil {
-		return
+	var evName string
+	if c.leaderNode != nil {
+		c.lostLeaderTime = time.Now()
+		if c.leaderNode.name == c.GetMyName() {
+			evName = eventNameUnsignMaster
+		} else {
+			evName = eventNameUnsignFollower
+		}
+		c.leaderNode = nil
 	}
+	c.leaderLock.Unlock()
 
-	c.lostLeaderTime = time.Now()
-	if c.leaderNode.name == c.GetMyName() {
-		c.createEvent(eventNameUnsignMaster, "")
-	} else {
-		c.createEvent(eventNameUnsignFollower, "")
+	if evName != "" {
+		c.createEvent(evName, "")
 	}
-
-	c.leaderNode = nil
 }
 
 // getVoteNodeName 根据term获取我投票给的节点名称。每个term只能投给一个node
@@ -1193,6 +1171,10 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 }
 
 func (c *Cluster) createEvent(name, leaderName string) {
+	if c.IsClosed() && name != eventNameClose {
+		return
+	}
+	defer func() { recover() }()
 	c.events <- &event{name, atomic.LoadUint32(&c.sate), c.GetMyName(), leaderName}
 }
 

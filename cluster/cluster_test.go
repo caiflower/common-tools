@@ -132,7 +132,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c1.Nodes[0].Local = true
 	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
-		Level: "DEBUG",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
@@ -140,7 +140,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
-		Level: "DEBUG",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
@@ -148,7 +148,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
-		Level: "DEBUG",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
@@ -161,7 +161,7 @@ func TestSingleCluster(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
 
 	if cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
-		Level: "Debug",
+		Level: "TRACE",
 	})); err != nil {
 		panic(err)
 	} else {
@@ -285,7 +285,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c1.Nodes[0].Local = true
 	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
-		Level: "Debug",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
@@ -296,7 +296,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c2.Nodes[1].Local = true
 	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
-		Level: "Debug",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
@@ -307,7 +307,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 
 	c3.Nodes[2].Local = true
 	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
-		Level: "Debug",
+		Level: "TRACE",
 	}))
 	if err != nil {
 		panic(err)
