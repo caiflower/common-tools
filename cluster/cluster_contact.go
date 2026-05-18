@@ -98,8 +98,7 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 				if nodeMsg.Success {
 					senderNode.updateHeartbeat()
 				} else if nodeMsg.LeaderNodeName != "" && nodeMsg.LeaderNodeName != c.GetLeaderName() {
-					senderNode.lastHeartbeatOk = true
-					senderNode.heartbeatFailures = 0
+					senderNode.resetHeartbeatOnLeaderChange()
 					c.logger.Debug("[cluster] heartbeat from %s, leader changed from %s to %s",
 						nodeMsg.NodeName, c.GetLeaderName(), nodeMsg.LeaderNodeName)
 				} else {

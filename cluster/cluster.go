@@ -355,7 +355,7 @@ func (c *Cluster) IsReady() bool {
 
 // 增强的节点健康检查
 func (c *Cluster) isNodeHealthy(node *Node) bool {
-	if node == nil || node.heartbeat.IsZero() {
+	if node == nil || node.isHeartbeatZero() {
 		return false
 	}
 
@@ -368,7 +368,7 @@ func (c *Cluster) isNodeHealthy(node *Node) bool {
 	}
 
 	// 检查连续失败次数
-	if node.heartbeatFailures > 3 {
+	if node.getHeartbeatFailures() > 3 {
 		return false
 	}
 

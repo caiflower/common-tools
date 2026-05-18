@@ -66,8 +66,33 @@ func (n *Node) updateHeartbeat() {
 
 // 更新心跳失败状态
 func (n *Node) updateHeartbeatFailed() {
+	n.heartbreakLock.Lock()
+	defer n.heartbreakLock.Unlock()
+
 	n.lastHeartbeatOk = false
 	n.heartbeatFailures++
+}
+
+func (n *Node) resetHeartbeatOnLeaderChange() {
+	n.heartbreakLock.Lock()
+	defer n.heartbreakLock.Unlock()
+
+	n.lastHeartbeatOk = true
+	n.heartbeatFailures = 0
+}
+
+func (n *Node) getHeartbeatFailures() int {
+	n.heartbreakLock.RLock()
+	defer n.heartbreakLock.RUnlock()
+
+	return n.heartbeatFailures
+}
+
+func (n *Node) isHeartbeatZero() bool {
+	n.heartbreakLock.RLock()
+	defer n.heartbreakLock.RUnlock()
+
+	return n.heartbeat.IsZero()
 }
 
 // 获取节点健康评分 (0-100)

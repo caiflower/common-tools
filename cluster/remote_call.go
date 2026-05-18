@@ -108,9 +108,10 @@ func (fs *FuncSpec) wait() {
 func (fs *FuncSpec) GetResult() (interface{}, error) {
 	if _, e := cache.LocalCache.Get(remoteCall + fs.uuid); !e && !fs.finished {
 		return nil, fmt.Errorf("remote call timed out")
-	} else {
-		return fs.result, fs.err
 	}
+
+	cache.LocalCache.Delete(remoteCall + fs.uuid)
+	return fs.result, fs.err
 }
 
 func (fs *FuncSpec) SetAttribute(key string, v interface{}) {
