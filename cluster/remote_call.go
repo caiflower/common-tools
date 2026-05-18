@@ -110,7 +110,10 @@ func (fs *FuncSpec) GetResult() (interface{}, error) {
 		return nil, fmt.Errorf("remote call timed out")
 	}
 
-	cache.LocalCache.Delete(remoteCall + fs.uuid)
+	if fs.finished {
+		cache.LocalCache.Delete(remoteCall + fs.uuid)
+	}
+
 	return fs.result, fs.err
 }
 
