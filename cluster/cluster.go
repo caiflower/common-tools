@@ -1300,22 +1300,16 @@ func (c *Cluster) callLocalFunc(f *FuncSpec) {
 }
 
 func (c *Cluster) callRemoteFunc(f *FuncSpec) {
-	var send bool
 	msg := &remoteCallMessage{
 		TraceID: f.traceId, UUID: f.uuid, FuncName: f.funcName, Param: f.param, Sync: f.sync,
 	}
-	c.aliveNodes.Range(func(key, val interface{}) bool {
-		if _node, ok := val.(*Node); ok && _node.name == f.nodeName {
-			send = true
-			if err := _node.sendMessage(messageRemoteCallReq, msg); err != nil {
-				f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
-				c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
-			}
-			return false
+	if val, ok := c.aliveNodes.Load(f.nodeName); ok {
+		_node := val.(*Node)
+		if err := _node.sendMessage(messageRemoteCallReq, msg); err != nil {
+			f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
+			c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
 		}
-		return true
-	})
-	if !send {
+	} else {
 		f.setResult(nil, fmt.Errorf("the node %s does not exist or is dead", f.nodeName))
 	}
 }

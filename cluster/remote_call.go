@@ -103,6 +103,7 @@ func (fs *FuncSpec) wait() {
 	case <-time.After(fs.timeout):
 		fs.setResult(nil, fmt.Errorf("remote call timed out")) //超时
 	}
+	cache.LocalCache.Delete(remoteCall + fs.uuid)
 }
 
 func (fs *FuncSpec) GetResult() (interface{}, error) {
