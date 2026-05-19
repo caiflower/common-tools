@@ -1263,11 +1263,11 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 
 	// 本地调用
 	if c.GetMyNode().name == f.nodeName {
-		c.logger.Debug("[%s] call local func '%s'", f.uuid, f.funcName)
+		c.logger.Trace("[%s] call local func '%s'", f.uuid, f.funcName)
 		go c.callLocalFunc(f)
 
 	} else { // 远程调用
-		c.logger.Debug("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
+		c.logger.Trace("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
 		c.callRemoteFunc(f)
 	}
 
