@@ -724,7 +724,7 @@ func renderStructBlocks(tables []tableMeta) string {
 				b.WriteString(fmt.Sprintf("\t\tif len(%s) == 1 {\n", field))
 				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s = ?\", %s[0])\n", c.ColumnName, field))
 				b.WriteString("\t\t} else {\n")
-				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s IN (?)\", bun.In(%s))\n", c.ColumnName, field))
+				b.WriteString(fmt.Sprintf("\t\t\tq.Where(\"%s IN (?)\", bun.List(%s))\n", c.ColumnName, field))
 				b.WriteString("\t\t}\n")
 				b.WriteString("\t}\n")
 			}
