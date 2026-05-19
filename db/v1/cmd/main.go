@@ -409,12 +409,12 @@ func fillGoType(m *columnMeta, dialect string, keywords []string) {
 			if strings.Contains(m.ColumnType, "(1)") {
 				m.GoType = baseType("bool", m.IsNullable, false)
 			} else {
-				m.GoType = baseType("int8", m.IsNullable, false)
+				m.GoType = baseType("int", m.IsNullable, false)
 			}
 		case "smallint":
-			m.GoType = baseType("int16", m.IsNullable, false)
+			m.GoType = baseType("int", m.IsNullable, false)
 		case "mediumint", "int", "integer":
-			m.GoType = baseType("int32", m.IsNullable, false)
+			m.GoType = baseType("int", m.IsNullable, false)
 		case "bigint":
 			m.GoType = baseType("int64", m.IsNullable, false)
 		case "float":
@@ -439,9 +439,9 @@ func fillGoType(m *columnMeta, dialect string, keywords []string) {
 	case "postgres":
 		switch dataType {
 		case "smallint":
-			m.GoType = baseType("int16", m.IsNullable, false)
+			m.GoType = baseType("int", m.IsNullable, false)
 		case "integer":
-			m.GoType = baseType("int32", m.IsNullable, false)
+			m.GoType = baseType("int", m.IsNullable, false)
 		case "bigint":
 			m.GoType = baseType("int64", m.IsNullable, false)
 		case "real":
