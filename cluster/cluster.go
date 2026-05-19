@@ -34,6 +34,7 @@ import (
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/pkg/cache"
+	"github.com/caiflower/common-tools/pkg/safego"
 	"github.com/caiflower/common-tools/pkg/shell"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 
@@ -1264,8 +1265,9 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 	// 本地调用
 	if c.GetMyNode().name == f.nodeName {
 		c.logger.Trace("[%s] call local func '%s'", f.uuid, f.funcName)
-		go c.callLocalFunc(f)
-
+		safego.Go(func() {
+			c.callLocalFunc(f)
+		})
 	} else { // 远程调用
 		c.logger.Trace("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
 		c.callRemoteFunc(f)
@@ -1278,11 +1280,9 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 }
 
 func (c *Cluster) callLocalFunc(f *FuncSpec) {
+	golocalv1.PutTraceID(f.traceId)
 	defer golocalv1.Clean()
 
-	if golocalv1.GetTraceID() == "" {
-		golocalv1.PutTraceID(f.traceId)
-	}
 	fc := c.localFuncs[f.funcName]
 	if fc == nil {
 		err := fmt.Errorf("not such function '%s' in the cluster", f.funcName)
