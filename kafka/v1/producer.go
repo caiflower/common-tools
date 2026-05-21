@@ -18,7 +18,6 @@ package v1
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/caiflower/common-tools/global"
@@ -49,12 +48,23 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 	configMap := &kafka.ConfigMap{}
 	_ = configMap.SetKey("bootstrap.servers", strings.Join(config.BootstrapServers, ","))
 	_ = configMap.SetKey("request.required.acks", config.ProducerAcks)
-	_ = configMap.SetKey("request.timeout.ms", strconv.Itoa(config.ProducerRequestTimeout))
+	_ = configMap.SetKey("request.timeout.ms", int(config.ProducerRequestTimeout.Milliseconds()))
 	_ = configMap.SetKey("compression.type", config.ProducerCompressType)
-	_ = configMap.SetKey("message.timeout.ms", config.ProducerMessageTimeout)
+	_ = configMap.SetKey("message.timeout.ms", int(config.ProducerMessageTimeout.Milliseconds()))
 	_ = configMap.SetKey("retries", 3)
 	_ = configMap.SetKey("retry.backoff.ms", 200)
 	_ = configMap.SetKey("max.poll.interval.ms", 180000) // 3分钟
+
+	if config.ProducerIdempotence {
+		// librdkafka automatically sets max.in.flight.requests.per.connection=5 when
+		// enable.idempotence=true (its idempotent producer supports 5 in-flight requests),
+		// so we don't need to set it manually unlike sarama which requires MaxOpenRequests=1.
+		_ = configMap.SetKey("enable.idempotence", true)
+		if config.ProducerAcks != -1 {
+			logger.Warn("[kafka-product] producer '%s' enable.idempotence requires acks=-1, overriding to -1", config.Name)
+			_ = configMap.SetKey("request.required.acks", -1)
+		}
+	}
 
 	if config.SecurityProtocol != "" {
 		_ = configMap.SetKey("security.protocol", config.SecurityProtocol)

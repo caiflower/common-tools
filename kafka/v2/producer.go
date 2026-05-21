@@ -33,6 +33,15 @@ import (
 func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
+	if cfg.ProducerRequestTimeout < time.Millisecond {
+		logger.Warn("[kafka-product] producer '%s' ProducerRequestTimeout=%v is too small, treating as milliseconds", cfg.Name, cfg.ProducerRequestTimeout)
+		cfg.ProducerRequestTimeout = cfg.ProducerRequestTimeout * time.Millisecond
+	}
+	if cfg.ProducerMessageTimeout < time.Millisecond {
+		logger.Warn("[kafka-product] producer '%s' ProducerMessageTimeout=%v is too small, treating as milliseconds", cfg.Name, cfg.ProducerMessageTimeout)
+		cfg.ProducerMessageTimeout = cfg.ProducerMessageTimeout * time.Millisecond
+	}
+
 	if strings.ToUpper(cfg.Enable) != "TRUE" {
 		logger.Warn("[kafka-product] producer '%s' is disable", cfg.Name)
 		return &KafkaClient{cfg: &cfg}
@@ -43,19 +52,27 @@ func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 
-	switch cfg.ProducerAcks {
-	case -1:
+	if cfg.ProducerIdempotence {
+		config.Producer.Idempotent = true
+		config.Net.MaxOpenRequests = 1
 		config.Producer.RequiredAcks = sarama.WaitForAll
-	case 1:
-		config.Producer.RequiredAcks = sarama.WaitForLocal
-	case 0:
-		config.Producer.RequiredAcks = sarama.NoResponse
-	default:
-		config.Producer.RequiredAcks = sarama.WaitForAll
+		if cfg.ProducerAcks != -1 {
+			logger.Warn("[kafka-product] producer '%s' enable.idempotence requires acks=-1, overriding to WaitForAll", cfg.Name)
+		}
+	} else {
+		switch cfg.ProducerAcks {
+		case -1:
+			config.Producer.RequiredAcks = sarama.WaitForAll
+		case 1:
+			config.Producer.RequiredAcks = sarama.WaitForLocal
+		case 0:
+			config.Producer.RequiredAcks = sarama.NoResponse
+		default:
+			config.Producer.RequiredAcks = sarama.WaitForAll
+		}
 	}
 
-	second := time.Duration(cfg.ProducerRequestTimeout / 1000)
-	config.Producer.Timeout = time.Second * second
+	config.Producer.Timeout = cfg.ProducerRequestTimeout
 	switch cfg.ProducerCompressType {
 	case "none":
 

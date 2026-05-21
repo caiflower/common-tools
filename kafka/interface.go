@@ -30,10 +30,11 @@ type Config struct {
 	GroupID                   string        `yaml:"groupId"`
 	Topics                    []string      `yaml:"topics"`
 	ProducerAcks              int           `yaml:"producerAcks" default:"-1"`
-	ProducerCompressType      string        `yaml:"producerCompressType" default:"none"`    // none, gzip, snappy, lz4, zstd
-	ProducerMessageTimeout    int           `yaml:"producerMessageTimeout" default:"15000"` // 默认15秒, 仅在v1生效 / Default 15s, only effective in v1
-	ProducerRequestTimeout    int           `yaml:"producerRequestTimeout" default:"10000"` // 默认10秒 / Default 10s
-	ProducerVersion           string        `yaml:"producerVersion"`                        // kafka版本，仅在v2生效 / Kafka version, only effective in v2
+	ProducerCompressType      string        `yaml:"producerCompressType" default:"none"`  // none, gzip, snappy, lz4, zstd
+	ProducerIdempotence       bool          `yaml:"producerIdempotence" default:"false"`  // enable.idempotence
+	ProducerMessageTimeout    time.Duration `yaml:"producerMessageTimeout" default:"15s"` // 仅在v1生效 / Only effective in v1
+	ProducerRequestTimeout    time.Duration `yaml:"producerRequestTimeout" default:"10s"`
+	ProducerVersion           string        `yaml:"producerVersion"` // kafka版本，仅在v2生效 / Kafka version, only effective in v2
 	ConsumerWorkerNum         int           `yaml:"consumerWorkerNum" default:"2"`
 	ConsumerHeartBeatInterval time.Duration `yaml:"consumerHeartBeatInterval" default:"6s"`
 	ConsumerSessionTimeout    time.Duration `yaml:"consumerSessionTimeout" default:"20s"`
