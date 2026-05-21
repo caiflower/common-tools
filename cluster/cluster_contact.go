@@ -19,7 +19,6 @@ package cluster
 import (
 	"errors"
 
-	"github.com/caiflower/common-tools/pkg/cache"
 	"github.com/caiflower/common-tools/pkg/nio"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
@@ -48,7 +47,7 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 			}
 
 			c.logger.Trace("[cluster] remote [%s] func return", session.GetRemoteAddr())
-			if f, ok := cache.LocalCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
+			if f, ok := c.callCache.Get(remoteCall + rcMsg.UUID); ok && f != nil {
 				var _err error
 				if rcMsg.Err != nil {
 					bytes, bytesErr := tools.ToByte(rcMsg.Err)
@@ -59,8 +58,6 @@ func (c *Cluster) getClientHandler(nodeName string) *nio.Handler {
 				}
 
 				f.(*FuncSpec).setResult(rcMsg.Result, _err)
-				// remote return, then delete cache
-				cache.LocalCache.Delete(remoteCall + rcMsg.UUID)
 			}
 			return
 		}

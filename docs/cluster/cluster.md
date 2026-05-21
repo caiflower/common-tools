@@ -287,16 +287,6 @@ funcSpec := cluster.NewFuncSpec("node2", "processData", "data", 3*time.Second)
 funcSpec.IgnoreNotReady()  // 忽略集群未就绪状态
 ```
 
-### 自定义属性
-
-FuncSpec 支持设置和获取自定义属性：
-
-```go
-funcSpec := cluster.NewFuncSpec("node2", "processData", "data", 3*time.Second)
-funcSpec.SetAttribute("customKey", "customValue")
-value := funcSpec.GetAttribute("customKey")
-```
-
 ## 任务调度器
 
 任务调度器允许在集群状态变化时执行特定逻辑。

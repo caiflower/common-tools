@@ -19,32 +19,38 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/cache"
+	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
 
 const (
-	remoteCall    = "remote-call/"
-	defaultTimout = 3 * time.Second
+	remoteCall        = "cluster:func_call:"
+	defaultTimeout    = 3 * time.Second
+	cacheTTLExtension = 5 * time.Second
 )
 
+var ErrResultNotReady = fmt.Errorf("remote call result not ready")
+
 type FuncSpec struct {
-	traceId               string      //请求ID
-	uuid                  string      //唯一ID
-	nodeName              string      //目标节点
-	funcName              string      //函数名称
-	param                 interface{} //参数
-	sync                  bool        //是否同步
-	result                interface{} //结果
-	err                   error       //错误信息
+	mu                    sync.RWMutex
+	traceId               string
+	uuid                  string
+	nodeName              string
+	funcName              string
+	param                 interface{}
+	sync                  bool
+	result                interface{}
+	err                   error
 	timeout               time.Duration
-	ctx                   context.Context    // 上下文
-	cancel                context.CancelFunc // 取消函数
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	timer                 *time.Timer
 	finished              bool
-	attribute             map[string]interface{}
 	ignoreClusterNotReady bool
+	onFinish              func()
 }
 
 // NewFuncSpec 同步调用，timeout是同步超时时间
@@ -55,10 +61,10 @@ func NewFuncSpec(nodeName, funcName string, param interface{}, timeout time.Dura
 	return spec
 }
 
-// NewAsyncFuncSpec 异步调用，timeout + 5是等待结果返回的超时时间
+// NewAsyncFuncSpec 异步调用，timeout为超时时间
 func NewAsyncFuncSpec(nodeName, funcName string, param interface{}, timeout time.Duration) *FuncSpec {
 	if timeout.Seconds() <= 0 {
-		timeout = defaultTimout
+		timeout = defaultTimeout
 	}
 	f := &FuncSpec{
 		uuid:     tools.UUID(),
@@ -69,6 +75,14 @@ func NewAsyncFuncSpec(nodeName, funcName string, param interface{}, timeout time
 	}
 	f.traceId = f.uuid
 	return f
+}
+
+func (fs *FuncSpec) startTimer() {
+	if fs.timer == nil {
+		fs.timer = time.AfterFunc(fs.timeout, func() {
+			fs.setResult(nil, fmt.Errorf("remote call timed out"))
+		})
+	}
 }
 
 func (fs *FuncSpec) SetTraceId(traceId string) *FuncSpec {
@@ -86,9 +100,20 @@ func (fs *FuncSpec) IgnoreNotReady() *FuncSpec {
 }
 
 func (fs *FuncSpec) setResult(result interface{}, err error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.finished {
+		return
+	}
+	if fs.timer != nil {
+		fs.timer.Stop()
+	}
 	fs.result = result
 	fs.err = err
 	fs.finished = true
+	if fs.onFinish != nil {
+		fs.onFinish()
+	}
 	if fs.cancel != nil {
 		fs.cancel()
 	}
@@ -101,27 +126,53 @@ func (fs *FuncSpec) wait() {
 	select {
 	case <-fs.ctx.Done():
 	case <-time.After(fs.timeout):
-		fs.setResult(nil, fmt.Errorf("remote call timed out")) //超时
+		fs.setResult(nil, fmt.Errorf("remote call timed out"))
 	}
-	cache.LocalCache.Delete(remoteCall + fs.uuid)
 }
 
+// Deprecated: Use GetResultAs[T] instead to avoid deserialization failures with remote calls.
 func (fs *FuncSpec) GetResult() (interface{}, error) {
-	if _, e := cache.LocalCache.Get(remoteCall + fs.uuid); !e && !fs.finished {
-		return nil, fmt.Errorf("remote call timed out")
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	if !fs.finished {
+		return nil, ErrResultNotReady
 	}
-
-	if fs.finished {
-		cache.LocalCache.Delete(remoteCall + fs.uuid)
-	}
-
 	return fs.result, fs.err
 }
 
-func (fs *FuncSpec) SetAttribute(key string, v interface{}) {
-	fs.attribute[key] = v
+func GetResultAs[T any](fs *FuncSpec) (T, error) {
+	var zero T
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	if !fs.finished {
+		return zero, ErrResultNotReady
+	}
+	if fs.err != nil {
+		return zero, fs.err
+	}
+	if v, ok := fs.result.(T); ok {
+		return v, nil
+	}
+	logger.Debug("GetResultAs: type assertion failed, falling back to marshal/unmarshal. funcName=%s, resultType=%T", fs.funcName, fs.result)
+	resultBytes, marshalErr := tools.Marshal(fs.result)
+	if marshalErr != nil {
+		return zero, fmt.Errorf("marshal result failed: %w", marshalErr)
+	}
+	var target T
+	if unmarshalErr := tools.Unmarshal(resultBytes, &target); unmarshalErr != nil {
+		return zero, fmt.Errorf("unmarshal result failed: %w", unmarshalErr)
+	}
+	return target, nil
 }
 
-func (fs *FuncSpec) GetAttribute(key string) interface{} {
-	return fs.attribute[key]
+func CallFuncAs[T any](c ICluster, fc *FuncSpec) (T, error) {
+	var zero T
+	_, err := c.CallFunc(fc)
+	if err != nil {
+		return zero, err
+	}
+	if !fc.sync {
+		return zero, nil
+	}
+	return GetResultAs[T](fc)
 }

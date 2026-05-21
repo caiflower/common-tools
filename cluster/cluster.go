@@ -33,10 +33,10 @@ import (
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
-	"github.com/caiflower/common-tools/pkg/cache"
 	"github.com/caiflower/common-tools/pkg/safego"
 	"github.com/caiflower/common-tools/pkg/shell"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	gocache "github.com/patrickmn/go-cache"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/nio"
@@ -71,7 +71,8 @@ type ICluster interface {
 	AddJobTracker(v JobTracker) error                                             // add scheduler
 	RemoveJobTracker(v JobTracker)                                                // remove scheduler
 	RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) // registerFunc
-	CallFunc(fc *FuncSpec) (interface{}, error)                                   // callFunc
+	// Deprecated: Use cluster.CallFuncAs[T] instead to avoid deserialization failures with remote calls.
+	CallFunc(fc *FuncSpec) (interface{}, error) // callFunc
 }
 
 const (
@@ -148,6 +149,7 @@ type Cluster struct {
 	closeSuccess       chan bool
 	currentReplicas    atomic.Value
 	connectLock        sync.Mutex
+	callCache          *gocache.Cache
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -175,6 +177,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		votesLock:   syncx.NewSpinLock(),
 		jobTrackers: &sync.Map{},
 		localFuncs:  make(map[string]func(data interface{}) (interface{}, error)),
+		callCache:   gocache.New(gocache.NoExpiration, 1*time.Minute),
 	}
 
 	if !cluster.IsEnable() {
@@ -250,7 +253,7 @@ func (c *Cluster) Start() error {
 
 		for _, v := range c.GetAliveNodeNames() {
 			if v != c.GetMyName() {
-				if _, err := c.CallFunc(NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
+				if _, err := CallFuncAs[any](c, NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
 					c.logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
 				}
 			}
@@ -1257,10 +1260,13 @@ func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (inter
 	c.localFuncs[funcName] = fn
 }
 
+// Deprecated: Use cluster.CallFuncAs[T] instead to avoid deserialization failures with remote calls.
 func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 	if !c.IsReady() && !f.ignoreClusterNotReady {
 		return nil, errors.New("cluster is not ready")
 	}
+
+	f.startTimer()
 
 	// 本地调用
 	if c.GetMyNode().name == f.nodeName {
@@ -1273,7 +1279,10 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 		c.callRemoteFunc(f)
 	}
 
-	cache.LocalCache.Set(remoteCall+f.uuid, f, f.timeout+(5*time.Second)) //写缓存，TTL时间比超时时间富余一些。
+	c.callCache.Set(remoteCall+f.uuid, f, f.timeout+cacheTTLExtension)
+	f.onFinish = func() {
+		c.callCache.Delete(remoteCall + f.uuid)
+	}
 
 	f.wait()
 	return f.result, f.err

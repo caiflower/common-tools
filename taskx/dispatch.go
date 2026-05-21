@@ -189,7 +189,7 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 	if task.task.Urgent {
 		taskID := taskBean.ID
 		funcSpec := cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID())
-		_, err := t.Cluster.CallFunc(funcSpec)
+		_, err := cluster.CallFuncAs[any](t.Cluster, funcSpec)
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
@@ -556,7 +556,7 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 
 func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcName string) {
 	for nodeName, taskIds := range workerMap {
-		_, err := t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(nodeName, funcName, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err := cluster.CallFuncAs[any](t.Cluster, cluster.NewAsyncFuncSpec(nodeName, funcName, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Error("deliver tasks failed. Error: %s", err.Error())
 		}

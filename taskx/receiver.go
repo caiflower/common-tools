@@ -535,7 +535,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = cluster.CallFuncAs[any](t.Cluster, cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}
@@ -608,7 +608,7 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	}
 
 	if task.Urgent {
-		_, err = t.Cluster.CallFunc(cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+		_, err = cluster.CallFuncAs[any](t.Cluster, cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
 		if err != nil {
 			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
 		}

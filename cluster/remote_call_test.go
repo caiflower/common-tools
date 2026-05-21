@@ -17,6 +17,7 @@
 package cluster
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -27,7 +28,9 @@ import (
 )
 
 const (
-	printData = "printDataFunc"
+	printData    = "printDataFunc"
+	caseOfBytes  = "caseOfBytesResult"
+	caseOfObject = "caseOfObjectResult"
 )
 
 func printDataFn(data interface{}) (interface{}, error) {
@@ -38,6 +41,33 @@ func printDataFn(data interface{}) (interface{}, error) {
 func getOtherNode(cluster ICluster) string {
 	names := cluster.GetAliveNodeNames()
 	return names[rand.Intn(len(names))]
+}
+
+func getSelfNode(c ICluster) string {
+	return c.GetMyName()
+}
+
+func caseOfBytesResult(data any) (any, error) {
+	return data, nil
+}
+
+type testUser struct {
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+func caseOfObjectResult(data any) (any, error) {
+	return data, nil
+}
+
+func callOnLeader(t *testing.T, clusters []ICluster, fn func(ICluster)) {
+	for _, c := range clusters {
+		if c.IsLeader() {
+			fn(c)
+			return
+		}
+	}
+	t.Fatal("no leader found")
 }
 
 func TestRemoteCall(t *testing.T) {
@@ -56,38 +86,20 @@ func TestRemoteCall(t *testing.T) {
 	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName(), "leader must same")
 	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName(), "leader must same")
 
-	// 同步调用
-	fmt.Println("----- Test sync FuncSpec ------")
-	if cluster1.IsLeader() {
-		result, err := cluster1.CallFunc(NewFuncSpec(getOtherNode(cluster1), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
+	fmt.Println("----- Test sync CallFuncAs ------")
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		result, err := CallFuncAs[string](c, NewFuncSpec(getOtherNode(c), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
 		assert.Nil(t, err)
-		assert.Equal(t, result, "testParam")
-	} else if cluster2.IsLeader() {
-		result, err := cluster2.CallFunc(NewFuncSpec(getOtherNode(cluster2), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
-		assert.Nil(t, err)
-		assert.Equal(t, result, "testParam")
-	} else if cluster3.IsLeader() {
-		result, err := cluster3.CallFunc(NewFuncSpec(getOtherNode(cluster3), printData, "testParam", time.Second*3).SetTraceId("myTraceId"))
-		assert.Nil(t, err)
-		assert.Equal(t, result, "testParam")
-	}
+		assert.Equal(t, "testParam", result)
+	})
 
-	// 异步调用
 	fmt.Println("----- Test async FuncSpec ------")
 	var f *FuncSpec
-	if cluster1.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster1), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
-		_, err := cluster1.CallFunc(f)
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		f = NewAsyncFuncSpec(getOtherNode(c), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := CallFuncAs[any](c, f)
 		assert.Nil(t, err)
-	} else if cluster2.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster2), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
-		_, err := cluster2.CallFunc(f)
-		assert.Nil(t, err)
-	} else if cluster3.IsLeader() {
-		f = NewAsyncFuncSpec(getOtherNode(cluster3), printData, "testAsyncParam", time.Second*5).SetTraceId("myAsyncTraceId")
-		_, err := cluster3.CallFunc(f)
-		assert.Nil(t, err)
-	}
+	})
 
 	for {
 		select {
@@ -95,14 +107,211 @@ func TestRemoteCall(t *testing.T) {
 			fmt.Println("timeout")
 			return
 		default:
-			result, err := f.GetResult()
-			assert.Nil(t, err)
-			if result != nil {
-				assert.Equal(t, "testAsyncParam", result)
-				return
+			result, err := GetResultAs[string](f)
+			if errors.Is(err, ErrResultNotReady) {
+				fmt.Println("no result, wait async result sleep.")
+				time.Sleep(time.Millisecond * 50)
+				continue
 			}
-			fmt.Println("no result, wait async result sleep.")
-			time.Sleep(time.Millisecond * 50)
+			assert.Nil(t, err)
+			assert.Equal(t, "testAsyncParam", result)
+			return
+		}
+	}
+}
+
+func TestRemoteCallWithBytesResult(t *testing.T) {
+	cluster1, cluster2, cluster3 := common()
+	cluster1.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	cluster2.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	cluster3.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+
+	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName(), "leader must same")
+	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName(), "leader must same")
+
+	input := []byte{'i', 'l', 'u'}
+
+	fmt.Println("----- Test sync CallFuncAs with []byte ------")
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		actual, err := CallFuncAs[[]byte](c, NewFuncSpec(getOtherNode(c), caseOfBytes, input, time.Second*3).SetTraceId("myTraceId"))
+		assert.Nil(t, err)
+		assert.Equal(t, input, actual)
+	})
+
+	fmt.Println("----- Test async FuncSpec with []byte ------")
+	var f *FuncSpec
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		f = NewAsyncFuncSpec(getOtherNode(c), caseOfBytes, input, time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := CallFuncAs[any](c, f)
+		assert.Nil(t, err)
+	})
+
+	for {
+		select {
+		case <-time.After(time.Second * 5):
+			fmt.Println("timeout")
+			return
+		default:
+			actual, err := GetResultAs[[]byte](f)
+			if errors.Is(err, ErrResultNotReady) {
+				fmt.Println("no result, wait async result sleep.")
+				time.Sleep(time.Millisecond * 50)
+				continue
+			}
+			assert.Nil(t, err)
+			assert.Equal(t, input, actual)
+			return
+		}
+	}
+}
+
+func TestLocalCallWithObjectResult(t *testing.T) {
+	cluster1, cluster2, cluster3 := common()
+	cluster1.RegisterFunc(caseOfObject, caseOfObjectResult)
+	cluster2.RegisterFunc(caseOfObject, caseOfObjectResult)
+	cluster3.RegisterFunc(caseOfObject, caseOfObjectResult)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+
+	input := testUser{Name: "bob", Age: 25}
+
+	fmt.Println("----- Test local sync CallFuncAs with object ------")
+	for _, c := range []ICluster{cluster1, cluster2, cluster3} {
+		actual, err := CallFuncAs[testUser](c, NewFuncSpec(getSelfNode(c), caseOfObject, input, time.Second*3))
+		assert.Nil(t, err)
+		assert.Equal(t, input, actual)
+	}
+
+	fmt.Println("----- Test local async FuncSpec with object ------")
+	f := NewAsyncFuncSpec(getSelfNode(cluster1), caseOfObject, input, time.Second*5)
+	_, err := CallFuncAs[any](cluster1, f)
+	assert.Nil(t, err)
+
+	for {
+		select {
+		case <-time.After(time.Second * 5):
+			fmt.Println("timeout")
+			return
+		default:
+			actual, err := GetResultAs[testUser](f)
+			if errors.Is(err, ErrResultNotReady) {
+				fmt.Println("no result, wait async result sleep.")
+				time.Sleep(time.Millisecond * 50)
+				continue
+			}
+			assert.Nil(t, err)
+			assert.Equal(t, input, actual)
+			return
+		}
+	}
+}
+
+func TestLocalCallWithBytesResult(t *testing.T) {
+	cluster1, cluster2, cluster3 := common()
+	cluster1.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	cluster2.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	cluster3.RegisterFunc(caseOfBytes, caseOfBytesResult)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+
+	input := []byte{'i', 'l', 'u'}
+
+	fmt.Println("----- Test local sync CallFuncAs with []byte ------")
+	for _, c := range []ICluster{cluster1, cluster2, cluster3} {
+		actual, err := CallFuncAs[[]byte](c, NewFuncSpec(getSelfNode(c), caseOfBytes, input, time.Second*3))
+		assert.Nil(t, err)
+		assert.Equal(t, input, actual)
+	}
+
+	fmt.Println("----- Test local async FuncSpec with []byte ------")
+	f := NewAsyncFuncSpec(getSelfNode(cluster1), caseOfBytes, input, time.Second*5)
+	_, err := CallFuncAs[any](cluster1, f)
+	assert.Nil(t, err)
+
+	for {
+		select {
+		case <-time.After(time.Second * 5):
+			fmt.Println("timeout")
+			return
+		default:
+			actual, err := GetResultAs[[]byte](f)
+			if errors.Is(err, ErrResultNotReady) {
+				fmt.Println("no result, wait async result sleep.")
+				time.Sleep(time.Millisecond * 50)
+				continue
+			}
+			assert.Nil(t, err)
+			assert.Equal(t, input, actual)
+			return
+		}
+	}
+}
+
+func TestRemoteCallWithObjectResult(t *testing.T) {
+	cluster1, cluster2, cluster3 := common()
+	cluster1.RegisterFunc(caseOfObject, caseOfObjectResult)
+	cluster2.RegisterFunc(caseOfObject, caseOfObjectResult)
+	cluster3.RegisterFunc(caseOfObject, caseOfObjectResult)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	waitAllForReady(t, cluster1, cluster2, cluster3)
+
+	assert.Equal(t, cluster1.GetLeaderName(), cluster2.GetLeaderName(), "leader must same")
+	assert.Equal(t, cluster1.GetLeaderName(), cluster3.GetLeaderName(), "leader must same")
+
+	input := testUser{Name: "alice", Age: 30}
+
+	fmt.Println("----- Test sync CallFuncAs with object ------")
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		actual, err := CallFuncAs[testUser](c, NewFuncSpec(getOtherNode(c), caseOfObject, input, time.Second*3).SetTraceId("myTraceId"))
+		assert.Nil(t, err)
+		assert.Equal(t, input, actual)
+	})
+
+	fmt.Println("----- Test async FuncSpec with object ------")
+	var f *FuncSpec
+	callOnLeader(t, []ICluster{cluster1, cluster2, cluster3}, func(c ICluster) {
+		f = NewAsyncFuncSpec(getOtherNode(c), caseOfObject, input, time.Second*5).SetTraceId("myAsyncTraceId")
+		_, err := CallFuncAs[any](c, f)
+		assert.Nil(t, err)
+	})
+
+	for {
+		select {
+		case <-time.After(time.Second * 5):
+			fmt.Println("timeout")
+			return
+		default:
+			actual, err := GetResultAs[testUser](f)
+			if errors.Is(err, ErrResultNotReady) {
+				fmt.Println("no result, wait async result sleep.")
+				time.Sleep(time.Millisecond * 50)
+				continue
+			}
+			assert.Nil(t, err)
+			assert.Equal(t, input, actual)
+			return
 		}
 	}
 }
