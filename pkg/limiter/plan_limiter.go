@@ -5,11 +5,10 @@ import (
 	_ "embed"
 	"fmt"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/caiflower/common-tools/redis/v1"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -24,14 +23,11 @@ var planUsageScript string
 
 type PlanLimiter struct {
 	client            *redis.Client
-	allowScriptSHA    string
-	refundScriptSHA   string
-	usageScriptSHA    string
+	scriptManager     *redisv1.ScriptManager
 	defaultBudget     int64
 	defaultWindow     time.Duration
 	defaultBucketSize time.Duration
 	defaultWeight     float64
-	mu                sync.RWMutex
 }
 
 func NewPlanLimiter(ctx context.Context, r *redis.Client, opts ...PlanOption) (*PlanLimiter, error) {
@@ -61,49 +57,16 @@ func NewPlanLimiter(ctx context.Context, r *redis.Client, opts ...PlanOption) (*
 		return nil, fmt.Errorf("invalid plan limiter config: %w", err)
 	}
 
-	if err := pl.loadScripts(ctx); err != nil {
+	pl.scriptManager = redisv1.NewScriptManager(r)
+	pl.scriptManager.Register("allow", planSlidingWindowScript)
+	pl.scriptManager.Register("refund", planRefundScript)
+	pl.scriptManager.Register("usage", planUsageScript)
+
+	if err := pl.scriptManager.LoadScripts(ctx); err != nil {
 		return nil, fmt.Errorf("failed to load plan limiter scripts: %w", err)
 	}
 
 	return pl, nil
-}
-
-func (pl *PlanLimiter) loadScripts(ctx context.Context) error {
-	allowSHA, err := pl.client.ScriptLoad(ctx, planSlidingWindowScript).Result()
-	if err != nil {
-		return fmt.Errorf("load allow script: %w", err)
-	}
-	refundSHA, err := pl.client.ScriptLoad(ctx, planRefundScript).Result()
-	if err != nil {
-		return fmt.Errorf("load refund script: %w", err)
-	}
-	usageSHA, err := pl.client.ScriptLoad(ctx, planUsageScript).Result()
-	if err != nil {
-		return fmt.Errorf("load usage script: %w", err)
-	}
-
-	pl.mu.Lock()
-	pl.allowScriptSHA = allowSHA
-	pl.refundScriptSHA = refundSHA
-	pl.usageScriptSHA = usageSHA
-	pl.mu.Unlock()
-
-	return nil
-}
-
-// getScriptSHA returns the SHA for the given operation.
-// MUST be called while holding pl.mu read lock (pl.mu.RLock()).
-func (pl *PlanLimiter) getScriptSHA(op string) string {
-	switch op {
-	case "allow":
-		return pl.allowScriptSHA
-	case "refund":
-		return pl.refundScriptSHA
-	case "usage":
-		return pl.usageScriptSHA
-	default:
-		return ""
-	}
 }
 
 type PlanConfig struct {
@@ -154,7 +117,7 @@ func (pl *PlanLimiter) Allow(ctx context.Context, key string, model string, toke
 		return false, nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	result, err := pl.evalSha(ctx, "allow", planSlidingWindowScript,
+	result, err := pl.scriptManager.EvalSha(ctx, "allow",
 		[]string{key},
 		tokens, config.Budget, int64(config.Window.Seconds()), int64(config.BucketSize.Seconds()), model, config.Weight,
 	)
@@ -173,7 +136,7 @@ func (pl *PlanLimiter) Refund(ctx context.Context, key string, model string, tok
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	result, err := pl.evalSha(ctx, "refund", planRefundScript,
+	result, err := pl.scriptManager.EvalSha(ctx, "refund",
 		[]string{key},
 		tokens, config.Budget, int64(config.Window.Seconds()), int64(config.BucketSize.Seconds()), model, config.Weight,
 	)
@@ -192,7 +155,7 @@ func (pl *PlanLimiter) Usage(ctx context.Context, key string, opts ...PlanOption
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	result, err := pl.evalSha(ctx, "usage", planUsageScript,
+	result, err := pl.scriptManager.EvalSha(ctx, "usage",
 		[]string{key},
 		config.Budget, int64(config.Window.Seconds()), int64(config.BucketSize.Seconds()),
 	)
@@ -202,41 +165,6 @@ func (pl *PlanLimiter) Usage(ctx context.Context, key string, opts ...PlanOption
 	}
 
 	return pl.parseUsageResult(result, config), nil
-}
-
-func (pl *PlanLimiter) evalSha(ctx context.Context, op string, script string, keys []string, args ...interface{}) ([]interface{}, error) {
-	pl.mu.RLock()
-	sha := pl.getScriptSHA(op)
-	pl.mu.RUnlock()
-
-	result, err := pl.client.EvalSha(ctx, sha, keys, args...).Slice()
-	if err != nil && isNOSHAERR(err) {
-		if reloadErr := pl.loadScripts(ctx); reloadErr != nil {
-			return nil, fmt.Errorf("EVALSHA failed and script reload also failed: %w (reload: %v)", err, reloadErr)
-		}
-
-		pl.mu.RLock()
-		newSHA := pl.getScriptSHA(op)
-		pl.mu.RUnlock()
-
-		result, err = pl.client.EvalSha(ctx, newSHA, keys, args...).Slice()
-		if err != nil && isNOSHAERR(err) {
-			result, err = pl.client.Eval(ctx, script, keys, args...).Slice()
-			if err != nil {
-				return nil, fmt.Errorf("EVAL fallback failed: %w", err)
-			}
-		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	return result, nil
-}
-
-func isNOSHAERR(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "NOSCRIPT")
 }
 
 func validatePlanConfig(config *PlanConfig) error {
