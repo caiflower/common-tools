@@ -648,3 +648,236 @@ func TestPlanLimiter_TotalFieldConsistency(t *testing.T) {
 		t.Errorf("Expected _total=7500, got %s", totalField)
 	}
 }
+
+// advanceTime 推进 miniredis 的服务器时间，使 TIME 命令返回推进后的时间。
+// 这比直接修改桶时间戳更接近真实 Redis 行为，因为 Lua 脚本通过 redis.call('TIME')
+// 获取服务器时间来计算窗口起始点。
+//
+// 注意：FastForward 只减少 TTL，不推进 TIME 命令返回的服务器时间，
+// 因此滑动窗口的过期逻辑必须通过 SetTime 来触发。
+func advanceTime(t *testing.T, mr *miniredis.Miniredis, currentTime *time.Time, elapsed time.Duration) {
+	t.Helper()
+	*currentTime = currentTime.Add(elapsed)
+	mr.SetTime(*currentTime)
+}
+
+func TestPlanLimiter_SlidingWindowPartialThenFullExpiry(t *testing.T) {
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+	now := time.Now()
+	mr.SetTime(now)
+	pl := newTestPlanLimiter(t, mr)
+	pl.defaultBudget = 50000
+	pl.defaultWindow = 4 * time.Hour
+	pl.defaultBucketSize = 1 * time.Hour
+
+	ctx := context.Background()
+	key := "plan:user1:plan1"
+
+	allowed, usage, err := pl.Allow(ctx, key, "gpt4", 1000, WithPlanWeight(3.0))
+	if err != nil {
+		t.Fatalf("First Allow failed: %v", err)
+	}
+	if !allowed {
+		t.Error("First request should be allowed")
+	}
+	if usage.TotalUsed != 3000 {
+		t.Errorf("Expected TotalUsed=3000 after first request, got %d", usage.TotalUsed)
+	}
+
+	advanceTime(t, mr, &now, 2*time.Hour)
+
+	allowed, usage, err = pl.Allow(ctx, key, "gpt4", 500, WithPlanWeight(2.0))
+	if err != nil {
+		t.Fatalf("Second Allow (half window) failed: %v", err)
+	}
+	if !allowed {
+		t.Error("Second request should be allowed")
+	}
+	if usage.TotalUsed != 4000 {
+		t.Errorf("Expected TotalUsed=4000 (3000+1000, both within window), got %d", usage.TotalUsed)
+	}
+
+	advanceTime(t, mr, &now, 2*time.Hour)
+
+	allowed, usage, err = pl.Allow(ctx, key, "gpt4", 2000, WithPlanWeight(1.0))
+	if err != nil {
+		t.Fatalf("Third Allow (full window) failed: %v", err)
+	}
+	if !allowed {
+		t.Error("Third request should be allowed")
+	}
+	if usage.TotalUsed != 3000 {
+		t.Errorf("Expected TotalUsed=3000 (first request expired, second=1000+third=2000), got %d", usage.TotalUsed)
+	}
+}
+
+func TestPlanLimiter_24HourSlidingWindow(t *testing.T) {
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+	now := time.Now()
+	mr.SetTime(now)
+	pl := newTestPlanLimiter(t, mr)
+	pl.defaultBudget = 100000
+	pl.defaultWindow = 24 * time.Hour
+	pl.defaultBucketSize = 1 * time.Hour
+
+	ctx := context.Background()
+	key := "plan:user1:plan1"
+
+	type step struct {
+		advanceHours      int
+		model             string
+		tokens            int64
+		weight            float64
+		expectedAllowed   bool
+		expectedTotalUsed int64
+	}
+
+	steps := []step{
+		{0, "gpt4", 1000, 3.0, true, 3000},
+		{0, "claude", 500, 2.0, true, 4000},
+		{0, "gemini", 2000, 0.5, true, 5000},
+		{1, "gpt4", 2000, 3.0, true, 11000},
+		{0, "deepseek", 3000, 1.0, true, 14000},
+		{1, "claude", 1500, 2.0, true, 17000},
+		{1, "gpt4", 1000, 3.0, true, 20000},
+		{2, "gemini", 4000, 0.5, true, 22000},
+		{0, "claude", 2000, 2.0, true, 26000},
+		{3, "gpt4", 1500, 3.0, true, 30500},
+		{0, "deepseek", 5000, 1.0, true, 35500},
+		{2, "claude", 1000, 2.0, true, 37500},
+		{2, "gpt4", 2000, 3.0, true, 43500},
+		{0, "gemini", 3000, 0.5, true, 45000},
+		{3, "claude", 3000, 2.0, true, 51000},
+		{1, "gpt4", 1000, 3.0, true, 54000},
+		{2, "deepseek", 2000, 1.0, true, 56000},
+		{2, "gpt4", 500, 3.0, true, 57500},
+		{0, "claude", 1000, 2.0, true, 59500},
+		{4, "gpt4", 1000, 3.0, true, 57500},
+		{1, "claude", 2000, 2.0, true, 52500},
+		{1, "gemini", 3000, 0.5, true, 51000},
+		{2, "gpt4", 1000, 3.0, true, 51000},
+		{2, "deepseek", 4000, 1.0, true, 49000},
+		{2, "claude", 1500, 2.0, true, 42500},
+		{2, "gpt4", 2000, 3.0, true, 46500},
+		{2, "gemini", 5000, 0.5, true, 41500},
+		{3, "claude", 1000, 2.0, true, 37500},
+		{1, "gpt4", 3000, 3.0, true, 43500},
+		{2, "deepseek", 2000, 1.0, true, 43500},
+	}
+
+	for i, s := range steps {
+		if s.advanceHours > 0 {
+			advanceTime(t, mr, &now, time.Duration(s.advanceHours)*time.Hour)
+		}
+
+		allowed, usage, err := pl.Allow(ctx, key, s.model, s.tokens, WithPlanWeight(s.weight))
+		if err != nil {
+			t.Fatalf("Step %d (T=%dh, model=%s): Allow failed: %v", i+1, s.advanceHours, s.model, err)
+		}
+		if allowed != s.expectedAllowed {
+			t.Errorf("Step %d (T=%dh, model=%s, tokens=%d, w=%.1f): allowed=%v, want %v",
+				i+1, s.advanceHours, s.model, s.tokens, s.weight, allowed, s.expectedAllowed)
+		}
+		if usage.TotalUsed != s.expectedTotalUsed {
+			t.Errorf("Step %d (T=%dh, model=%s, tokens=%d, w=%.1f): TotalUsed=%d, want %d",
+				i+1, s.advanceHours, s.model, s.tokens, s.weight, usage.TotalUsed, s.expectedTotalUsed)
+		} else {
+			t.Logf("Step %d (T=%v, model=%s, tokens=%d, w=%.1f): allowed=%v, TotalUsed=%d",
+				i+1, &now, s.model, s.tokens, s.weight, allowed, usage.TotalUsed)
+		}
+	}
+}
+
+func TestPlanLimiter_PerModelQuota(t *testing.T) {
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+	now := time.Now()
+	mr.SetTime(now)
+	pl := newTestPlanLimiter(t, mr)
+	pl.defaultWindow = 24 * time.Hour
+	pl.defaultBucketSize = 1 * time.Hour
+
+	ctx := context.Background()
+	key := "plan:user1:plan1"
+
+	modelBudgets := map[string]int64{
+		"gpt4":     15000,
+		"claude":   20000,
+		"gemini":   50000,
+		"deepseek": 100000,
+	}
+
+	modelWeights := map[string]float64{
+		"gpt4":     3.0,
+		"claude":   2.0,
+		"gemini":   0.5,
+		"deepseek": 1.0,
+	}
+
+	modelKey := func(key, model string) string {
+		return key + ":" + model
+	}
+
+	type step struct {
+		advanceHours      int
+		model             string
+		tokens            int64
+		expectedAllowed   bool
+		expectedTotalUsed int64
+	}
+
+	steps := []step{
+		{0, "gpt4", 2000, true, 6000},
+		{0, "claude", 3000, true, 6000},
+		{0, "gemini", 5000, true, 2500},
+		{0, "deepseek", 4000, true, 4000},
+		{1, "gpt4", 3000, true, 15000},
+		{0, "claude", 4000, true, 14000},
+		{0, "gemini", 10000, true, 7500},
+		{0, "gpt4", 500, false, 15000},
+		{0, "deepseek", 20000, true, 24000},
+		{1, "claude", 4000, false, 14000},
+		{0, "gemini", 20000, true, 17500},
+		{0, "deepseek", 30000, true, 54000},
+		{2, "gpt4", 1000, false, 15000},
+		{0, "deepseek", 40000, true, 94000},
+		{0, "deepseek", 7000, false, 94000},
+		{0, "gemini", 40000, true, 37500},
+		{0, "gemini", 30000, false, 37500},
+		{21, "gpt4", 1000, true, 3000},
+		{0, "claude", 2000, true, 4000},
+		{0, "deepseek", 5000, true, 75000},
+		{0, "gemini", 10000, true, 35000},
+	}
+
+	for i, s := range steps {
+		if s.advanceHours > 0 {
+			advanceTime(t, mr, &now, time.Duration(s.advanceHours)*time.Hour)
+		}
+
+		mk := modelKey(key, s.model)
+		budget := modelBudgets[s.model]
+		weight := modelWeights[s.model]
+
+		allowed, usage, err := pl.Allow(ctx, mk, s.model, s.tokens,
+			WithPlanBudget(budget),
+			WithPlanWeight(weight),
+		)
+		if err != nil {
+			t.Fatalf("Step %d (T=%dh, model=%s): Allow failed: %v", i+1, s.advanceHours, s.model, err)
+		}
+		if allowed != s.expectedAllowed {
+			t.Errorf("Step %d (T=%dh, model=%s, tokens=%d, budget=%d): allowed=%v, want %v",
+				i+1, s.advanceHours, s.model, s.tokens, budget, allowed, s.expectedAllowed)
+		}
+		if usage.TotalUsed != s.expectedTotalUsed {
+			t.Errorf("Step %d (T=%dh, model=%s, tokens=%d, budget=%d): TotalUsed=%d, want %d",
+				i+1, s.advanceHours, s.model, s.tokens, budget, usage.TotalUsed, s.expectedTotalUsed)
+		} else {
+			t.Logf("Step %d (T=%v, model=%s, tokens=%d, budget=%d): allowed=%v, TotalUsed=%d",
+				i+1, &now, s.model, s.tokens, budget, allowed, usage.TotalUsed)
+		}
+	}
+}

@@ -32,32 +32,6 @@ func newTestRedisLimiter(t *testing.T, mr *miniredis.Miniredis, client *redis.Cl
 	return rl
 }
 
-// simulateTimeElapsed 模拟时间流逝：将 Redis 中的 last_time 向前移动 elapsed 微秒，
-// 使下次 Lua 脚本执行时计算出的 elapsed 与实际等待时间一致。
-//
-// 限制说明：
-//   - miniredis 的 FastForward 只减少 TTL，不推进 TIME 命令返回的服务器时间，
-//     因此令牌补充逻辑需要通过直接修改 last_time 来模拟。
-//   - 此方法直接修改 Redis 内部状态，绕过了 Lua 脚本的原子性保证。
-//     在真实 Redis 中，TIME 命令返回的是服务器时间，不能被客户端修改。
-//   - 因此，通过此方法通过的测试不代表真实场景行为完全正确，
-//     有条件时应补充基于真实 Redis 的集成测试。
-func simulateTimeElapsed(t *testing.T, client *redis.Client, key string, elapsed time.Duration) {
-	t.Helper()
-	lastTimeStr, err := client.HGet(context.Background(), key, "last_time").Result()
-	if err != nil {
-		t.Fatalf("获取 last_time 失败: %v", err)
-	}
-	lastTimeMicros, err := strconv.ParseInt(lastTimeStr, 10, 64)
-	if err != nil {
-		t.Fatalf("解析 last_time 失败: %v", err)
-	}
-	newLastTime := lastTimeMicros - elapsed.Microseconds()
-	if err := client.HSet(context.Background(), key, "last_time", newLastTime).Err(); err != nil {
-		t.Fatalf("设置 last_time 失败: %v", err)
-	}
-}
-
 func TestRedisLimiter_BasicAllow(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
@@ -95,6 +69,8 @@ func TestRedisLimiter_TokenReplenish(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:replenish"
@@ -116,7 +92,7 @@ func TestRedisLimiter_TokenReplenish(t *testing.T) {
 		t.Fatal("发送超过容量的请求后，至少应有 1 次被限流拒绝")
 	}
 
-	simulateTimeElapsed(t, client, key, 3*time.Second)
+	advanceTime(t, mr, &now, 3*time.Second)
 
 	successAfter := 0
 	for i := 0; i < 5; i++ {
@@ -405,6 +381,8 @@ func TestRedisLimiter_TokenReplenishPrecise(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:replenish-precise"
@@ -420,7 +398,7 @@ func TestRedisLimiter_TokenReplenishPrecise(t *testing.T) {
 		t.Fatal("令牌耗尽后应被拒绝")
 	}
 
-	simulateTimeElapsed(t, client, key, 1*time.Second)
+	advanceTime(t, mr, &now, 1*time.Second)
 
 	allowedCount := 0
 	for i := 0; i < 5; i++ {
@@ -442,6 +420,8 @@ func TestRedisLimiter_FullReplenishAfterDrain(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:full-replenish"
@@ -452,7 +432,7 @@ func TestRedisLimiter_FullReplenishAfterDrain(t *testing.T) {
 		_, _ = rl.Allow(ctx, key, WithCapacity(capacity), WithRate(rate))
 	}
 
-	simulateTimeElapsed(t, client, key, 10*time.Second)
+	advanceTime(t, mr, &now, 10*time.Second)
 
 	successCount := 0
 	for i := int64(0); i < capacity; i++ {
@@ -535,6 +515,8 @@ func TestRedisLimiter_BurstThenRecover(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:burst-recover"
@@ -552,7 +534,7 @@ func TestRedisLimiter_BurstThenRecover(t *testing.T) {
 		t.Fatalf("突发请求成功数 %d 超出容量 %d", success, capacity)
 	}
 
-	simulateTimeElapsed(t, client, key, 2*time.Second)
+	advanceTime(t, mr, &now, 2*time.Second)
 
 	recoveredCount := 0
 	for i := 0; i < 15; i++ {
@@ -679,6 +661,8 @@ func TestRedisLimiter_PartialReplenish(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:partial-replenish"
@@ -689,7 +673,7 @@ func TestRedisLimiter_PartialReplenish(t *testing.T) {
 		_, _ = rl.Allow(ctx, key, WithCapacity(capacity), WithRate(rate))
 	}
 
-	simulateTimeElapsed(t, client, key, 1500*time.Millisecond)
+	advanceTime(t, mr, &now, 1500*time.Millisecond)
 
 	successCount := 0
 	for i := 0; i < 10; i++ {
@@ -711,6 +695,8 @@ func TestRedisLimiter_ReplenishCappedAtCapacity(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:replenish-capped"
@@ -719,7 +705,7 @@ func TestRedisLimiter_ReplenishCappedAtCapacity(t *testing.T) {
 
 	_, _ = rl.Allow(ctx, key, WithCapacity(capacity), WithRate(rate))
 
-	simulateTimeElapsed(t, client, key, 100*time.Second)
+	advanceTime(t, mr, &now, 100*time.Second)
 
 	successCount := 0
 	for i := int64(0); i < capacity; i++ {
@@ -780,6 +766,8 @@ func TestRedisLimiter_RequestedOneAfterPartialDrain(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:partial-drain"
@@ -798,7 +786,7 @@ func TestRedisLimiter_RequestedOneAfterPartialDrain(t *testing.T) {
 		t.Fatal("部分消耗后剩余令牌应足够")
 	}
 
-	simulateTimeElapsed(t, client, key, 5*time.Second)
+	advanceTime(t, mr, &now, 5*time.Second)
 
 	recoveredCount := 0
 	for i := 0; i < 5; i++ {
@@ -892,6 +880,8 @@ func TestRedisLimiter_ReplenishCalculation(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:replenish-calc"
@@ -909,7 +899,7 @@ func TestRedisLimiter_ReplenishCalculation(t *testing.T) {
 		t.Fatalf("耗尽后令牌应为0或接近0，实际 %d", tokens)
 	}
 
-	simulateTimeElapsed(t, client, key, 1*time.Second)
+	advanceTime(t, mr, &now, 1*time.Second)
 
 	allowed, err := rl.Allow(ctx, key, WithCapacity(capacity), WithRate(rate))
 	if err != nil {
@@ -927,6 +917,8 @@ func TestRedisLimiter_ReplenishCalculation(t *testing.T) {
 func TestRedisLimiter_ReplenishWithDifferentRates(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
+	now := time.Now()
+	mr.SetTime(now)
 
 	tests := []struct {
 		name        string
@@ -951,7 +943,7 @@ func TestRedisLimiter_ReplenishWithDifferentRates(t *testing.T) {
 				_, _ = rl.Allow(ctx, key, WithCapacity(tt.capacity), WithRate(tt.rate))
 			}
 
-			simulateTimeElapsed(t, client, key, tt.elapsed)
+			advanceTime(t, mr, &now, tt.elapsed)
 
 			successCount := int64(0)
 			for i := int64(0); i < tt.expectedMax+2; i++ {
@@ -1048,6 +1040,8 @@ func TestRedisLimiter_DrainAndFullReplenish(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:drain-full-replenish"
@@ -1063,7 +1057,7 @@ func TestRedisLimiter_DrainAndFullReplenish(t *testing.T) {
 		t.Fatal("令牌耗尽后应被拒绝")
 	}
 
-	simulateTimeElapsed(t, client, key, time.Duration(capacity)*time.Second)
+	advanceTime(t, mr, &now, time.Duration(capacity)*time.Second)
 
 	for i := int64(0); i < capacity; i++ {
 		allowed, err := rl.Allow(ctx, key, WithCapacity(capacity), WithRate(rate))
@@ -1080,6 +1074,8 @@ func TestRedisLimiter_PartialDrainPartialReplenish(t *testing.T) {
 	mr, client := setupMiniredis(t)
 	defer client.Close()
 	rl := newTestRedisLimiter(t, mr, client)
+	now := time.Now()
+	mr.SetTime(now)
 
 	ctx := context.Background()
 	key := "test:partial-drain-replenish"
@@ -1094,7 +1090,7 @@ func TestRedisLimiter_PartialDrainPartialReplenish(t *testing.T) {
 	tokensBefore, _ := strconv.ParseInt(tokensStr, 10, 64)
 	fmt.Printf("PartialDrainPartialReplenish: after 7 requests, tokens=%d\n", tokensBefore)
 
-	simulateTimeElapsed(t, client, key, 2*time.Second)
+	advanceTime(t, mr, &now, 2*time.Second)
 
 	successCount := 0
 	for i := int64(0); i < capacity; i++ {
