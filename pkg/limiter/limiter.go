@@ -13,7 +13,7 @@ import (
 var rateLimitScript string
 
 type RedisLimiter struct {
-	client           *redis.Client
+	client           redis.Cmdable
 	scriptManager    *redisv1.ScriptManager
 	defaultCapacity  int64
 	defaultRate      int64
@@ -30,7 +30,7 @@ var _ RedisLimiterInterface = (*RedisLimiter)(nil)
 // NewRedisLimiter creates a new RedisLimiter instance.
 // LimiterOption configures the default values used when Allow is called without explicit options.
 // This is distinct from Option, which overrides parameters on a per-request basis.
-func NewRedisLimiter(ctx context.Context, r *redis.Client, opts ...LimiterOption) (*RedisLimiter, error) {
+func NewRedisLimiter(ctx context.Context, r redis.Cmdable, opts ...LimiterOption) (*RedisLimiter, error) {
 	rl := &RedisLimiter{
 		client:           r,
 		defaultCapacity:  10,

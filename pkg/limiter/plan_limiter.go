@@ -22,7 +22,7 @@ var planRefundScript string
 var planUsageScript string
 
 type PlanLimiter struct {
-	client            *redis.Client
+	client            redis.Cmdable
 	scriptManager     *redisv1.ScriptManager
 	defaultBudget     int64
 	defaultWindow     time.Duration
@@ -30,7 +30,7 @@ type PlanLimiter struct {
 	defaultWeight     float64
 }
 
-func NewPlanLimiter(ctx context.Context, r *redis.Client, opts ...PlanOption) (*PlanLimiter, error) {
+func NewPlanLimiter(ctx context.Context, r redis.Cmdable, opts ...PlanOption) (*PlanLimiter, error) {
 	pl := &PlanLimiter{
 		client:            r,
 		defaultBudget:     100000,

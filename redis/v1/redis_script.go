@@ -15,12 +15,12 @@ type ScriptEntry struct {
 }
 
 type ScriptManager struct {
-	client  *redis.Client
+	client  redis.Cmdable
 	mu      sync.RWMutex
 	scripts map[string]*ScriptEntry
 }
 
-func NewScriptManager(client *redis.Client) *ScriptManager {
+func NewScriptManager(client redis.Cmdable) *ScriptManager {
 	return &ScriptManager{
 		client:  client,
 		scripts: make(map[string]*ScriptEntry),
