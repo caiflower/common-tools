@@ -207,6 +207,8 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 
 	// register remote func
 	cluster.RegisterFunc(remoteFuncNameOfReloadAllNodes, cluster.reloadAllNodes)
+	// init metrics
+	initMetrics()
 
 	return cluster, nil
 }

@@ -17,11 +17,14 @@
 package cluster
 
 import (
+	"sync"
+
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var clusterMetric *metric
+var once sync.Once
 
 type metric struct {
 	memberIsLeader    prometheus.Gauge
@@ -29,37 +32,39 @@ type metric struct {
 	configuredMembers prometheus.Gauge
 }
 
-func init() {
-	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP()}
-	if env.GetNamespace() != "" {
-		constLabels["namespace"] = env.GetNamespace()
-		constLabels["app"] = env.GetApp()
-	}
-	if node := env.GetLocalDNS(); node != "" {
-		constLabels["node"] = node
-	}
+func initMetrics() {
+	once.Do(func() {
+		constLabels := prometheus.Labels{"ip": env.GetLocalHostIP()}
+		if env.GetNamespace() != "" {
+			constLabels["namespace"] = env.GetNamespace()
+			constLabels["app"] = env.GetApp()
+		}
+		if node := env.GetLocalDNS(); node != "" {
+			constLabels["node"] = node
+		}
 
-	clusterMetric = &metric{
-		memberIsLeader: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        "cluster_member_is_leader",
-			Help:        "1 if this member is currently the cluster leader, 0 otherwise.",
-			ConstLabels: constLabels,
-		}),
-		connectedMembers: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        "cluster_connected_members",
-			Help:        "Number of cluster members currently reachable via heartbeat.",
-			ConstLabels: constLabels,
-		}),
-		configuredMembers: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name:        "cluster_configured_members",
-			Help:        "Total number of members in the cluster configuration.",
-			ConstLabels: constLabels,
-		}),
-	}
+		clusterMetric = &metric{
+			memberIsLeader: prometheus.NewGauge(prometheus.GaugeOpts{
+				Name:        "cluster_member_is_leader",
+				Help:        "1 if this member is currently the cluster leader, 0 otherwise.",
+				ConstLabels: constLabels,
+			}),
+			connectedMembers: prometheus.NewGauge(prometheus.GaugeOpts{
+				Name:        "cluster_connected_members",
+				Help:        "Number of cluster members currently reachable via heartbeat.",
+				ConstLabels: constLabels,
+			}),
+			configuredMembers: prometheus.NewGauge(prometheus.GaugeOpts{
+				Name:        "cluster_configured_members",
+				Help:        "Total number of members in the cluster configuration.",
+				ConstLabels: constLabels,
+			}),
+		}
 
-	_ = prometheus.Register(clusterMetric.memberIsLeader)
-	_ = prometheus.Register(clusterMetric.connectedMembers)
-	_ = prometheus.Register(clusterMetric.configuredMembers)
+		_ = prometheus.Register(clusterMetric.memberIsLeader)
+		_ = prometheus.Register(clusterMetric.connectedMembers)
+		_ = prometheus.Register(clusterMetric.configuredMembers)
+	})
 }
 
 func (c *Cluster) updateMetrics(isLeader bool) {
