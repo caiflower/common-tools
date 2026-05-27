@@ -352,7 +352,7 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan
 	}
 
 	for {
-		err = dispatcher1.SubmitTask(task)
+		err = dispatcher1.SubmitTask(context.TODO(), task)
 		if err != nil {
 			time.Sleep(time.Second * 2)
 			continue
@@ -414,7 +414,7 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan
 	assert.Equal(t, true, dbThree.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
 	assert.Equal(t, true, dbFour.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
 
-	outputs, err := dispatcher1.GetTaskOutput(task.GetID())
+	outputs, err := dispatcher1.GetTaskOutput(context.TODO(), task.GetID())
 	assert.Nil(t, err, "check task output failed")
 	assert.Equal(t, 6, len(outputs), "check task output failed")
 	assert.Equal(t, stepOne, outputs[stepOne].Output, "check task output failed")
@@ -633,7 +633,7 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 	_ = task.AddSubtask(one)
 
 	for {
-		err := dispatcher1.SubmitTask(task)
+		err := dispatcher1.SubmitTask(context.TODO(), task)
 		if err != nil {
 			time.Sleep(time.Second * 2)
 			continue
@@ -664,7 +664,7 @@ func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done 
 
 func waitForTask(task *Task, dispatcher *taskDispatcher) {
 	for {
-		err := dispatcher.SubmitTask(task)
+		err := dispatcher.SubmitTask(context.TODO(), task)
 		if err != nil {
 			time.Sleep(time.Second * 2)
 			continue

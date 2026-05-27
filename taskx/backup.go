@@ -35,7 +35,7 @@ func (t *taskDispatcher) backupTask() {
 		Where("state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]string{TaskFailed, TaskSucceeded}), t.cfg.BackupTaskAge.Seconds()).
 		Order("id").Limit(100).
 		Scan(context.TODO(), &tasks); err != nil {
-		logger.Error("query task for backup failed. err: %v", err)
+		logger.Error("[backupTask] query tasks for backup failed. err: %v", err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (t *taskDispatcher) backupTask() {
 	tx.Add(func(tx *bun.Tx) error {
 		_, err := tx.NewInsert().Model(&taskBaks).Exec(context.Background())
 		if err != nil {
-			logger.Error("insert task backup failed. err: %v", err)
+			logger.Error("[backupTask] insert task backup failed. err: %v", err)
 			return err
 		}
 		return nil
@@ -116,7 +116,7 @@ func (t *taskDispatcher) backupTask() {
 	tx.Add(func(tx *bun.Tx) error {
 		_, err := tx.NewInsert().Model(&subtaskBaks).Exec(context.Background())
 		if err != nil {
-			logger.Error("insert subtask backup failed. err: %v", err)
+			logger.Error("[backupTask] insert subtask backup failed. err: %v", err)
 			return err
 		}
 		return nil
@@ -126,11 +126,11 @@ func (t *taskDispatcher) backupTask() {
 	tx.Add(func(tx *bun.Tx) error {
 		result, err := tx.NewDelete().Table("subtask").Where("task_id IN (?)", bun.In(taskIds)).Exec(context.Background())
 		if err != nil {
-			logger.Error("delete subtask failed during backup. err: %v", err)
+			logger.Error("[backupTask] delete subtasks during backup failed. err: %v", err)
 			return err
 		}
 		rowsAffected, _ := result.RowsAffected()
-		logger.Info("deleted %d subtasks during backup for tasks: %v", rowsAffected, taskIds)
+		logger.Info("[backupTask] deleted %d subtasks for tasks: %v", rowsAffected, taskIds)
 		return nil
 	})
 
@@ -138,20 +138,19 @@ func (t *taskDispatcher) backupTask() {
 	tx.Add(func(tx *bun.Tx) error {
 		result, err := tx.NewDelete().Table("task").Where("id IN (?)", bun.In(taskIds)).Exec(context.Background())
 		if err != nil {
-			logger.Error("delete task failed during backup. err: %v", err)
+			logger.Error("[backupTask] delete tasks during backup failed. err: %v", err)
 			return err
 		}
 		rowsAffected, _ := result.RowsAffected()
-		logger.Info("deleted %d tasks during backup: %v", rowsAffected, taskIds)
+		logger.Info("[backupTask] deleted %d tasks: %v", rowsAffected, taskIds)
 		return nil
 	})
 
 	if err := tx.Submit(); err != nil {
-		logger.Error("backupTask tx submit failed. err: %v", err)
-		// 尝试部分回滚或记录失败的任务ID
-		logger.Info("backup operation failed for task IDs: %v", taskIds)
+		logger.Error("[backupTask] tx submit failed. err: %v", err)
+		logger.Warn("[backupTask] backup operation failed for task IDs: %v", taskIds)
 		return
 	}
-	
-	logger.Info("successfully backed up and deleted %d tasks: %v", len(taskIds), taskIds)
+
+	logger.Info("[backupTask] successfully backed up and deleted %d tasks: %v", len(taskIds), taskIds)
 }

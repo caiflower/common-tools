@@ -36,6 +36,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/proto"
 	"github.com/uptrace/bun"
 )
 
@@ -120,7 +121,7 @@ func (t *taskDispatcher) MasterCall() {
 
 // OnStartedLeading handles task distribution when becoming leader
 func (t *taskDispatcher) OnStartedLeading() {
-	logger.Info("[taskDispatcher] %s begin to dispatcher task", t.Cluster.GetMyName())
+	logger.Info("[taskDispatcher] node %s starts dispatching tasks", t.Cluster.GetMyName())
 	t.running.Store(true)
 
 	// Start delay queue processor
@@ -144,18 +145,17 @@ func (t *taskDispatcher) OnStartedLeading() {
 }
 
 func (t *taskDispatcher) OnStoppedLeading() {
-	logger.Info("[taskDispatcher] %s stop to dispatcher task", t.Cluster.GetMyName())
+	logger.Info("[taskDispatcher] node %s stops dispatching tasks", t.Cluster.GetMyName())
 	t.running.Store(false)
 }
 
 func SubmitTask(task *Task) error {
-	return SingletonTaskDispatcher.SubmitTask(task)
+	return SingletonTaskDispatcher.SubmitTask(golocalv1.GetContext(), task)
 }
 
-func (t *taskDispatcher) SubmitTask(task *Task) error {
+func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
 	taskBean, subtaskBeans := task.convert2Bean()
-	ctx := golocalv1.GetContext()
 
 	if TaskAffinityType(taskBean.AffinityType) != AffinityRandom && taskBean.PrimaryWorker == "" {
 		nodeName := t.selectNodeByAffinity(AffinityRandom, "", "", t.Cluster.GetLostNodeNames(), t.Cluster.GetAliveNodeNames())
@@ -188,23 +188,18 @@ func (t *taskDispatcher) SubmitTask(task *Task) error {
 
 	if task.task.Urgent {
 		taskID := taskBean.ID
-		funcSpec := cluster.NewAsyncFuncSpec(t.Cluster.GetLeaderName(), handleTaskImmediately, []string{taskID}, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID())
-		_, err := cluster.CallFuncAs[any](t.Cluster, funcSpec)
-		if err != nil {
-			logger.Warn("task %v remote call 'handleTaskImmediately' failed. Error: %v", taskID, err)
-		}
+		t.notifyLeaderHandleTaskImmediately(ctx, taskID)
 	}
 
 	return nil
 }
 
 func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
-	return SingletonTaskDispatcher.SubmitTaskWithTx(task, tx)
+	return SingletonTaskDispatcher.SubmitTaskWithTx(golocalv1.GetContext(), task, tx)
 }
 
-func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
+func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *bun.Tx) error {
 	taskBean, subtaskBeans := task.convert2Bean()
-	ctx := golocalv1.GetContext()
 	_, err := t.TaskDao.Insert(ctx, taskBean, tx)
 	if err != nil {
 		return err
@@ -216,7 +211,7 @@ func (t *taskDispatcher) SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 	return err
 }
 
-func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]Output, err error) {
+func (t *taskDispatcher) GetTaskOutput(ctx context.Context, taskID string) (outputs map[string]Output, err error) {
 	outputs = make(map[string]Output)
 
 	var (
@@ -224,7 +219,6 @@ func (t *taskDispatcher) GetTaskOutput(taskID string) (outputs map[string]Output
 		subtaskBaks []model.SubtaskBak
 		task        *model.Task
 		subtasks    []model.Subtask
-		ctx         = golocalv1.GetContext()
 	)
 
 	taskBak, err = t.TaskBakDao.GetByID(ctx, taskID)
@@ -280,7 +274,7 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 	// Get tasks by filter
 	tasks, err := t.TaskDao.GetTodoTask(ctx, []string{TaskPending, TaskRunning, TaskSubtaskRunning}, endTime)
 	if err != nil {
-		logger.Error("get tasks failed. err: %s", err.Error())
+		logger.Error("[MasterCall] get tasks failed. err: %v", err)
 		return
 	}
 	if len(tasks) == 0 {
@@ -313,18 +307,18 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 
 	// Add immediate tasks as batch
 	if len(immediateTasks) > 0 {
-		logger.Debug("add task %v, executeTime = %s", immediateTasks, now.Format("2006-01-02 15:04:05.000"))
+		logger.Debug("[MasterCall] add immediate tasks %v, executeTime = %s", immediateTasks, now.Format("2006-01-02 15:04:05.000"))
 		t.delayQueue.Add(immediateTasks, now)
 	}
 
 	// Add scheduled tasks
 	for _, task := range scheduledTasks {
-		logger.Debug("add task %v, executeTime = %s", task.taskID, task.executeTime.Format("2006-01-02 15:04:05.000"))
+		logger.Debug("[MasterCall] add scheduled task %v, executeTime = %s", task.taskID, task.executeTime.Format("2006-01-02 15:04:05.000"))
 		t.delayQueue.Add([]string{task.taskID}, task.executeTime)
 	}
 }
 
-func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
+func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
 	if task.IsFinished() {
 		return
 	}
@@ -349,7 +343,7 @@ func (t *taskDispatcher) analysisTask(task *Task, subtaskMap map[string]*Subtask
 		}
 
 		if task.GetState() == TaskPending {
-			_, err := t.TaskDao.SetState(golocalv1.GetContext(), task.GetID(), TaskSubtaskRunning)
+			_, err := t.TaskDao.SetState(ctx, task.GetID(), TaskSubtaskRunning)
 			if err != nil {
 				retry = true
 				return
@@ -381,13 +375,13 @@ func (t *taskDispatcher) canExecuteSubtask(subtask *Subtask, isRollback bool) bo
 	return !subtask.IsFinished()
 }
 
-func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask, taskAffinityMap map[string]affinity) {
+func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*model.Task, _runningSubtasks, _runningSubtaskRollbacks []*model.Subtask, taskAffinityMap map[string]affinity) {
 	if len(_runningTasks) == 0 && len(_runningSubtasks) == 0 && len(_runningSubtaskRollbacks) == 0 {
 		return
 	}
 
 	if !t.Cluster.IsReady() {
-		logger.Warn("deliver tasks failed, cluster not ready")
+		logger.Warn("[allocateWorker] cluster not ready, skip delivering tasks")
 		return
 	}
 
@@ -402,7 +396,6 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 	defer t.cleanupInflight(runningTasks, runningSubtasks, runningSubtaskRollbacks)
 
-	ctx := golocalv1.GetContext()
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
 	taskWorkerMap := make(map[string][]string)
@@ -424,17 +417,17 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtask.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
-			logger.Warn("allocate a worker failed: no available node for subtaskID: %s", runningSubtask.ID)
+			logger.Warn("[allocateWorker] no available node for subtask %s", runningSubtask.ID)
 			continue
 		}
 		if nodeName != runningSubtask.Worker {
 			cnt, err := t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtask.ID, nodeName, TaskRunning, runningSubtask.Worker)
 			if err != nil {
-				logger.Error("allocate a worker failed. subtaskID: %s, err: %s", runningSubtask.ID, err.Error())
+				logger.Error("[allocateWorker] set worker for subtask %s failed. err: %v", runningSubtask.ID, err)
 				continue
 			}
 			if cnt == 0 {
-				logger.Warn("allocate a worker failed, worker may be changed. subtaskID: %s", runningSubtask.ID)
+				logger.Warn("[allocateWorker] subtask %s worker changed, skip", runningSubtask.ID)
 				continue
 			}
 		}
@@ -447,17 +440,17 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningTask.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
-			logger.Warn("allocate a worker failed: no available node for taskID: %s", runningTask.ID)
+			logger.Warn("[allocateWorker] no available node for task %s", runningTask.ID)
 			continue
 		}
 		if nodeName != runningTask.Worker {
 			cnt, err := t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTask.ID, nodeName, TaskRunning, runningTask.Worker)
 			if err != nil {
-				logger.Error("allocate a worker failed. taskID: %s, err: %s", runningTask.ID, err.Error())
+				logger.Error("[allocateWorker] set worker for task %s failed. err: %v", runningTask.ID, err)
 				continue
 			}
 			if cnt == 0 {
-				logger.Warn("allocate a worker failed, worker may be changed. taskID: %s", runningTask.ID)
+				logger.Warn("[allocateWorker] task %s worker changed, skip", runningTask.ID)
 				continue
 			}
 		}
@@ -470,26 +463,26 @@ func (t *taskDispatcher) allocateWorker(_runningTasks []*model.Task, _runningSub
 
 		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtaskRollback.Worker, lostNodes, aliveNodes)
 		if nodeName == "" {
-			logger.Warn("allocate a worker failed: no available node for subtaskRollbackID: %s", runningSubtaskRollback.ID)
+			logger.Warn("[allocateWorker] no available node for subtask rollback %s", runningSubtaskRollback.ID)
 			continue
 		}
 		if nodeName != runningSubtaskRollback.Worker {
 			cnt, err := t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), runningSubtaskRollback.Worker)
 			if err != nil {
-				logger.Error("allocate a worker failed. subtaskID: %s, err: %s", runningSubtaskRollback.ID, err.Error())
+				logger.Error("[allocateWorker] set worker for subtask rollback %s failed. err: %v", runningSubtaskRollback.ID, err)
 				continue
 			}
 			if cnt == 0 {
-				logger.Warn("allocate a worker failed, worker may be changed. subtaskID: %s", runningSubtaskRollback.ID)
+				logger.Warn("[allocateWorker] subtask rollback %s worker changed, skip", runningSubtaskRollback.ID)
 				continue
 			}
 		}
 		subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.ID)
 	}
 
-	t.deliverToCluster(subtaskWorkerMap, deliverSubtask)
-	t.deliverToCluster(taskWorkerMap, deliverTask)
-	t.deliverToCluster(subtaskRollbackWorkerMap, deliverSubtaskRollback)
+	t.deliverToCluster(ctx, subtaskWorkerMap, deliverSubtask)
+	t.deliverToCluster(ctx, taskWorkerMap, deliverTask)
+	t.deliverToCluster(ctx, subtaskRollbackWorkerMap, deliverSubtaskRollback)
 }
 
 func (t *taskDispatcher) filterInflightTasks(tasks []*model.Task) []model.Task {
@@ -526,7 +519,7 @@ func (t *taskDispatcher) cleanupInflight(tasks []model.Task, subtasks, rollbackS
 
 func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType, primaryWorker string, currentNode string, lostNodes, aliveNodes []string) string {
 	if len(aliveNodes) == 0 {
-		logger.Warn("selectNode failed: no alive nodes available")
+		logger.Warn("[selectNode] no alive nodes available")
 		return ""
 	}
 
@@ -554,31 +547,124 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 	}
 }
 
-func (t *taskDispatcher) deliverToCluster(workerMap map[string][]string, funcName string) {
-	for nodeName, taskIds := range workerMap {
-		_, err := cluster.CallFuncAs[any](t.Cluster, cluster.NewAsyncFuncSpec(nodeName, funcName, taskIds, t.cfg.RemoteCallTimeout).SetTraceId(golocalv1.GetTraceID()))
+func (t *taskDispatcher) deliverToCluster(ctx context.Context, workerMap map[string][]string, method string) {
+	for nodeName, ids := range workerMap {
+		if nodeName == t.Cluster.GetMyName() {
+			t.deliverLocal(ctx, method, ids)
+			continue
+		}
+
+		conn, err := t.Cluster.GetGRPCClient(nodeName)
 		if err != nil {
-			logger.Error("deliver tasks failed. Error: %s", err.Error())
+			logger.Error("[deliverToCluster] get gRPC client for node '%s' failed. err: %v", nodeName, err)
+			continue
+		}
+
+		client := proto.NewTaskXServiceClient(conn)
+		ctx, cancel := context.WithTimeout(ctx, t.cfg.RemoteCallTimeout)
+		traceID := golocalv1.GetTraceID()
+
+		switch method {
+		case deliverTask:
+			_, err = client.DeliverTask(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+		case deliverSubtask:
+			_, err = client.DeliverSubtask(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+		case deliverSubtaskRollback:
+			_, err = client.DeliverSubtaskRollback(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+		default:
+			logger.Error("[deliverToCluster] unknown deliver method: %s", method)
+		}
+		cancel()
+
+		if err != nil {
+			logger.Error("[deliverToCluster] deliver %s to node '%s' failed. err: %v", method, nodeName, err)
 		}
 	}
 }
 
+func (t *taskDispatcher) deliverLocal(ctx context.Context, method string, ids []string) {
+	receiver := t.TaskReceiver
+	if receiver == nil {
+		logger.Error("[deliverLocal] TaskReceiver is nil")
+		return
+	}
+
+	var err error
+	switch method {
+	case deliverTask:
+		err = receiver.deliverTask(ctx, ids)
+	case deliverSubtask:
+		err = receiver.deliverSubtask(ctx, ids)
+	case deliverSubtaskRollback:
+		err = receiver.deliverSubtaskRollback(ctx, ids)
+	default:
+		logger.Error("[deliverLocal] unknown deliver method: %s", method)
+	}
+
+	if err != nil {
+		logger.Error("[deliverLocal] deliver %s failed. err: %v", method, err)
+	}
+}
+
+func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, taskID string) {
+	if t.Cluster.GetLeaderName() == t.Cluster.GetMyName() {
+		t.handleTaskImmediately(ctx, []string{taskID})
+		return
+	}
+
+	traceID := golocalv1.GetTraceID()
+
+	const maxRetries = 3
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		leaderName := t.Cluster.GetLeaderName()
+		if leaderName == t.Cluster.GetMyName() {
+			t.handleTaskImmediately(ctx, []string{taskID})
+			return
+		}
+
+		conn, err := t.Cluster.GetGRPCClient(leaderName)
+		if err != nil {
+			lastErr = err
+			if i < maxRetries-1 {
+				logger.Warn("[notifyLeader] task %s get gRPC client for leader '%s' failed (attempt %d/%d). err: %v", taskID, leaderName, i+1, maxRetries, err)
+				time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+			}
+			continue
+		}
+
+		client := proto.NewTaskXServiceClient(conn)
+		callCtx, cancel := context.WithTimeout(ctx, t.cfg.RemoteCallTimeout)
+		_, err = client.HandleTaskImmediately(callCtx, &proto.HandleTaskImmediatelyRequest{TaskIds: []string{taskID}, TraceId: traceID})
+		cancel()
+		if err == nil {
+			return
+		}
+		lastErr = err
+		if i < maxRetries-1 {
+			logger.Warn("[notifyLeader] task %s remote call 'handleTaskImmediately' failed (attempt %d/%d). err: %v", taskID, i+1, maxRetries, err)
+			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
+		}
+	}
+	logger.Warn("[notifyLeader] task %s remote call 'handleTaskImmediately' failed after %d attempts. err: %v", taskID, maxRetries, lastErr)
+}
+
 func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
-	logger.Debug("[taskDispatcher] tasks %v handleTask immediately", taskIDs)
+	logger.Debug("[handleTaskImmediately] tasks %v", taskIDs)
 
 	if !t.Cluster.IsReady() {
-		logger.Warn("handleTaskImmediately failed. cluster is not ready.")
+		logger.Debug("[handleTaskImmediately] cluster not ready, skip")
 		return
 	}
 	if !t.Cluster.IsLeader() {
-		logger.Warn("handleTaskImmediately failed. cluster is not leader")
+		logger.Debug("[handleTaskImmediately] not leader, skip")
 		return
 	}
 
 	// Get all tasks
 	tasks, err := t.TaskDao.GetByIDs(ctx, taskIDs)
 	if err != nil {
-		logger.Error("getTasksByTaskIds failed. err: %v", err)
+		logger.Error("[handleTaskImmediately] get tasks by IDs failed. err: %v", err)
 		return
 	}
 
@@ -600,7 +686,7 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 		task := &Task{}
 		task, err = task.initByBean(dbTask, subtasks)
 		if err != nil {
-			logger.Error("task %v initByBean failed. err: %v", dbTask.ID, err)
+			logger.Error("[handleTaskImmediately] task %s initByBean failed. err: %v", dbTask.ID, err)
 			continue
 		}
 		taskAffinityMap[task.GetID()] = affinity{
@@ -608,7 +694,7 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 			Worker: task.GetPrimaryWorker(),
 		}
 
-		finished, retry, running, rollback := t.analysisTask(task, task.subtaskMap)
+		finished, retry, running, rollback := t.analysisTask(ctx, task, task.subtaskMap)
 		if retry {
 			continue
 		} else if finished {
@@ -622,6 +708,6 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 
 	// Batch allocate workers
 	if len(runningTasks) > 0 || len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
-		t.allocateWorker(runningTasks, runningSubtasks, rollbackSubtasks, taskAffinityMap)
+		t.allocateWorker(ctx, runningTasks, runningSubtasks, rollbackSubtasks, taskAffinityMap)
 	}
 }

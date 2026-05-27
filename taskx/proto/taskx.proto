@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package taskx;
+
+option go_package = "github.com/caiflower/common-tools/taskx/proto";
+
+service TaskXService {
+  rpc DeliverTask(DeliverRequest) returns (DeliverResponse);
+  rpc DeliverSubtask(DeliverRequest) returns (DeliverResponse);
+  rpc DeliverSubtaskRollback(DeliverRequest) returns (DeliverResponse);
+  rpc HandleTaskImmediately(HandleTaskImmediatelyRequest) returns (HandleTaskImmediatelyResponse);
+}
+
+message DeliverRequest {
+  repeated string ids = 1;
+  string trace_id = 2;
+}
+
+message DeliverResponse {
+}
+
+message HandleTaskImmediatelyRequest {
+  repeated string task_ids = 1;
+  string trace_id = 2;
+}
+
+message HandleTaskImmediatelyResponse {
+}
