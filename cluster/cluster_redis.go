@@ -71,7 +71,7 @@ func (c *Cluster) redisRegisterNode() {
 
 	fn := func() {
 		if err := c.doRegisterNode(key); err != nil {
-			c.logger.Error("[cluster-redis] renew node failed. Error: %v", err)
+			c.logger.Error("[cluster-redis] renew node failed: %v", err)
 		}
 	}
 
@@ -79,13 +79,13 @@ func (c *Cluster) redisRegisterNode() {
 	job.Run()
 
 	<-c.ctx.Done()
-	c.logger.Info("[cluster-redis] stop node heartbeat")
+	c.logger.Info("[cluster-redis] node heartbeat stopped")
 	job.Stop()
 
 	// 退出时删除节点注册信息
 	// 注意：此时 c.ctx 已被 cancel，使用 context.TODO() 确保删除操作能执行完成，避免注册信息残留
 	if err := c.Redis.Del(context.TODO(), key); err != nil {
-		c.logger.Warn("[cluster-redis] delete node registration failed. Error: %v", err)
+		c.logger.Warn("[cluster-redis] delete node registration failed: %v", err)
 	}
 }
 
@@ -117,7 +117,7 @@ func (c *Cluster) redisSyncNodes() {
 
 	fn := func() {
 		if err := c.doSyncNodes(pattern); err != nil {
-			c.logger.Error("[cluster-redis] sync nodes failed. Error: %v", err)
+			c.logger.Error("[cluster-redis] sync nodes failed: %v", err)
 		}
 	}
 
@@ -125,7 +125,7 @@ func (c *Cluster) redisSyncNodes() {
 	job.Run()
 
 	<-c.ctx.Done()
-	c.logger.Info("[cluster-redis] stop sync nodes")
+	c.logger.Info("[cluster-redis] node sync stopped")
 	job.Stop()
 }
 
@@ -165,13 +165,13 @@ func (c *Cluster) doSyncNodes(pattern string) error {
 			if errors.Is(err, redis.Nil) {
 				continue
 			}
-			c.logger.Warn("[cluster-redis] get node info failed. Key: %s, Error: %v", key, err)
+			c.logger.Warn("[cluster-redis] get node info failed, key=%s: %v", key, err)
 			continue
 		}
 
 		var nodeInfo NodeInfo
 		if err := json.Unmarshal([]byte(data), &nodeInfo); err != nil {
-			c.logger.Warn("[cluster-redis] unmarshal node info failed. Data: %s, Error: %v", data, err)
+			c.logger.Warn("[cluster-redis] unmarshal node info failed, data=%s: %v", data, err)
 			continue
 		}
 
@@ -208,7 +208,7 @@ func (c *Cluster) updateNodesFromRedis(newNodes map[string]*Node) {
 			if _, exists := newNodes[name]; !exists {
 				c.allNode.Delete(name)
 				c.aliveNodes.Delete(name)
-				c.logger.Info("[cluster-redis] node removed: %s", name)
+				c.logger.Info("[cluster-redis] node removed: %s (%s)", name, value.(*Node).address)
 			}
 		}
 		return true
@@ -221,7 +221,7 @@ func (c *Cluster) updateNodesFromRedis(newNodes map[string]*Node) {
 func (c *Cluster) redisFighting() {
 	// 防止重复选举（类似 modeCluster 的 fightingState）
 	if !atomic.CompareAndSwapUint32(&c.redisFightingState, 0, 1) {
-		c.logger.Debug("[cluster-redis] redisFighting already running, skip")
+		c.logger.Debug("[cluster-redis] election already running, skip")
 		return
 	}
 	defer atomic.StoreUint32(&c.redisFightingState, 0)
@@ -235,7 +235,7 @@ func (c *Cluster) redisFighting() {
 
 	logger.Debug("[cluster-redis] redisFighting")
 	if err := c.redisFightingWithRetry(key, 0); err != nil {
-		c.logger.Error("[cluster-redis] fighting failed after retries. Error: %v", err)
+		c.logger.Error("[cluster-redis] election failed after retries: %v", err)
 	}
 }
 
@@ -247,7 +247,7 @@ func (c *Cluster) redisFightingWithRetry(key string, retryCount int) error {
 	if err != nil {
 		if retryCount < maxRetries {
 			backoff := time.Duration(retryCount+1) * time.Second
-			c.logger.Warn("[cluster-redis] fighting failed, retry %d/%d after %v. Error: %v", retryCount+1, maxRetries, backoff, err)
+			c.logger.Warn("[cluster-redis] election failed, retry %d/%d after %v: %v", retryCount+1, maxRetries, backoff, err)
 			time.Sleep(backoff)
 			return c.redisFightingWithRetry(key, retryCount+1)
 		}
@@ -267,22 +267,22 @@ func (c *Cluster) redisSyncLeader() {
 				// 重新开始选举
 				go c.redisFighting()
 			} else {
-				c.logger.Error("[cluster-redis] get leaderName failed. Error: %v", err)
+				c.logger.Error("[cluster-redis] get leader name failed: %v", err)
 			}
 		} else {
 			if c.GetLeaderName() != leaderName {
 				node := c.GetNodeByName(leaderName)
 				if node == nil {
 					// leader 节点未在本地节点列表中，触发一次节点同步尝试发现该节点
-					c.logger.Warn("[cluster-redis] leader node %s not found in local, triggering node sync", leaderName)
+					c.logger.Warn("[cluster-redis] leader %s not found locally, triggering node sync", leaderName)
 					if syncErr := c.doSyncNodes(c.redisKeyNodesPattern()); syncErr != nil {
-						c.logger.Error("[cluster-redis] sync nodes for leader discovery failed. Error: %v", syncErr)
+						c.logger.Error("[cluster-redis] sync nodes for leader discovery failed: %v", syncErr)
 						return
 					}
 					node = c.GetNodeByName(leaderName)
 				}
 				if node == nil {
-					c.logger.Warn("[cluster-redis] leader node %s still not found after sync", leaderName)
+					c.logger.Warn("[cluster-redis] leader %s still not found after sync", leaderName)
 					return
 				}
 
@@ -298,14 +298,14 @@ func (c *Cluster) redisSyncLeader() {
 	job.Run()
 
 	<-c.ctx.Done()
-	c.logger.Info("[cluster-redis] stop sync leader")
+	c.logger.Info("[cluster-redis] leader sync stopped")
 	job.Stop()
 }
 
 func (c *Cluster) redisWatchDog() {
 	// 防止重复启动 WatchDog
 	if !atomic.CompareAndSwapUint32(&c.redisWatchDogState, 0, 1) {
-		c.logger.Debug("[cluster-redis] redisWatchDog already running, skip")
+		c.logger.Debug("[cluster-redis] watchdog already running, skip")
 		return
 	}
 	defer atomic.StoreUint32(&c.redisWatchDogState, 0)
@@ -339,6 +339,6 @@ func (c *Cluster) redisWatchDog() {
 	job.Run()
 
 	<-ctx.Done()
-	c.logger.Info("[cluster-redis] stop redis watch dog")
+	c.logger.Info("[cluster-redis] watchdog stopped")
 	job.Stop()
 }

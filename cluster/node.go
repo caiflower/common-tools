@@ -17,18 +17,19 @@
 package cluster
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/caiflower/common-tools/pkg/nio"
+	"github.com/caiflower/common-tools/cluster/proto"
 )
 
 type Node struct {
 	address           string // 节点通信地址, ip:port
 	name              string // 节点名称
 	connectLock       sync.RWMutex
-	connection        nio.IClient // 连接
+	grpcClient        *grpcNodeClient // gRPC 客户端连接
 	heartbreakLock    sync.RWMutex
 	heartbeat         time.Time // 主节点发送给自己的心跳时间
 	lastHeartbeatOk   bool      // 上次心跳是否成功
@@ -64,7 +65,6 @@ func (n *Node) updateHeartbeat() {
 	n.heartbeatFailures = 0
 }
 
-// 更新心跳失败状态
 func (n *Node) updateHeartbeatFailed() {
 	n.heartbreakLock.Lock()
 	defer n.heartbreakLock.Unlock()
@@ -95,7 +95,6 @@ func (n *Node) isHeartbeatZero() bool {
 	return n.heartbeat.IsZero()
 }
 
-// 获取节点健康评分 (0-100)
 func (n *Node) getHealthScore() int {
 	n.heartbreakLock.RLock()
 	defer n.heartbreakLock.RUnlock()
@@ -104,57 +103,67 @@ func (n *Node) getHealthScore() int {
 		return 0
 	}
 
-	// 基础分数：基于时间的新鲜度
-	//age := time.Since(n.heartbeat).Seconds() - n.heartbeatInterval
-	//timeScore := 100 - int(age*10)
-	//if timeScore < 0 {
-	//	timeScore = 0
-	//}
-	//
-	//if n.connection != nil && n.lastHeartbeatOk {
-	//	timeScore += 20
-	//}
-	//
-	//// 失败次数扣分
-	//failurePenalty := n.heartbeatFailures * 15
-	//timeScore -= failurePenalty
-	//
-	//if timeScore < 0 {
-	//	timeScore = 0
-	//}
-	//if timeScore > 100 {
-	//	timeScore = 100
-	//}
-
 	return 100
 }
 
-func (n *Node) setConnection(conn nio.IClient) {
+func (n *Node) setGrpcClient(client *grpcNodeClient) {
 	n.connectLock.Lock()
 	defer n.connectLock.Unlock()
-	n.connection = conn
+	n.grpcClient = client
 }
 
-func (n *Node) sendMessage(flag uint8, data interface{}) error {
+func (n *Node) getGrpcClient() *grpcNodeClient {
 	n.connectLock.RLock()
 	defer n.connectLock.RUnlock()
+	return n.grpcClient
+}
 
-	if n.connection == nil {
-		return fmt.Errorf("connection for cluster node %s is not ready", n.name)
+func (n *Node) askLeader(ctx context.Context, req *proto.AskLeaderRequest) (*proto.AskLeaderResponse, error) {
+	client := n.getGrpcClient()
+	if client == nil {
+		return nil, fmt.Errorf("connection for cluster node %s is not ready", n.name)
 	}
+	return client.AskLeader(ctx, req)
+}
 
-	if err := n.connection.Write(flag, data); err != nil {
-		return err
+func (n *Node) askVote(ctx context.Context, req *proto.AskVoteRequest) (*proto.AskVoteResponse, error) {
+	client := n.getGrpcClient()
+	if client == nil {
+		return nil, fmt.Errorf("connection for cluster node %s is not ready", n.name)
 	}
-	return nil
+	return client.AskVote(ctx, req)
+}
+
+func (n *Node) broadcastLeader(ctx context.Context, req *proto.BroadcastLeaderRequest) (*proto.BroadcastLeaderResponse, error) {
+	client := n.getGrpcClient()
+	if client == nil {
+		return nil, fmt.Errorf("connection for cluster node %s is not ready", n.name)
+	}
+	return client.BroadcastLeader(ctx, req)
+}
+
+func (n *Node) remoteCall(ctx context.Context, req *proto.RemoteCallRequest) (*proto.RemoteCallResponse, error) {
+	client := n.getGrpcClient()
+	if client == nil {
+		return nil, fmt.Errorf("connection for cluster node %s is not ready", n.name)
+	}
+	return client.RemoteCall(ctx, req)
+}
+
+func (n *Node) heartbeatStream(ctx context.Context) (proto.ClusterService_HeartbeatClient, error) {
+	client := n.getGrpcClient()
+	if client == nil {
+		return nil, fmt.Errorf("connection for cluster node %s is not ready", n.name)
+	}
+	return client.Heartbeat(ctx)
 }
 
 func (n *Node) close() {
 	n.connectLock.Lock()
 	defer n.connectLock.Unlock()
-	if n.connection != nil {
-		n.connection.Close()
-		n.connection = nil
+	if n.grpcClient != nil {
+		_ = n.grpcClient.Close()
+		n.grpcClient = nil
 	}
 }
 

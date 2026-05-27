@@ -36,13 +36,3 @@ type Message struct {
 	VoteNodeName   string `json:"voteNodeName,omitempty"`
 	Success        bool   `json:"success"`
 }
-
-type remoteCallMessage struct {
-	TraceID  string      `json:"traceId"`
-	UUID     string      `json:"uuid"`
-	FuncName string      `json:"funcName"`
-	Param    interface{} `json:"param"`
-	Sync     bool        `json:"sync"`
-	Result   interface{} `json:"result"`
-	Err      interface{} `json:"err"`
-}

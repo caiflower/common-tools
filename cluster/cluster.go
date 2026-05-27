@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caiflower/common-tools/cluster/proto"
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/bean"
@@ -37,9 +38,9 @@ import (
 	"github.com/caiflower/common-tools/pkg/shell"
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 	gocache "github.com/patrickmn/go-cache"
+	"google.golang.org/grpc"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
-	"github.com/caiflower/common-tools/pkg/nio"
 
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -135,9 +136,8 @@ type Cluster struct {
 	aliveNodes         *sync.Map                                              // 所有存活的节点
 	term               int                                                    // 当前任期
 	sate               uint32                                                 // 集群状态
-	server             nio.IServer                                            // 服务端口
+	grpcServer         *grpc.Server                                           // gRPC 服务端
 	logger             logger.ILog                                            // 日志框架
-	msgChan            atomic.Value                                           // 消息通信chan (存储 chan *Message，per-call)
 	votesMap           map[int]string                                         // 投票map term->nodeName
 	votesLock          sync.Locker                                            // 投票锁
 	localFuncs         map[string]func(data interface{}) (interface{}, error) // 本地函数
@@ -150,6 +150,7 @@ type Cluster struct {
 	currentReplicas    atomic.Value
 	connectLock        sync.Mutex
 	callCache          *gocache.Cache
+	heartbeatStreams   *heartbeatStreamManager
 }
 
 func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
@@ -256,7 +257,7 @@ func (c *Cluster) Start() error {
 		for _, v := range c.GetAliveNodeNames() {
 			if v != c.GetMyName() {
 				if _, err := CallFuncAs[any](c, NewFuncSpec(v, remoteFuncNameOfReloadAllNodes, nil, 2*time.Second).IgnoreNotReady()); err != nil {
-					c.logger.Error("[cluster] call %s reload nodes failed. %s", v, err.Error())
+					c.logger.Error("[cluster] call %s reload nodes failed: %s", v, err.Error())
 				}
 			}
 		}
@@ -288,7 +289,7 @@ func (c *Cluster) Start() error {
 	c.closeSuccess = make(chan bool)
 	c.createEvent(eventNameStartUp, "")
 
-	c.logger.Info("[cluster] startup success. ")
+	c.logger.Info("[cluster] startup success")
 
 	return nil
 }
@@ -315,7 +316,10 @@ func (c *Cluster) Close() {
 
 	atomic.StoreUint32(&c.sate, closed)
 
-	// close nio
+	if c.heartbeatStreams != nil {
+		c.heartbeatStreams.stopAll()
+	}
+
 	c.aliveNodes.Range(func(key, value interface{}) bool {
 		node := value.(*Node)
 		if node.name != c.GetMyName() {
@@ -324,8 +328,8 @@ func (c *Cluster) Close() {
 		return true
 	})
 
-	if c.server != nil {
-		c.server.Close()
+	if c.grpcServer != nil {
+		c.grpcServer.Stop()
 	}
 
 	c.createEvent(eventNameClose, "")
@@ -340,7 +344,7 @@ func (c *Cluster) Close() {
 	})
 
 	<-c.closeSuccess
-	c.logger.Info("[cluster] close success. ")
+	c.logger.Info("[cluster] closed")
 }
 
 func (c *Cluster) IsClosed() bool {
@@ -531,7 +535,7 @@ func (c *Cluster) loadNodes() {
 		}
 		c.currentReplicas.Store(replicas)
 
-		c.logger.Info("replicas discovery enabled, current replicas: %d", replicas)
+		c.logger.Info("[cluster] replicas discovery enabled, current replicas: %d", replicas)
 		for i := 0; i < replicas; i++ {
 			domain := strings.Replace(replicasDiscovery.DomainPatten, "{suf}", strconv.Itoa(i), 1)
 			address := fmt.Sprintf("%s:%d", domain, replicasDiscovery.Port)
@@ -554,7 +558,7 @@ func (c *Cluster) loadNodes() {
 	}
 
 	if c.IsEnable() {
-		c.logger.Info("[cluster] loadNodes success, nodes = %+v, addresses: %+v", c.GetAllNodeNames(), addresses)
+		c.logger.Info("[cluster] loadNodes success, nodes=%+v, addresses=%+v", c.GetAllNodeNames(), addresses)
 	}
 }
 
@@ -633,7 +637,7 @@ func (c *Cluster) findCurNode() {
 				c.allNode.Store(domain, node)
 				c.curNode = node
 
-				c.logger.Info("[cluster] set default localhost, address = %s", address)
+				c.logger.Info("[cluster] set default localhost, address=%s", address)
 			}
 		}
 	}
@@ -651,28 +655,47 @@ func (c *Cluster) needReconnect() (need bool) {
 	return
 }
 
+func (c *Cluster) markNodeUnavailable(nodeName string) {
+	if v, ok := c.aliveNodes.LoadAndDelete(nodeName); ok {
+		node := v.(*Node)
+		if nodeName != c.GetMyName() {
+			node.close()
+		}
+		c.logger.Warn("[cluster] node %s marked as unavailable", nodeName)
+	}
+}
+
 // connect 集群建立连接
 func (c *Cluster) reconnect() {
 	c.connectLock.Lock()
 	defer c.connectLock.Unlock()
 
 	c.allNode.Range(func(key, value interface{}) bool {
-		// 排除自己
 		nodeName := key.(string)
-		if _, ex := c.aliveNodes.Load(nodeName); c.curNode.name != nodeName && !ex {
-			node := value.(*Node)
-			client := nio.NewClientWithAllArgs(&nio.Config{
-				Addr:    node.address,
-				Timeout: 1,
-			}, syncx.NewSpinLock(), c.logger, c.getClientHandler(nodeName))
-
-			if err := client.Connect(); err != nil {
-				c.logger.Error("[cluster] connect node %s failed. error: %v", node.address, err)
-				return true
-			}
-
-			node.setConnection(client)
+		if c.curNode.name == nodeName {
+			return true
 		}
+
+		node := value.(*Node)
+
+		if _, ex := c.aliveNodes.Load(nodeName); ex && node.getGrpcClient() != nil {
+			return true
+		}
+
+		if node.getGrpcClient() != nil {
+			node.close()
+		}
+
+		client, err := newGrpcNodeClient(node.address)
+		if err != nil {
+			c.logger.Error("[cluster] connect to %s failed: %v", node.address, err)
+			c.aliveNodes.Delete(nodeName)
+			return true
+		}
+
+		node.setGrpcClient(client)
+		c.aliveNodes.Store(nodeName, node)
+		c.logger.Trace("[cluster] %s connected, now alive", nodeName)
 		return true
 	})
 
@@ -680,15 +703,20 @@ func (c *Cluster) reconnect() {
 }
 
 func (c *Cluster) listen() {
-	server := nio.NewServerWithAllArgs(&nio.Config{
-		Addr: c.curNode.address,
-	}, syncx.NewSpinLock(), c.logger, c.getServerHandler())
-
-	if err := server.Open(); err != nil {
-		c.logger.Error("[cluster] open server %s error: %v", c.curNode.address, err)
-	} else {
-		c.server = server
+	lis, err := net.Listen("tcp", c.curNode.address)
+	if err != nil {
+		c.logger.Error("[cluster] listen on %s failed: %v", c.curNode.address, err)
+		return
 	}
+
+	c.grpcServer = grpc.NewServer()
+	proto.RegisterClusterServiceServer(c.grpcServer, newClusterServiceServer(c))
+
+	go func() {
+		if err := c.grpcServer.Serve(lis); err != nil {
+			c.logger.Error("[cluster] grpc server serve failed: %v", err)
+		}
+	}()
 }
 
 func (c *Cluster) fighting() {
@@ -717,12 +745,12 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 	// 重试计数器监控
 	if retryCount >= alertThreshold {
-		c.logger.Warn("[cluster] high fighting retry count: %d for node %s", retryCount, c.GetMyName())
+		c.logger.Warn("[cluster] high election retry count: %d for node %s", retryCount, c.GetMyName())
 	}
 
 	defer func() {
 		if c.GetLeaderNode() != nil {
-			c.logger.Info("[cluster] node name: %s term %d fighting finished. leader name: %s", c.curNode.name, c.term, c.GetLeaderName())
+			c.logger.Info("[cluster] node %s term %d election finished, leader=%s", c.curNode.name, c.term, c.GetLeaderName())
 		} else {
 			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
 
@@ -732,7 +760,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 				if backoff > 200*time.Millisecond {
 					backoff = 200 * time.Millisecond
 				}
-				c.logger.Debug("[cluster] fighting failed, retry %d after %v", retryCount+1, backoff)
+				c.logger.Debug("[cluster] election failed, retry %d after %v", retryCount+1, backoff)
 				time.Sleep(backoff)
 				go c.fightingWithRetry(retryCount + 1)
 			}
@@ -759,19 +787,17 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 		count := c.GetAliveNodeCount()
 		quorum := c.getQuorum()
-		c.logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
+		c.logger.Info("[cluster] node %s, alive=%d, quorum=%d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
 			messages := c.sendMsgWhitTimeout(500*time.Millisecond, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
 			if len(messages) < quorum {
-				// 跳过
 				break
 			}
 
 			leaderNode := ""
 			term := 0
 			for _, message := range messages {
-				// 以 term 大的为主
 				if message.Term >= term {
 					term = message.Term
 					leaderNode = message.LeaderNodeName
@@ -791,15 +817,14 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 				}
 			}
 
-			// 加速周期
 			if term >= c.GetMyTerm() {
-				c.logger.Info("[cluster] sign my term to %d from other node.", term)
+				c.logger.Info("[cluster] update term to %d from other node", term)
 				c.term = term
 				break
 			}
 		} else {
 			if sleepTimes%10 == 0 {
-				c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+				c.logger.Warn("[cluster] alive=%d, not enough nodes for election", count)
 			}
 			sleepTimes++
 		}
@@ -817,17 +842,17 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 	nextTerm := c.term + 1
 	c.term = nextTerm
-	c.logger.Info("[cluster] node name: %s term: %d begin get votes. ", c.curNode.name, nextTerm)
+	c.logger.Info("[cluster] node %s term %d begin requesting votes", c.curNode.name, nextTerm)
 	c.createEvent(eventNameElectionStart, "")
 	defer func() {
-		c.logger.Info("[cluster] get votes finished. alive node count: %d, node[%v]; all node count: %d", c.GetAliveNodeCount(), c.GetAliveNodeNames(), c.GetAllNodeCount())
+		c.logger.Info("[cluster] vote finished, alive=%d, nodes=%v, total=%d", c.GetAliveNodeCount(), c.GetAliveNodeNames(), c.GetAllNodeCount())
 		c.createEvent(eventNameElectionFinish, c.GetLeaderName())
 	}()
 
 	// 开始获取选票
 	for {
 		if c.IsReady() || c.IsClose() {
-			c.logger.Info("cluster is ready or close")
+			c.logger.Debug("[cluster] cluster is ready or closed, skip voting")
 			return
 		}
 
@@ -835,18 +860,16 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 		count := c.GetAliveNodeCount()
 		quorum := c.getQuorum()
-		c.logger.Info("[cluster] node name: %s, alive node count: %d, quorum: %d", c.curNode.name, count, quorum)
+		c.logger.Info("[cluster] node %s, alive=%d, quorum=%d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
 			myNodeName := c.GetMyName()
-			// attempt to sign myself to candidate
 			if !atomic.CompareAndSwapUint32(&c.sate, follower, candidate) {
 				return
 			}
 
-			// vote myself first
 			if !c.voteNode(nextTerm, myNodeName) {
-				c.logger.Info("[cluster] vote myself failed, term: %d already vote for other", nextTerm)
+				c.logger.Info("[cluster] self-vote failed, term %d already voted for other", nextTerm)
 				return
 			}
 
@@ -858,36 +881,33 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 					votesCount++
 				}
 			}
-			c.logger.Info("[cluster] term %d vote myself finished, accept vote number %d", nextTerm, votesCount)
+			c.logger.Info("[cluster] term %d self-vote finished, received %d votes", nextTerm, votesCount)
 
 			if votesCount >= quorum {
-				// 开始广播自己为 leader
 				messages1 := c.sendMsgWhitTimeout(1000*time.Millisecond, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
-				successCount := 1 // 自己算一票
+				successCount := 1
 				for _, message := range messages1 {
 					if message.Success {
 						successCount++
 					}
 				}
 
-				// 只要广播到达了 quorum 个节点（包括自己），leader 就可以上任
-				// 未响应或拒绝的 follower 会通过后续心跳感知到 leader
 				if successCount >= quorum {
 					if c.signLeader(c.curNode, nextTerm) {
-						c.logger.Info("[cluster] sign myself: %s to be leader (broadcast ack %d/%d).", c.GetMyName(), successCount, c.GetAliveNodeCount())
+						c.logger.Info("[cluster] node %s became leader (broadcast ack %d/%d)", c.GetMyName(), successCount, c.GetAliveNodeCount())
 						return
 					}
 				}
 
-				c.logger.Info("[cluster] broadcast myself to leader failed (ack %d/%d quorum %d), go to next term...", successCount, len(messages1)+1, quorum)
+				c.logger.Info("[cluster] broadcast leader failed (ack %d/%d, quorum %d), advancing to next term", successCount, len(messages1)+1, quorum)
 			}
 
-			// fix bug, go to next term
+			// Failed to secure leadership (insufficient votes or broadcast acks), return to trigger next election attempt with incremented term
 			return
 		}
 
 		if sleepTimes%10 == 0 {
-			c.logger.Warn("[cluster] aliveNode len: %d, no enough node to fighting.", count)
+			c.logger.Warn("[cluster] alive=%d, not enough nodes for election", count)
 		}
 
 		sleepTimes++
@@ -901,6 +921,8 @@ func (c *Cluster) heartbeat() {
 	leaderHeartbeatInterval := c.config.Timeout / 3
 	const followerCheckInterval = 500 * time.Millisecond
 
+	c.heartbeatStreams = newHeartbeatStreamManager(c)
+
 	ticker := time.NewTicker(followerCheckInterval)
 	defer ticker.Stop()
 
@@ -910,51 +932,56 @@ func (c *Cluster) heartbeat() {
 	for {
 		select {
 		case <-c.ctx.Done():
+			c.heartbeatStreams.stopAll()
 			return
 		case <-ticker.C:
 			if c.IsLeader() {
-				c.logger.Trace("[cluster] leader %s send heartbeat.", c.GetMyName())
-				messages := c.sendMsgWithBackoffTimeout(messageHeartbeatReq, &Message{NodeName: c.curNode.name, Term: c.term})
+				c.logger.Trace("[cluster] leader %s sending heartbeat", c.GetMyName())
+
+				c.aliveNodes.Range(func(key, value interface{}) bool {
+					nodeName := key.(string)
+					node := value.(*Node)
+					if nodeName != c.GetMyName() {
+						c.heartbeatStreams.startStream(node)
+					}
+					return true
+				})
 
 				quorum := c.getQuorum()
 				leastCnt := quorum - 1
 
-				if len(messages) < leastCnt {
+				success := 0
+				total := 0
+				c.aliveNodes.Range(func(key, value interface{}) bool {
+					nodeName := key.(string)
+					if nodeName != c.GetMyName() {
+						total++
+						if c.heartbeatStreams.sendHeartbeat(nodeName, int32(c.term)) {
+							success++
+						}
+					}
+					return true
+				})
+
+				if total < leastCnt || success < leastCnt {
 					consecutiveFailures++
-					c.logger.Warn("[cluster] heartbeat response insufficient: %d/%d, consecutive failures: %d", len(messages), leastCnt, consecutiveFailures)
+					c.logger.Warn("[cluster] heartbeat insufficient: %d/%d, consecutive failures: %d", success, leastCnt, consecutiveFailures)
 
 					if consecutiveFailures >= maxConsecutiveFailures {
-						c.logger.Info("[cluster] too many consecutive heartbeat failures, releaseLeader %s", c.GetMyName())
+						c.logger.Info("[cluster] too many heartbeat failures, stepping down as leader: %s", c.GetMyName())
 						c.releaseWithNodeName(c.GetMyName())
 						consecutiveFailures = 0
 					}
 				} else {
-					success := 0
-					for _, message := range messages {
-						if message.Success {
-							success++
-						}
-					}
-
-					if success < leastCnt {
-						consecutiveFailures++
-						c.logger.Warn("[cluster] heartbeat success rate low: %d/%d, consecutive failures: %d", success, leastCnt, consecutiveFailures)
-
-						if consecutiveFailures >= maxConsecutiveFailures {
-							c.logger.Info("[cluster] heartbeat success rate too low, releaseLeader %s", c.GetMyName())
-							c.releaseWithNodeName(c.GetMyName())
-							consecutiveFailures = 0
-						}
-					} else {
-						consecutiveFailures = 0
-						c.logger.Trace("[cluster] heartbeat successful: %d/%d responses", success, len(messages))
-					}
+					consecutiveFailures = 0
+					c.logger.Trace("[cluster] heartbeat ok: %d/%d responses", success, total)
 				}
 
 				ticker.Reset(leaderHeartbeatInterval)
 			} else if c.IsFollower() {
+				c.heartbeatStreams.stopAll()
 				if !c.IsReady() || c.GetLeaderNode() == nil {
-					c.logger.Info("[cluster] follower %s is not ready. go fighting.", c.GetMyName())
+					c.logger.Info("[cluster] follower %s not ready, triggering election", c.GetMyName())
 					go c.fighting()
 				}
 				ticker.Reset(followerCheckInterval)
@@ -965,59 +992,7 @@ func (c *Cluster) heartbeat() {
 	}
 }
 
-func (c *Cluster) sendMsgWithBackoffTimeout(flag uint8, msg *Message) []*Message {
-	baseTimeout := 1000 * time.Millisecond
-
-	unhealthyNodes := 0
-	totalNodes := 0
-
-	c.aliveNodes.Range(func(key, value interface{}) bool {
-		node := value.(*Node)
-		if node.name != c.GetMyName() {
-			totalNodes++
-			if node.getHealthScore() < 30 {
-				unhealthyNodes++
-			}
-		}
-		return true
-	})
-
-	// 如果有不健康的节点，增加超时时间
-	if unhealthyNodes > 0 && totalNodes > 0 {
-		timeoutMultiplier := 1.0 + (float64(unhealthyNodes)/float64(totalNodes))*2.0
-		baseTimeout = time.Duration(float64(baseTimeout) * timeoutMultiplier)
-		maxTime := c.config.Timeout
-		if baseTimeout > maxTime {
-			baseTimeout = maxTime
-		}
-	}
-
-	messages := c.sendMsgWhitTimeout(baseTimeout, flag, msg)
-	if len(messages) != c.GetAllNodeCount() {
-		c.allNode.Range(func(key, value interface{}) bool {
-			find := false
-			for _, message := range messages {
-				if message.NodeName == key {
-					find = true
-					break
-				}
-			}
-
-			node := value.(*Node)
-			if !find && node.name != c.GetMyName() {
-				c.logger.Warn("[cluster] send message to %s failed, node %s maybe is not alive.", node.name, node.name)
-				node.updateHeartbeatFailed()
-			}
-
-			return true
-		})
-	}
-
-	return messages
-}
-
 func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
-	// 先快照当前存活节点，避免发送过程中 aliveNodes 变化导致计数不一致
 	type nodeEntry struct{ node *Node }
 	var targets []nodeEntry
 	c.aliveNodes.Range(func(key, value interface{}) bool {
@@ -1028,14 +1003,87 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 		return true
 	})
 
-	// 每次调用创建独立 channel，注册为当前活跃 channel 供 handler 写入
 	ch := make(chan *Message, len(targets)+1)
-	c.msgChan.Store(ch)
 
 	for _, t := range targets {
 		go func(n *Node) {
-			if err := n.sendMessage(flag, msg); err != nil {
-				c.logger.Error("[cluster] send message to %s error: %v", n.address, err)
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+
+			var respMsg *Message
+			switch flag {
+			case messageAskLeaderReq:
+				resp, err := n.askLeader(ctx, &proto.AskLeaderRequest{
+					NodeName: msg.NodeName,
+					Term:     int32(msg.Term),
+				})
+				if err != nil {
+					c.logger.Error("[cluster] AskLeader to %s failed: %v", n.address, err)
+					c.markNodeUnavailable(n.name)
+					return
+				}
+				respMsg = &Message{
+					NodeName:       resp.NodeName,
+					Term:           int(resp.Term),
+					LeaderNodeName: resp.LeaderNodeName,
+					Success:        resp.Success,
+				}
+			case messageAskVoteReq:
+				resp, err := n.askVote(ctx, &proto.AskVoteRequest{
+					NodeName: msg.NodeName,
+					Term:     int32(msg.Term),
+				})
+				if err != nil {
+					c.logger.Error("[cluster] AskVote to %s failed: %v", n.address, err)
+					c.markNodeUnavailable(n.name)
+					return
+				}
+				respMsg = &Message{
+					NodeName:     resp.NodeName,
+					Term:         int(resp.Term),
+					VoteNodeName: resp.VoteNodeName,
+					Success:      resp.Success,
+				}
+			case messageBroadcastLeaderReq:
+				resp, err := n.broadcastLeader(ctx, &proto.BroadcastLeaderRequest{
+					NodeName:       msg.NodeName,
+					Term:           int32(msg.Term),
+					LeaderNodeName: msg.LeaderNodeName,
+				})
+				if err != nil {
+					c.logger.Error("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
+					c.markNodeUnavailable(n.name)
+					return
+				}
+				respMsg = &Message{
+					NodeName:       resp.NodeName,
+					Term:           int(resp.Term),
+					LeaderNodeName: resp.LeaderNodeName,
+					Success:        resp.Success,
+				}
+			case messageHeartbeatReq:
+				resp, err := n.askLeader(ctx, &proto.AskLeaderRequest{
+					NodeName: msg.NodeName,
+					Term:     int32(msg.Term),
+				})
+				if err != nil {
+					c.logger.Error("[cluster] Heartbeat to %s failed: %v", n.address, err)
+					c.markNodeUnavailable(n.name)
+					return
+				}
+				respMsg = &Message{
+					NodeName:       resp.NodeName,
+					Term:           int(resp.Term),
+					LeaderNodeName: resp.LeaderNodeName,
+					Success:        resp.Success,
+				}
+			default:
+				c.logger.Error("[cluster] unknown message type: %d", flag)
+				return
+			}
+
+			if respMsg != nil {
+				ch <- respMsg
 			}
 		}(t.node)
 	}
@@ -1195,9 +1243,9 @@ func (c *Cluster) consumeEvent() {
 	for ev := range c.events {
 		switch ev.name {
 		case eventNameStartUp:
-			c.logger.Debug("[cluster] %s start up event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s started, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 		case eventNameSignFollower:
-			c.logger.Debug("[cluster] %s sign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s became follower, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
@@ -1205,7 +1253,7 @@ func (c *Cluster) consumeEvent() {
 				return true
 			})
 		case eventNameSignMaster:
-			c.logger.Debug("[cluster] %s sign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s became leader, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 			c.updateMetrics(true)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
@@ -1213,7 +1261,7 @@ func (c *Cluster) consumeEvent() {
 				return true
 			})
 		case eventNameUnsignMaster:
-			c.logger.Debug("[cluster] %s unsign master event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s stepped down as leader, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				jobTracker := value.(JobTracker)
@@ -1221,11 +1269,11 @@ func (c *Cluster) consumeEvent() {
 				return true
 			})
 		case eventNameElectionStart:
-			c.logger.Debug("[cluster] %s election start event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s election started, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 		case eventNameElectionFinish:
-			c.logger.Debug("[cluster] %s election finish event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s election finished, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 		case eventNameUnsignFollower:
-			c.logger.Debug("[cluster] %s unsign follower event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s lost leader, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 			c.updateMetrics(false)
 			c.jobTrackers.Range(func(key, value interface{}) bool {
 				tracker := value.(JobTracker)
@@ -1234,9 +1282,9 @@ func (c *Cluster) consumeEvent() {
 			})
 		case eventNameClose:
 			close(c.closeSuccess)
-			c.logger.Debug("[cluster] %s close event, cluster status: %s", ev.nodeName, getStatusName(ev.clusterStat))
+			c.logger.Debug("[cluster] %s closed, status=%s", ev.nodeName, getStatusName(ev.clusterStat))
 		default:
-			c.logger.Warn("[cluster] unknown type %s event", ev.name)
+			c.logger.Warn("[cluster] unknown event type: %s", ev.name)
 		}
 	}
 }
@@ -1277,7 +1325,7 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 			c.callLocalFunc(f)
 		})
 	} else { // 远程调用
-		c.logger.Trace("[%s] call remote func '%s - %s'", f.uuid, f.nodeName, f.funcName)
+		c.logger.Trace("[%s] call remote func '%s' on node '%s'", f.uuid, f.funcName, f.nodeName)
 		c.callRemoteFunc(f)
 	}
 
@@ -1297,13 +1345,13 @@ func (c *Cluster) callLocalFunc(f *FuncSpec) {
 	fc := c.localFuncs[f.funcName]
 	if fc == nil {
 		err := fmt.Errorf("not such function '%s' in the cluster", f.funcName)
-		c.logger.Error("[cluster] [remote call] failed. %s Cause of %s", f.uuid, err)
+		c.logger.Error("[cluster] [remote call] %s failed: function '%s' not found", f.uuid, f.funcName)
 		f.setResult(nil, err)
 		return
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			c.logger.Error("Got a runtime error %s. [remote call]\n%s", r, string(debug.Stack()))
+			c.logger.Error("[cluster] [remote call] runtime panic: %v\n%s", r, string(debug.Stack()))
 			f.setResult(nil, fmt.Errorf("%s", r))
 		}
 	}()
@@ -1311,22 +1359,39 @@ func (c *Cluster) callLocalFunc(f *FuncSpec) {
 }
 
 func (c *Cluster) callRemoteFunc(f *FuncSpec) {
-	msg := &remoteCallMessage{
-		TraceID: f.traceId, UUID: f.uuid, FuncName: f.funcName, Param: f.param, Sync: f.sync,
-	}
 	if val, ok := c.aliveNodes.Load(f.nodeName); ok {
 		_node := val.(*Node)
-		if err := _node.sendMessage(messageRemoteCallReq, msg); err != nil {
+		req, err := newRemoteCallRequest(f)
+		if err != nil {
 			f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
-			c.logger.Error("[cluster] [remote call] %s failed. %s Cause of %s.", f.uuid, f.funcName, err)
+			c.logger.Error("[cluster] [remote call] %s failed: %s, cause: %v", f.uuid, f.funcName, err)
+			return
 		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
+		defer cancel()
+
+		resp, err := _node.remoteCall(ctx, req)
+		if err != nil {
+			f.setResult(nil, fmt.Errorf("remote call failed. %w", err))
+			c.logger.Error("[cluster] [remote call] %s failed: %s, cause: %v", f.uuid, f.funcName, err)
+			c.markNodeUnavailable(f.nodeName)
+			return
+		}
+
+		result, _ := newRemoteCallResult(resp)
+		var respErr error
+		if resp.Err != "" {
+			respErr = errors.New(resp.Err)
+		}
+		f.setResult(result, respErr)
 	} else {
-		f.setResult(nil, fmt.Errorf("the node %s does not exist or is dead", f.nodeName))
+		f.setResult(nil, fmt.Errorf("node %s does not exist or is unreachable", f.nodeName))
 	}
 }
 
 func (c *Cluster) reloadAllNodes(_ interface{}) (interface{}, error) {
-	c.logger.Info("[cluster] do reloadAllNodes")
+	c.logger.Info("[cluster] reloading all nodes")
 	c.loadNodes()
 	c.reconnect()
 	return nil, nil
@@ -1349,7 +1414,7 @@ func (c *Cluster) getHeadlessServiceDomain() string {
 // K8s headless service 的 DNS 解析返回所有 ready pod 的 IP 列表，len 即为副本数。
 func (c *Cluster) discoverReplicasFromDNS() int {
 	domain := c.getHeadlessServiceDomain()
-	c.logger.Info("[cluster] discoverReplicasFromDNS: domain=%s", domain)
+	c.logger.Info("[cluster] discovering replicas from DNS, domain=%s", domain)
 
 	if domain == "" {
 		return 0
@@ -1382,7 +1447,7 @@ func (c *Cluster) discoverReplicasFromDNS() int {
 	}
 	hostsLen := discoverHosts()
 
-	c.logger.Debug("[cluster] discoverReplicasFromDNS, hostsLen=%d, addrsLen=%d", hostsLen, len(addrs))
+	c.logger.Debug("[cluster] DNS discovery result, hosts=%d, addrs=%d", hostsLen, len(addrs))
 
 	return max(len(addrs), hostsLen)
 }
@@ -1407,7 +1472,7 @@ func (c *Cluster) watchReplicas() {
 			currentReplicas := c.currentReplicas.Load().(int)
 
 			if replicas <= 0 || replicas == currentReplicas {
-				c.logger.Info("[cluster] discoverReplicasFromDNS: current replicas=%d", replicas)
+				c.logger.Debug("[cluster] current replicas=%d, no change", replicas)
 				continue
 			}
 
