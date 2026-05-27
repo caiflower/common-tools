@@ -37,6 +37,10 @@ type grpcNodeClient struct {
 	client proto.ClusterServiceClient
 }
 
+func (g *grpcNodeClient) ClientConn() grpc.ClientConnInterface {
+	return g.conn
+}
+
 func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig) (*grpcNodeClient, error) {
 	var opts []grpc.DialOption
 	opts = append(opts,

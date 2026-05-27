@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package cluster;
+
+option go_package = "github.com/caiflower/common-tools/cluster/proto";
+
+service TestGreeter {
+  rpc SayHello(TestHelloRequest) returns (TestHelloResponse);
+}
+
+message TestHelloRequest {
+  string name = 1;
+}
+
+message TestHelloResponse {
+  string message = 1;
+}

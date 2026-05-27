@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/cluster/proto"
+	"google.golang.org/grpc"
 )
 
 type Node struct {
@@ -54,6 +55,15 @@ func (n *Node) clean() {
 	n.heartbeat = time.Time{}
 	n.lastHeartbeatOk = false
 	n.heartbeatFailures = 0
+}
+
+func (n *Node) getGRPCConn() grpc.ClientConnInterface {
+	n.connectLock.RLock()
+	defer n.connectLock.RUnlock()
+	if n.grpcClient == nil {
+		return nil
+	}
+	return n.grpcClient.ClientConn()
 }
 
 func (n *Node) updateHeartbeat() {

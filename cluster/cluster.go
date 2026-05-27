@@ -73,6 +73,8 @@ type ICluster interface {
 	AddJobTracker(v JobTracker) error                                             // add scheduler
 	RemoveJobTracker(v JobTracker)                                                // remove scheduler
 	RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) // registerFunc
+	RegisterGRPCService(sd *grpc.ServiceDesc, ss interface{}) error               // registerGRPCService
+	GetGRPCClient(nodeName string) (grpc.ClientConnInterface, error)              // getGRPCClient
 	// Deprecated: Use cluster.CallFuncAs[T] instead to avoid deserialization failures with remote calls.
 	CallFunc(fc *FuncSpec) (interface{}, error) // callFunc
 }
@@ -150,6 +152,8 @@ type Cluster struct {
 	votesMap           map[int]string                                         // 投票map term->nodeName
 	votesLock          sync.Locker                                            // 投票锁
 	localFuncs         map[string]func(data interface{}) (interface{}, error) // 本地函数
+	registeredServices map[string]*grpc.ServiceDesc                           // 预注册的 gRPC 服务
+	registeredImpls    map[string]interface{}                                 // 预注册的 gRPC 服务实现
 	Redis              redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
 	ctx                context.Context
 	cancelFunc         context.CancelFunc
@@ -176,18 +180,20 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	}
 
 	cluster := &Cluster{
-		config:      &config,
-		allNode:     &sync.Map{},
-		aliveNodes:  &sync.Map{},
-		term:        0,
-		sate:        _init,
-		logger:      logger,
-		lock:        syncx.NewSpinLock(),
-		votesMap:    make(map[int]string),
-		votesLock:   syncx.NewSpinLock(),
-		jobTrackers: &sync.Map{},
-		localFuncs:  make(map[string]func(data interface{}) (interface{}, error)),
-		callCache:   gocache.New(gocache.NoExpiration, 1*time.Minute),
+		config:             &config,
+		allNode:            &sync.Map{},
+		aliveNodes:         &sync.Map{},
+		term:               0,
+		sate:               _init,
+		logger:             logger,
+		lock:               syncx.NewSpinLock(),
+		votesMap:           make(map[int]string),
+		votesLock:          syncx.NewSpinLock(),
+		jobTrackers:        &sync.Map{},
+		localFuncs:         make(map[string]func(data interface{}) (interface{}, error)),
+		registeredServices: make(map[string]*grpc.ServiceDesc),
+		registeredImpls:    make(map[string]interface{}),
+		callCache:          gocache.New(gocache.NoExpiration, 1*time.Minute),
 	}
 
 	if !cluster.IsEnable() {
@@ -747,6 +753,10 @@ func (c *Cluster) listen() {
 
 	c.grpcServer = grpc.NewServer(serverOpts...)
 	proto.RegisterClusterServiceServer(c.grpcServer, newClusterServiceServer(c))
+
+	for name, sd := range c.registeredServices {
+		c.grpcServer.RegisterService(sd, c.registeredImpls[name])
+	}
 
 	go func() {
 		if err := c.grpcServer.Serve(lis); err != nil {
@@ -1323,6 +1333,68 @@ func getStatusName(s uint32) string {
 
 func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) {
 	c.localFuncs[funcName] = fn
+}
+
+func (c *Cluster) RegisterGRPCService(sd *grpc.ServiceDesc, ss interface{}) error {
+	if _, exists := c.registeredServices[sd.ServiceName]; exists {
+		return fmt.Errorf("gRPC service '%s' is already registered", sd.ServiceName)
+	}
+
+	if c.grpcServer != nil {
+		return fmt.Errorf("gRPC service '%s' cannot be registered after cluster has started, please register before Start()", sd.ServiceName)
+	}
+
+	c.registeredServices[sd.ServiceName] = sd
+	c.registeredImpls[sd.ServiceName] = ss
+
+	return nil
+}
+
+type nodeConnProxy struct {
+	node *Node
+}
+
+func (p *nodeConnProxy) currentConn() (grpc.ClientConnInterface, error) {
+	conn := p.node.getGRPCConn()
+	if conn == nil {
+		return nil, fmt.Errorf("node '%s' is unreachable", p.node.name)
+	}
+	return conn, nil
+}
+
+func (p *nodeConnProxy) Invoke(ctx context.Context, method string, args, reply interface{}, opts ...grpc.CallOption) error {
+	conn, err := p.currentConn()
+	if err != nil {
+		return err
+	}
+	return conn.Invoke(ctx, method, args, reply, opts...)
+}
+
+func (p *nodeConnProxy) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	conn, err := p.currentConn()
+	if err != nil {
+		return nil, err
+	}
+	return conn.NewStream(ctx, desc, method, opts...)
+}
+
+func (c *Cluster) GetGRPCClient(nodeName string) (grpc.ClientConnInterface, error) {
+	if nodeName == c.GetMyName() {
+		return nil, fmt.Errorf("cannot get gRPC client for self node '%s', use local call instead", nodeName)
+	}
+
+	val, ok := c.aliveNodes.Load(nodeName)
+	if !ok {
+		return nil, fmt.Errorf("node '%s' does not exist in the cluster", nodeName)
+	}
+
+	node := val.(*Node)
+	conn := node.getGRPCConn()
+	if conn == nil {
+		return nil, fmt.Errorf("node '%s' is unreachable", nodeName)
+	}
+
+	return &nodeConnProxy{node: node}, nil
 }
 
 // Deprecated: Use cluster.CallFuncAs[T] instead to avoid deserialization failures with remote calls.
