@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: cluster/proto/cluster.proto
+// source: cluster.proto
 
 package proto
 
@@ -22,6 +22,78 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type PingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingRequest) Reset() {
+	*x = PingRequest{}
+	mi := &file_cluster_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingRequest) ProtoMessage() {}
+
+func (x *PingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
+func (*PingRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{0}
+}
+
+type PingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingResponse) Reset() {
+	*x = PingResponse{}
+	mi := &file_cluster_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingResponse) ProtoMessage() {}
+
+func (x *PingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
+func (*PingResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{1}
+}
+
 type AskLeaderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeName      string                 `protobuf:"bytes,1,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
@@ -32,7 +104,7 @@ type AskLeaderRequest struct {
 
 func (x *AskLeaderRequest) Reset() {
 	*x = AskLeaderRequest{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[0]
+	mi := &file_cluster_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +116,7 @@ func (x *AskLeaderRequest) String() string {
 func (*AskLeaderRequest) ProtoMessage() {}
 
 func (x *AskLeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[0]
+	mi := &file_cluster_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -57,7 +129,7 @@ func (x *AskLeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskLeaderRequest.ProtoReflect.Descriptor instead.
 func (*AskLeaderRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{0}
+	return file_cluster_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *AskLeaderRequest) GetNodeName() string {
@@ -86,7 +158,7 @@ type AskLeaderResponse struct {
 
 func (x *AskLeaderResponse) Reset() {
 	*x = AskLeaderResponse{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[1]
+	mi := &file_cluster_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -98,7 +170,7 @@ func (x *AskLeaderResponse) String() string {
 func (*AskLeaderResponse) ProtoMessage() {}
 
 func (x *AskLeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[1]
+	mi := &file_cluster_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -111,7 +183,7 @@ func (x *AskLeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskLeaderResponse.ProtoReflect.Descriptor instead.
 func (*AskLeaderResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{1}
+	return file_cluster_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AskLeaderResponse) GetNodeName() string {
@@ -152,7 +224,7 @@ type AskVoteRequest struct {
 
 func (x *AskVoteRequest) Reset() {
 	*x = AskVoteRequest{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[2]
+	mi := &file_cluster_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -164,7 +236,7 @@ func (x *AskVoteRequest) String() string {
 func (*AskVoteRequest) ProtoMessage() {}
 
 func (x *AskVoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[2]
+	mi := &file_cluster_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -177,7 +249,7 @@ func (x *AskVoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskVoteRequest.ProtoReflect.Descriptor instead.
 func (*AskVoteRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{2}
+	return file_cluster_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AskVoteRequest) GetNodeName() string {
@@ -206,7 +278,7 @@ type AskVoteResponse struct {
 
 func (x *AskVoteResponse) Reset() {
 	*x = AskVoteResponse{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[3]
+	mi := &file_cluster_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -218,7 +290,7 @@ func (x *AskVoteResponse) String() string {
 func (*AskVoteResponse) ProtoMessage() {}
 
 func (x *AskVoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[3]
+	mi := &file_cluster_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -231,7 +303,7 @@ func (x *AskVoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AskVoteResponse.ProtoReflect.Descriptor instead.
 func (*AskVoteResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{3}
+	return file_cluster_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *AskVoteResponse) GetNodeName() string {
@@ -273,7 +345,7 @@ type BroadcastLeaderRequest struct {
 
 func (x *BroadcastLeaderRequest) Reset() {
 	*x = BroadcastLeaderRequest{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[4]
+	mi := &file_cluster_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -285,7 +357,7 @@ func (x *BroadcastLeaderRequest) String() string {
 func (*BroadcastLeaderRequest) ProtoMessage() {}
 
 func (x *BroadcastLeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[4]
+	mi := &file_cluster_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -298,7 +370,7 @@ func (x *BroadcastLeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BroadcastLeaderRequest.ProtoReflect.Descriptor instead.
 func (*BroadcastLeaderRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{4}
+	return file_cluster_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *BroadcastLeaderRequest) GetNodeName() string {
@@ -334,7 +406,7 @@ type BroadcastLeaderResponse struct {
 
 func (x *BroadcastLeaderResponse) Reset() {
 	*x = BroadcastLeaderResponse{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[5]
+	mi := &file_cluster_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -346,7 +418,7 @@ func (x *BroadcastLeaderResponse) String() string {
 func (*BroadcastLeaderResponse) ProtoMessage() {}
 
 func (x *BroadcastLeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[5]
+	mi := &file_cluster_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -359,7 +431,7 @@ func (x *BroadcastLeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BroadcastLeaderResponse.ProtoReflect.Descriptor instead.
 func (*BroadcastLeaderResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{5}
+	return file_cluster_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *BroadcastLeaderResponse) GetNodeName() string {
@@ -400,7 +472,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[6]
+	mi := &file_cluster_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -412,7 +484,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[6]
+	mi := &file_cluster_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -425,7 +497,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{6}
+	return file_cluster_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HeartbeatRequest) GetNodeName() string {
@@ -454,7 +526,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[7]
+	mi := &file_cluster_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -466,7 +538,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[7]
+	mi := &file_cluster_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -479,7 +551,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{7}
+	return file_cluster_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HeartbeatResponse) GetNodeName() string {
@@ -523,7 +595,7 @@ type RemoteCallRequest struct {
 
 func (x *RemoteCallRequest) Reset() {
 	*x = RemoteCallRequest{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[8]
+	mi := &file_cluster_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -535,7 +607,7 @@ func (x *RemoteCallRequest) String() string {
 func (*RemoteCallRequest) ProtoMessage() {}
 
 func (x *RemoteCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[8]
+	mi := &file_cluster_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -548,7 +620,7 @@ func (x *RemoteCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoteCallRequest.ProtoReflect.Descriptor instead.
 func (*RemoteCallRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{8}
+	return file_cluster_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RemoteCallRequest) GetTraceId() string {
@@ -599,7 +671,7 @@ type RemoteCallResponse struct {
 
 func (x *RemoteCallResponse) Reset() {
 	*x = RemoteCallResponse{}
-	mi := &file_cluster_proto_cluster_proto_msgTypes[9]
+	mi := &file_cluster_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -611,7 +683,7 @@ func (x *RemoteCallResponse) String() string {
 func (*RemoteCallResponse) ProtoMessage() {}
 
 func (x *RemoteCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_cluster_proto_msgTypes[9]
+	mi := &file_cluster_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -624,7 +696,7 @@ func (x *RemoteCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoteCallResponse.ProtoReflect.Descriptor instead.
 func (*RemoteCallResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_cluster_proto_rawDescGZIP(), []int{9}
+	return file_cluster_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RemoteCallResponse) GetTraceId() string {
@@ -662,11 +734,13 @@ func (x *RemoteCallResponse) GetErr() string {
 	return ""
 }
 
-var File_cluster_proto_cluster_proto protoreflect.FileDescriptor
+var File_cluster_proto protoreflect.FileDescriptor
 
-const file_cluster_proto_cluster_proto_rawDesc = "" +
+const file_cluster_proto_rawDesc = "" +
 	"\n" +
-	"\x1bcluster/proto/cluster.proto\x12\acluster\x1a\x19google/protobuf/any.proto\"C\n" +
+	"\rcluster.proto\x12\acluster\x1a\x19google/protobuf/any.proto\"\r\n" +
+	"\vPingRequest\"\x0e\n" +
+	"\fPingResponse\"C\n" +
 	"\x10AskLeaderRequest\x12\x1b\n" +
 	"\tnode_name\x18\x01 \x01(\tR\bnodeName\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x05R\x04term\"\x88\x01\n" +
@@ -711,8 +785,9 @@ const file_cluster_proto_cluster_proto_rawDesc = "" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12\x1b\n" +
 	"\tfunc_name\x18\x03 \x01(\tR\bfuncName\x12,\n" +
 	"\x06result\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\x06result\x12\x10\n" +
-	"\x03err\x18\x05 \x01(\tR\x03err2\xf7\x02\n" +
-	"\x0eClusterService\x12B\n" +
+	"\x03err\x18\x05 \x01(\tR\x03err2\xac\x03\n" +
+	"\x0eClusterService\x123\n" +
+	"\x04Ping\x12\x14.cluster.PingRequest\x1a\x15.cluster.PingResponse\x12B\n" +
 	"\tAskLeader\x12\x19.cluster.AskLeaderRequest\x1a\x1a.cluster.AskLeaderResponse\x12<\n" +
 	"\aAskVote\x12\x17.cluster.AskVoteRequest\x1a\x18.cluster.AskVoteResponse\x12T\n" +
 	"\x0fBroadcastLeader\x12\x1f.cluster.BroadcastLeaderRequest\x1a .cluster.BroadcastLeaderResponse\x12F\n" +
@@ -721,71 +796,75 @@ const file_cluster_proto_cluster_proto_rawDesc = "" +
 	"RemoteCall\x12\x1a.cluster.RemoteCallRequest\x1a\x1b.cluster.RemoteCallResponseB1Z/github.com/caiflower/common-tools/cluster/protob\x06proto3"
 
 var (
-	file_cluster_proto_cluster_proto_rawDescOnce sync.Once
-	file_cluster_proto_cluster_proto_rawDescData []byte
+	file_cluster_proto_rawDescOnce sync.Once
+	file_cluster_proto_rawDescData []byte
 )
 
-func file_cluster_proto_cluster_proto_rawDescGZIP() []byte {
-	file_cluster_proto_cluster_proto_rawDescOnce.Do(func() {
-		file_cluster_proto_cluster_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cluster_proto_cluster_proto_rawDesc), len(file_cluster_proto_cluster_proto_rawDesc)))
+func file_cluster_proto_rawDescGZIP() []byte {
+	file_cluster_proto_rawDescOnce.Do(func() {
+		file_cluster_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cluster_proto_rawDesc), len(file_cluster_proto_rawDesc)))
 	})
-	return file_cluster_proto_cluster_proto_rawDescData
+	return file_cluster_proto_rawDescData
 }
 
-var file_cluster_proto_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
-var file_cluster_proto_cluster_proto_goTypes = []any{
-	(*AskLeaderRequest)(nil),        // 0: cluster.AskLeaderRequest
-	(*AskLeaderResponse)(nil),       // 1: cluster.AskLeaderResponse
-	(*AskVoteRequest)(nil),          // 2: cluster.AskVoteRequest
-	(*AskVoteResponse)(nil),         // 3: cluster.AskVoteResponse
-	(*BroadcastLeaderRequest)(nil),  // 4: cluster.BroadcastLeaderRequest
-	(*BroadcastLeaderResponse)(nil), // 5: cluster.BroadcastLeaderResponse
-	(*HeartbeatRequest)(nil),        // 6: cluster.HeartbeatRequest
-	(*HeartbeatResponse)(nil),       // 7: cluster.HeartbeatResponse
-	(*RemoteCallRequest)(nil),       // 8: cluster.RemoteCallRequest
-	(*RemoteCallResponse)(nil),      // 9: cluster.RemoteCallResponse
-	(*anypb.Any)(nil),               // 10: google.protobuf.Any
+var file_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_cluster_proto_goTypes = []any{
+	(*PingRequest)(nil),             // 0: cluster.PingRequest
+	(*PingResponse)(nil),            // 1: cluster.PingResponse
+	(*AskLeaderRequest)(nil),        // 2: cluster.AskLeaderRequest
+	(*AskLeaderResponse)(nil),       // 3: cluster.AskLeaderResponse
+	(*AskVoteRequest)(nil),          // 4: cluster.AskVoteRequest
+	(*AskVoteResponse)(nil),         // 5: cluster.AskVoteResponse
+	(*BroadcastLeaderRequest)(nil),  // 6: cluster.BroadcastLeaderRequest
+	(*BroadcastLeaderResponse)(nil), // 7: cluster.BroadcastLeaderResponse
+	(*HeartbeatRequest)(nil),        // 8: cluster.HeartbeatRequest
+	(*HeartbeatResponse)(nil),       // 9: cluster.HeartbeatResponse
+	(*RemoteCallRequest)(nil),       // 10: cluster.RemoteCallRequest
+	(*RemoteCallResponse)(nil),      // 11: cluster.RemoteCallResponse
+	(*anypb.Any)(nil),               // 12: google.protobuf.Any
 }
-var file_cluster_proto_cluster_proto_depIdxs = []int32{
-	10, // 0: cluster.RemoteCallRequest.param:type_name -> google.protobuf.Any
-	10, // 1: cluster.RemoteCallResponse.result:type_name -> google.protobuf.Any
-	0,  // 2: cluster.ClusterService.AskLeader:input_type -> cluster.AskLeaderRequest
-	2,  // 3: cluster.ClusterService.AskVote:input_type -> cluster.AskVoteRequest
-	4,  // 4: cluster.ClusterService.BroadcastLeader:input_type -> cluster.BroadcastLeaderRequest
-	6,  // 5: cluster.ClusterService.Heartbeat:input_type -> cluster.HeartbeatRequest
-	8,  // 6: cluster.ClusterService.RemoteCall:input_type -> cluster.RemoteCallRequest
-	1,  // 7: cluster.ClusterService.AskLeader:output_type -> cluster.AskLeaderResponse
-	3,  // 8: cluster.ClusterService.AskVote:output_type -> cluster.AskVoteResponse
-	5,  // 9: cluster.ClusterService.BroadcastLeader:output_type -> cluster.BroadcastLeaderResponse
-	7,  // 10: cluster.ClusterService.Heartbeat:output_type -> cluster.HeartbeatResponse
-	9,  // 11: cluster.ClusterService.RemoteCall:output_type -> cluster.RemoteCallResponse
-	7,  // [7:12] is the sub-list for method output_type
-	2,  // [2:7] is the sub-list for method input_type
+var file_cluster_proto_depIdxs = []int32{
+	12, // 0: cluster.RemoteCallRequest.param:type_name -> google.protobuf.Any
+	12, // 1: cluster.RemoteCallResponse.result:type_name -> google.protobuf.Any
+	0,  // 2: cluster.ClusterService.Ping:input_type -> cluster.PingRequest
+	2,  // 3: cluster.ClusterService.AskLeader:input_type -> cluster.AskLeaderRequest
+	4,  // 4: cluster.ClusterService.AskVote:input_type -> cluster.AskVoteRequest
+	6,  // 5: cluster.ClusterService.BroadcastLeader:input_type -> cluster.BroadcastLeaderRequest
+	8,  // 6: cluster.ClusterService.Heartbeat:input_type -> cluster.HeartbeatRequest
+	10, // 7: cluster.ClusterService.RemoteCall:input_type -> cluster.RemoteCallRequest
+	1,  // 8: cluster.ClusterService.Ping:output_type -> cluster.PingResponse
+	3,  // 9: cluster.ClusterService.AskLeader:output_type -> cluster.AskLeaderResponse
+	5,  // 10: cluster.ClusterService.AskVote:output_type -> cluster.AskVoteResponse
+	7,  // 11: cluster.ClusterService.BroadcastLeader:output_type -> cluster.BroadcastLeaderResponse
+	9,  // 12: cluster.ClusterService.Heartbeat:output_type -> cluster.HeartbeatResponse
+	11, // 13: cluster.ClusterService.RemoteCall:output_type -> cluster.RemoteCallResponse
+	8,  // [8:14] is the sub-list for method output_type
+	2,  // [2:8] is the sub-list for method input_type
 	2,  // [2:2] is the sub-list for extension type_name
 	2,  // [2:2] is the sub-list for extension extendee
 	0,  // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_cluster_proto_cluster_proto_init() }
-func file_cluster_proto_cluster_proto_init() {
-	if File_cluster_proto_cluster_proto != nil {
+func init() { file_cluster_proto_init() }
+func file_cluster_proto_init() {
+	if File_cluster_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cluster_proto_cluster_proto_rawDesc), len(file_cluster_proto_cluster_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cluster_proto_rawDesc), len(file_cluster_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_cluster_proto_cluster_proto_goTypes,
-		DependencyIndexes: file_cluster_proto_cluster_proto_depIdxs,
-		MessageInfos:      file_cluster_proto_cluster_proto_msgTypes,
+		GoTypes:           file_cluster_proto_goTypes,
+		DependencyIndexes: file_cluster_proto_depIdxs,
+		MessageInfos:      file_cluster_proto_msgTypes,
 	}.Build()
-	File_cluster_proto_cluster_proto = out.File
-	file_cluster_proto_cluster_proto_goTypes = nil
-	file_cluster_proto_cluster_proto_depIdxs = nil
+	File_cluster_proto = out.File
+	file_cluster_proto_goTypes = nil
+	file_cluster_proto_depIdxs = nil
 }

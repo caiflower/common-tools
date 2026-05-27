@@ -19,6 +19,7 @@ package cluster
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -300,13 +301,13 @@ func benchmarkRemoteCallConcurrentN(b *testing.B, concurrency int) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		sem := make(chan struct{}, concurrency)
+		var wg sync.WaitGroup
 		errCh := make(chan error, concurrency)
 
 		for j := 0; j < concurrency; j++ {
-			sem <- struct{}{}
+			wg.Add(1)
 			go func() {
-				defer func() { <-sem }()
+				defer wg.Done()
 				_, err := CallFuncAs[string](leader, NewFuncSpec(target, benchFuncName, "concurrent-param", 3*time.Second))
 				if err != nil {
 					select {
@@ -317,9 +318,7 @@ func benchmarkRemoteCallConcurrentN(b *testing.B, concurrency int) {
 			}()
 		}
 
-		for j := 0; j < concurrency; j++ {
-			sem <- struct{}{}
-		}
+		wg.Wait()
 		close(errCh)
 
 		for err := range errCh {

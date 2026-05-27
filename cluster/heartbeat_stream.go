@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/caiflower/common-tools/cluster/proto"
 	"github.com/caiflower/common-tools/pkg/e"
@@ -36,10 +37,6 @@ func newHeartbeatStreamManager(c *Cluster) *heartbeatStreamManager {
 }
 
 func (m *heartbeatStreamManager) startStream(node *Node) {
-	if _, loaded := m.streams.Load(node.name); loaded {
-		return
-	}
-
 	ctx, cancel := context.WithCancel(m.cluster.ctx)
 
 	entry := &streamEntry{
@@ -95,6 +92,8 @@ func (m *heartbeatStreamManager) sendHeartbeat(nodeName string, term int32) bool
 
 func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 	c := m.cluster
+	backoff := time.Second
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -106,9 +105,17 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 		if err != nil {
 			c.logger.Warn("[cluster] heartbeat stream to %s open failed: %v", node.name, err)
 			c.markNodeUnavailable(node.name)
-			m.stopStream(node.name)
-			return
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff = min(backoff*2, 30*time.Second)
+			continue
 		}
+
+		backoff = time.Second
 
 		v, ok := m.streams.Load(node.name)
 		if !ok {
@@ -145,8 +152,9 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-time.After(backoff):
 		}
+		backoff = min(backoff*2, 30*time.Second)
 	}
 }
 

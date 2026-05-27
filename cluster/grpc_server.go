@@ -18,10 +18,14 @@ package cluster
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 
 	"github.com/caiflower/common-tools/cluster/proto"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -32,6 +36,10 @@ type clusterServiceServer struct {
 
 func newClusterServiceServer(c *Cluster) *clusterServiceServer {
 	return &clusterServiceServer{cluster: c}
+}
+
+func (s *clusterServiceServer) Ping(ctx context.Context, req *proto.PingRequest) (*proto.PingResponse, error) {
+	return &proto.PingResponse{}, nil
 }
 
 func (s *clusterServiceServer) AskLeader(ctx context.Context, req *proto.AskLeaderRequest) (*proto.AskLeaderResponse, error) {
@@ -199,8 +207,40 @@ func interfaceToAny(data interface{}) (*anypb.Any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal data to bytes: %w", err)
 	}
+	// TypeUrl uses Go's %T format for informational purposes only.
+	// anyToInterface does not rely on TypeUrl for deserialization,
+	// so non-standard names (e.g. "string", "[]uint8") are acceptable
+	// for internal cluster communication.
+	typeName := fmt.Sprintf("%T", data)
 	return &anypb.Any{
-		TypeUrl: "type.googleapis.com/cluster.RemoteCallParam",
+		TypeUrl: "type.googleapis.com/" + typeName,
 		Value:   bytes,
 	}, nil
+}
+
+func loadTLSServerCredentials(cfg *TLSConfig) (credentials.TransportCredentials, error) {
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load server cert=%s key=%s failed: %w", cfg.CertFile, cfg.KeyFile, err)
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	if cfg.CAFile != "" {
+		caData, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA cert %s failed: %w", cfg.CAFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("failed to append CA cert from %s", cfg.CAFile)
+		}
+		tlsCfg.ClientCAs = pool
+		tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
 }

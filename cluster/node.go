@@ -70,7 +70,9 @@ func (n *Node) updateHeartbeatFailed() {
 	defer n.heartbreakLock.Unlock()
 
 	n.lastHeartbeatOk = false
-	n.heartbeatFailures++
+	if n.heartbeatFailures < 10 {
+		n.heartbeatFailures++
+	}
 }
 
 func (n *Node) resetHeartbeatOnLeaderChange() {
@@ -101,6 +103,14 @@ func (n *Node) getHealthScore() int {
 
 	if n.heartbeat.IsZero() {
 		return 0
+	}
+
+	if n.heartbeatFailures > 3 {
+		return max(0, 100-n.heartbeatFailures*20)
+	}
+
+	if !n.lastHeartbeatOk {
+		return 50
 	}
 
 	return 100

@@ -39,6 +39,7 @@ import (
 	redisv1 "github.com/caiflower/common-tools/redis/v1"
 	gocache "github.com/patrickmn/go-cache"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 
@@ -94,14 +95,22 @@ type Config struct {
 	Mode    string        `yaml:"mode" default:"cluster" json:"mode"`
 	Timeout time.Duration `yaml:"timeout" default:"5s" json:"timeout"`
 	Enable  string        `yaml:"enable" default:"true" json:"enable"`
+	TLS     TLSConfig     `yaml:"tls" json:"tls"`
 	Nodes   []*struct {
 		Name  string
 		Ip    string
 		Port  int
-		Local bool //true表示当前进程与当前node匹配。适用本机测试等情况。线上为了配置文件一致性尽量不要使用。
+		Local bool
 	} `yaml:"nodes" json:"nodes"`
 	RedisDiscovery    RedisDiscovery    `yaml:"redisDiscovery" json:"redisDiscovery"`
 	ReplicasDiscovery ReplicasDiscovery `yaml:"replicasDiscovery" json:"replicasDiscovery"`
+}
+
+type TLSConfig struct {
+	Enabled  bool   `yaml:"enabled" json:"enabled"`
+	CertFile string `yaml:"certFile" json:"certFile"`
+	KeyFile  string `yaml:"keyFile" json:"keyFile"`
+	CAFile   string `yaml:"caFile" json:"caFile"`
 }
 
 type RedisDiscovery struct {
@@ -329,7 +338,16 @@ func (c *Cluster) Close() {
 	})
 
 	if c.grpcServer != nil {
-		c.grpcServer.Stop()
+		gracefulCh := make(chan struct{})
+		go func() {
+			c.grpcServer.GracefulStop()
+			close(gracefulCh)
+		}()
+		select {
+		case <-gracefulCh:
+		case <-time.After(3 * time.Second):
+			c.grpcServer.Stop()
+		}
 	}
 
 	c.createEvent(eventNameClose, "")
@@ -384,27 +402,6 @@ func (c *Cluster) isNodeHealthy(node *Node) bool {
 
 	return true
 }
-
-// 获取节点健康状态详情
-//func (c *Cluster) getNodeHealthStatus(nodeName string) map[string]interface{} {
-//	node := c.GetNodeByName(nodeName)
-//	if node == nil {
-//		return map[string]interface{}{
-//			"healthy": false,
-//			"reason":  "node not found",
-//		}
-//	}
-//
-//	return map[string]interface{}{
-//		"healthy":       c.isNodeHealthy(node),
-//		"healthScore":   node.getHealthScore(),
-//		"lastHeartbeat": node.heartbeat.Format("2006-01-02 15:04:05"),
-//		"failures":      node.heartbeatFailures,
-//		"lastOk":        node.lastHeartbeatOk,
-//		"ageSeconds":    int(time.Since(node.heartbeat).Seconds()),
-//		"hasConnection": node.connection != nil,
-//	}
-//}
 
 func (c *Cluster) IsLeader() bool {
 	return atomic.LoadUint32(&c.sate) == leader
@@ -670,34 +667,53 @@ func (c *Cluster) reconnect() {
 	c.connectLock.Lock()
 	defer c.connectLock.Unlock()
 
+	type connectResult struct {
+		nodeName string
+		node     *Node
+		client   *grpcNodeClient
+		err      error
+	}
+
+	var pending []connectResult
 	c.allNode.Range(func(key, value interface{}) bool {
 		nodeName := key.(string)
 		if c.curNode.name == nodeName {
 			return true
 		}
-
 		node := value.(*Node)
-
 		if _, ex := c.aliveNodes.Load(nodeName); ex && node.getGrpcClient() != nil {
 			return true
 		}
-
 		if node.getGrpcClient() != nil {
 			node.close()
 		}
-
-		client, err := newGrpcNodeClient(node.address)
-		if err != nil {
-			c.logger.Error("[cluster] connect to %s failed: %v", node.address, err)
-			c.aliveNodes.Delete(nodeName)
-			return true
-		}
-
-		node.setGrpcClient(client)
-		c.aliveNodes.Store(nodeName, node)
-		c.logger.Trace("[cluster] %s connected, now alive", nodeName)
+		pending = append(pending, connectResult{nodeName: nodeName, node: node})
 		return true
 	})
+
+	if len(pending) == 0 {
+		return
+	}
+
+	resultCh := make(chan connectResult, len(pending))
+	for i := range pending {
+		go func(r connectResult) {
+			client, err := newGrpcNodeClient(c.ctx, r.node.address, &c.config.TLS)
+			resultCh <- connectResult{nodeName: r.nodeName, node: r.node, client: client, err: err}
+		}(pending[i])
+	}
+
+	for range len(pending) {
+		r := <-resultCh
+		if r.err != nil {
+			c.logger.Trace("[cluster] connect to %s failed: %v", r.node.address, r.err)
+			c.aliveNodes.Delete(r.nodeName)
+			continue
+		}
+		r.node.setGrpcClient(r.client)
+		c.aliveNodes.Store(r.nodeName, r.node)
+		c.logger.Trace("[cluster] %s connected, now alive", r.nodeName)
+	}
 
 	c.updateMetrics(c.IsLeader())
 }
@@ -709,7 +725,27 @@ func (c *Cluster) listen() {
 		return
 	}
 
-	c.grpcServer = grpc.NewServer()
+	var serverOpts []grpc.ServerOption
+	serverOpts = append(serverOpts,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    30 * time.Second,
+			Timeout: 5 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             15 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
+	if c.config.TLS.Enabled {
+		creds, err := loadTLSServerCredentials(&c.config.TLS)
+		if err != nil {
+			c.logger.Error("[cluster] load TLS server credentials failed: %v", err)
+			return
+		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
+	}
+
+	c.grpcServer = grpc.NewServer(serverOpts...)
 	proto.RegisterClusterServiceServer(c.grpcServer, newClusterServiceServer(c))
 
 	go func() {
@@ -790,16 +826,16 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		c.logger.Info("[cluster] node %s, alive=%d, quorum=%d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
-			messages := c.sendMsgWhitTimeout(500*time.Millisecond, messageAskLeaderReq, &Message{NodeName: c.curNode.name, Term: c.term})
+			messages := c.askLeaderFromNodes(500*time.Millisecond, c.curNode.name, c.term)
 			if len(messages) < quorum {
 				break
 			}
 
 			leaderNode := ""
-			term := 0
+			maxTerm := int32(0)
 			for _, message := range messages {
-				if message.Term >= term {
-					term = message.Term
+				if message.Term >= maxTerm {
+					maxTerm = message.Term
 					leaderNode = message.LeaderNodeName
 				}
 			}
@@ -812,14 +848,14 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 					node = c.curNode
 				}
 
-				if c.signLeader(node, term) {
+				if c.signLeader(node, int(maxTerm)) {
 					return
 				}
 			}
 
-			if term >= c.GetMyTerm() {
-				c.logger.Info("[cluster] update term to %d from other node", term)
-				c.term = term
+			if int(maxTerm) >= c.GetMyTerm() {
+				c.logger.Info("[cluster] update term to %d from other node", maxTerm)
+				c.term = int(maxTerm)
 				break
 			}
 		} else {
@@ -875,7 +911,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 			// get vote from other node
 			votesCount := 1
-			messages := c.sendMsgWhitTimeout(500*time.Millisecond, messageAskVoteReq, &Message{NodeName: myNodeName, Term: nextTerm})
+			messages := c.askVoteFromNodes(500*time.Millisecond, myNodeName, nextTerm)
 			for _, message := range messages {
 				if message.Success && message.VoteNodeName == myNodeName {
 					votesCount++
@@ -884,7 +920,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 			c.logger.Info("[cluster] term %d self-vote finished, received %d votes", nextTerm, votesCount)
 
 			if votesCount >= quorum {
-				messages1 := c.sendMsgWhitTimeout(1000*time.Millisecond, messageBroadcastLeaderReq, &Message{NodeName: myNodeName, Term: nextTerm, LeaderNodeName: c.curNode.name})
+				messages1 := c.broadcastLeaderToNodes(1000*time.Millisecond, myNodeName, nextTerm, c.curNode.name)
 				successCount := 1
 				for _, message := range messages1 {
 					if message.Success {
@@ -992,7 +1028,7 @@ func (c *Cluster) heartbeat() {
 	}
 }
 
-func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Message) []*Message {
+func broadcastToNodes[T any](c *Cluster, timeout time.Duration, sendFn func(ctx context.Context, n *Node) (*T, bool)) []*T {
 	type nodeEntry struct{ node *Node }
 	var targets []nodeEntry
 	c.aliveNodes.Range(func(key, value interface{}) bool {
@@ -1003,82 +1039,15 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 		return true
 	})
 
-	ch := make(chan *Message, len(targets)+1)
+	ch := make(chan *T, len(targets))
 
 	for _, t := range targets {
 		go func(n *Node) {
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithTimeout(c.ctx, timeout)
 			defer cancel()
 
-			var respMsg *Message
-			switch flag {
-			case messageAskLeaderReq:
-				resp, err := n.askLeader(ctx, &proto.AskLeaderRequest{
-					NodeName: msg.NodeName,
-					Term:     int32(msg.Term),
-				})
-				if err != nil {
-					c.logger.Error("[cluster] AskLeader to %s failed: %v", n.address, err)
-					c.markNodeUnavailable(n.name)
-					return
-				}
-				respMsg = &Message{
-					NodeName:       resp.NodeName,
-					Term:           int(resp.Term),
-					LeaderNodeName: resp.LeaderNodeName,
-					Success:        resp.Success,
-				}
-			case messageAskVoteReq:
-				resp, err := n.askVote(ctx, &proto.AskVoteRequest{
-					NodeName: msg.NodeName,
-					Term:     int32(msg.Term),
-				})
-				if err != nil {
-					c.logger.Error("[cluster] AskVote to %s failed: %v", n.address, err)
-					c.markNodeUnavailable(n.name)
-					return
-				}
-				respMsg = &Message{
-					NodeName:     resp.NodeName,
-					Term:         int(resp.Term),
-					VoteNodeName: resp.VoteNodeName,
-					Success:      resp.Success,
-				}
-			case messageBroadcastLeaderReq:
-				resp, err := n.broadcastLeader(ctx, &proto.BroadcastLeaderRequest{
-					NodeName:       msg.NodeName,
-					Term:           int32(msg.Term),
-					LeaderNodeName: msg.LeaderNodeName,
-				})
-				if err != nil {
-					c.logger.Error("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
-					c.markNodeUnavailable(n.name)
-					return
-				}
-				respMsg = &Message{
-					NodeName:       resp.NodeName,
-					Term:           int(resp.Term),
-					LeaderNodeName: resp.LeaderNodeName,
-					Success:        resp.Success,
-				}
-			case messageHeartbeatReq:
-				resp, err := n.askLeader(ctx, &proto.AskLeaderRequest{
-					NodeName: msg.NodeName,
-					Term:     int32(msg.Term),
-				})
-				if err != nil {
-					c.logger.Error("[cluster] Heartbeat to %s failed: %v", n.address, err)
-					c.markNodeUnavailable(n.name)
-					return
-				}
-				respMsg = &Message{
-					NodeName:       resp.NodeName,
-					Term:           int(resp.Term),
-					LeaderNodeName: resp.LeaderNodeName,
-					Success:        resp.Success,
-				}
-			default:
-				c.logger.Error("[cluster] unknown message type: %d", flag)
+			respMsg, ok := sendFn(ctx, n)
+			if !ok {
 				return
 			}
 
@@ -1088,8 +1057,8 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 		}(t.node)
 	}
 
-	msgResponseList := make([]*Message, 0, len(targets))
-	withTimeout, cancel := context.WithTimeout(context.Background(), timeout)
+	msgResponseList := make([]*T, 0, len(targets))
+	withTimeout, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 
 	for {
@@ -1103,6 +1072,52 @@ func (c *Cluster) sendMsgWhitTimeout(timeout time.Duration, flag uint8, msg *Mes
 			}
 		}
 	}
+}
+
+func (c *Cluster) askLeaderFromNodes(timeout time.Duration, nodeName string, term int) []*proto.AskLeaderResponse {
+	return broadcastToNodes(c, timeout, func(ctx context.Context, n *Node) (*proto.AskLeaderResponse, bool) {
+		resp, err := n.askLeader(ctx, &proto.AskLeaderRequest{
+			NodeName: nodeName,
+			Term:     int32(term),
+		})
+		if err != nil {
+			c.logger.Error("[cluster] AskLeader to %s failed: %v", n.address, err)
+			c.markNodeUnavailable(n.name)
+			return nil, false
+		}
+		return resp, true
+	})
+}
+
+func (c *Cluster) askVoteFromNodes(timeout time.Duration, nodeName string, term int) []*proto.AskVoteResponse {
+	return broadcastToNodes(c, timeout, func(ctx context.Context, n *Node) (*proto.AskVoteResponse, bool) {
+		resp, err := n.askVote(ctx, &proto.AskVoteRequest{
+			NodeName: nodeName,
+			Term:     int32(term),
+		})
+		if err != nil {
+			c.logger.Error("[cluster] AskVote to %s failed: %v", n.address, err)
+			c.markNodeUnavailable(n.name)
+			return nil, false
+		}
+		return resp, true
+	})
+}
+
+func (c *Cluster) broadcastLeaderToNodes(timeout time.Duration, nodeName string, term int, leaderNodeName string) []*proto.BroadcastLeaderResponse {
+	return broadcastToNodes(c, timeout, func(ctx context.Context, n *Node) (*proto.BroadcastLeaderResponse, bool) {
+		resp, err := n.broadcastLeader(ctx, &proto.BroadcastLeaderRequest{
+			NodeName:       nodeName,
+			Term:           int32(term),
+			LeaderNodeName: leaderNodeName,
+		})
+		if err != nil {
+			c.logger.Error("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
+			c.markNodeUnavailable(n.name)
+			return nil, false
+		}
+		return resp, true
+	})
 }
 
 func (c *Cluster) signLeader(node *Node, term int) bool {
@@ -1368,7 +1383,7 @@ func (c *Cluster) callRemoteFunc(f *FuncSpec) {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
+		ctx, cancel := context.WithTimeout(c.ctx, f.timeout)
 		defer cancel()
 
 		resp, err := _node.remoteCall(ctx, req)

@@ -18,12 +18,18 @@ package cluster
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/caiflower/common-tools/cluster/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 type grpcNodeClient struct {
@@ -31,35 +37,77 @@ type grpcNodeClient struct {
 	client proto.ClusterServiceClient
 }
 
-func newGrpcNodeClient(address string) (*grpcNodeClient, error) {
-	conn, err := grpc.NewClient(address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig) (*grpcNodeClient, error) {
+	var opts []grpc.DialOption
+	opts = append(opts,
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
+
+	if tlsCfg != nil && tlsCfg.Enabled {
+		creds, err := loadTLSClientCredentials(tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("grpc load TLS credentials for %s failed: %w", address, err)
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.NewClient(address, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("grpc new client %s failed: %w", address, err)
 	}
 
-	client := &grpcNodeClient{
-		conn:   conn,
-		client: proto.NewClusterServiceClient(conn),
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	client := proto.NewClusterServiceClient(conn)
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_, err = client.AskLeader(ctx, &proto.AskLeaderRequest{})
-	if err != nil {
+	if _, err := client.Ping(pingCtx, &proto.PingRequest{}); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("grpc verify connection %s failed: %w", address, err)
+		return nil, fmt.Errorf("grpc ping %s failed: %w", address, err)
 	}
 
-	return client, nil
+	return &grpcNodeClient{
+		conn:   conn,
+		client: client,
+	}, nil
+}
+
+func loadTLSClientCredentials(cfg *TLSConfig) (credentials.TransportCredentials, error) {
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load client cert=%s key=%s failed: %w", cfg.CertFile, cfg.KeyFile, err)
+	}
+
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	if cfg.CAFile != "" {
+		caData, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA cert %s failed: %w", cfg.CAFile, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("failed to append CA cert from %s", cfg.CAFile)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	return credentials.NewTLS(tlsCfg), nil
 }
 
 func (g *grpcNodeClient) IsReady() bool {
 	if g.conn == nil {
 		return false
 	}
-	return g.conn.GetState().String() == "READY" || g.conn.GetState().String() == "IDLE"
+	state := g.conn.GetState()
+	return state == connectivity.Ready || state == connectivity.Idle
 }
 
 func (g *grpcNodeClient) Close() error {

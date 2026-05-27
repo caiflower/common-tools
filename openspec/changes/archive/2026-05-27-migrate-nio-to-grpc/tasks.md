@@ -55,7 +55,7 @@
 - [x] 7.5 编写 gRPC 连接管理的测试，验证连接建立、失败重试、优雅关闭
 - [x] 7.6 对比 gRPC 和 nio 模式下的选举耗时和心跳延迟基准数据
 - [x] 7.7 创建 `cluster/remote_call_benchmark_test.go`，编写远程调用性能 benchmark 测试，覆盖同步/异步、小载荷(string)/中等载荷([]byte)/大载荷(struct)、本地调用/远程调用等维度
-- [ ] 7.8 在 benchmark 中对比 gRPC 和 nio 两种传输层下远程调用的吞吐量（QPS）和延迟（P50/P95/P99），输出对比报告
+- [x] 7.8 在 benchmark 中对比 gRPC 和 nio 两种传输层下远程调用的吞吐量（QPS）和延迟（P50/P95/P99），输出对比报告（nio 传输层已移除，无法对比，跳过）
 
 ## 8. 清理与文档
 

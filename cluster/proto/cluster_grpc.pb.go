@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.34.1
-// source: cluster/proto/cluster.proto
+// source: cluster.proto
 
 package proto
 
@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	ClusterService_Ping_FullMethodName            = "/cluster.ClusterService/Ping"
 	ClusterService_AskLeader_FullMethodName       = "/cluster.ClusterService/AskLeader"
 	ClusterService_AskVote_FullMethodName         = "/cluster.ClusterService/AskVote"
 	ClusterService_BroadcastLeader_FullMethodName = "/cluster.ClusterService/BroadcastLeader"
@@ -30,6 +31,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ClusterServiceClient interface {
+	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
 	AskLeader(ctx context.Context, in *AskLeaderRequest, opts ...grpc.CallOption) (*AskLeaderResponse, error)
 	AskVote(ctx context.Context, in *AskVoteRequest, opts ...grpc.CallOption) (*AskVoteResponse, error)
 	BroadcastLeader(ctx context.Context, in *BroadcastLeaderRequest, opts ...grpc.CallOption) (*BroadcastLeaderResponse, error)
@@ -43,6 +45,16 @@ type clusterServiceClient struct {
 
 func NewClusterServiceClient(cc grpc.ClientConnInterface) ClusterServiceClient {
 	return &clusterServiceClient{cc}
+}
+
+func (c *clusterServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PingResponse)
+	err := c.cc.Invoke(ctx, ClusterService_Ping_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *clusterServiceClient) AskLeader(ctx context.Context, in *AskLeaderRequest, opts ...grpc.CallOption) (*AskLeaderResponse, error) {
@@ -102,6 +114,7 @@ func (c *clusterServiceClient) RemoteCall(ctx context.Context, in *RemoteCallReq
 // All implementations must embed UnimplementedClusterServiceServer
 // for forward compatibility.
 type ClusterServiceServer interface {
+	Ping(context.Context, *PingRequest) (*PingResponse, error)
 	AskLeader(context.Context, *AskLeaderRequest) (*AskLeaderResponse, error)
 	AskVote(context.Context, *AskVoteRequest) (*AskVoteResponse, error)
 	BroadcastLeader(context.Context, *BroadcastLeaderRequest) (*BroadcastLeaderResponse, error)
@@ -117,6 +130,9 @@ type ClusterServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedClusterServiceServer struct{}
 
+func (UnimplementedClusterServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
+}
 func (UnimplementedClusterServiceServer) AskLeader(context.Context, *AskLeaderRequest) (*AskLeaderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AskLeader not implemented")
 }
@@ -151,6 +167,24 @@ func RegisterClusterServiceServer(s grpc.ServiceRegistrar, srv ClusterServiceSer
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&ClusterService_ServiceDesc, srv)
+}
+
+func _ClusterService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClusterServiceServer).Ping(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ClusterService_Ping_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClusterServiceServer).Ping(ctx, req.(*PingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _ClusterService_AskLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -240,6 +274,10 @@ var ClusterService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*ClusterServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
+			MethodName: "Ping",
+			Handler:    _ClusterService_Ping_Handler,
+		},
+		{
 			MethodName: "AskLeader",
 			Handler:    _ClusterService_AskLeader_Handler,
 		},
@@ -264,5 +302,5 @@ var ClusterService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "cluster/proto/cluster.proto",
+	Metadata: "cluster.proto",
 }

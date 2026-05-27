@@ -7,11 +7,18 @@ option go_package = "github.com/caiflower/common-tools/cluster/proto";
 import "google/protobuf/any.proto";
 
 service ClusterService {
+  rpc Ping(PingRequest) returns (PingResponse);
   rpc AskLeader(AskLeaderRequest) returns (AskLeaderResponse);
   rpc AskVote(AskVoteRequest) returns (AskVoteResponse);
   rpc BroadcastLeader(BroadcastLeaderRequest) returns (BroadcastLeaderResponse);
   rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
   rpc RemoteCall(RemoteCallRequest) returns (RemoteCallResponse);
+}
+
+message PingRequest {
+}
+
+message PingResponse {
 }
 
 message AskLeaderRequest {
