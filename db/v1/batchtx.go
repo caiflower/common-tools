@@ -17,25 +17,45 @@
 package dbv1
 
 import (
+	"context"
+	"fmt"
+	"time"
+
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/uptrace/bun"
 )
 
 type BatchTx struct {
-	tx   *bun.Tx
-	conn *bun.DB
-	txs  []func(tx *bun.Tx) error
+	tx      *bun.Tx
+	conn    *bun.DB
+	timeout time.Duration
+	ctx     context.Context
+	txs     []func(tx *bun.Tx) error
 }
 
-func NewBatchTx(conn bun.IDB) *BatchTx {
+func NewBatchTx(conn bun.IDB, timeout ...time.Duration) *BatchTx {
+	if conn == nil {
+		panic("BatchTx: conn must not be nil")
+	}
 	bt := &BatchTx{
 		txs: make([]func(tx *bun.Tx) error, 0, 5),
+	}
+	if len(timeout) > 0 {
+		bt.timeout = timeout[0]
+	} else {
+		bt.timeout = 30 * time.Second
 	}
 	if con, ok := conn.(*bun.DB); ok {
 		bt.conn = con
 	} else if tx, ok2 := conn.(*bun.Tx); ok2 {
 		bt.tx = tx
 	}
+	return bt
+}
+
+func NewBatchTxWithContext(ctx context.Context, conn bun.IDB, timeout ...time.Duration) *BatchTx {
+	bt := NewBatchTx(conn, timeout...)
+	bt.ctx = ctx
 	return bt
 }
 
@@ -53,38 +73,57 @@ func (b *BatchTx) Submit() (err error) {
 		return nil
 	}
 
-	// 默认使用外部传进来的事务
-	tx, isMyTx := b.tx, false
+	if b.tx == nil && b.conn == nil {
+		return fmt.Errorf("BatchTx: no database connection or transaction provided")
+	}
 
-	// 如果未指定事务，则创建新的事务
+	tx, isMyTx := b.tx, false
+	var cancel context.CancelFunc
+
 	if tx == nil {
-		newTx, txErr := b.conn.Begin()
+		parentCtx := b.ctx
+		if parentCtx == nil {
+			parentCtx = context.Background()
+		}
+		ctx, c := context.WithTimeout(parentCtx, b.timeout)
+		cancel = c
+		defer cancel()
+		newTx, txErr := b.conn.BeginTx(ctx, nil)
 		if txErr != nil {
+			cancel()
 			return txErr
 		}
 		tx, isMyTx = &newTx, true
 	}
 
-	// 如果是内部创建的事务，处理 panic 回滚
-	if isMyTx {
-		defer func() {
-			if r := recover(); r != nil {
+	defer func() {
+		if r := recover(); r != nil {
+			if isMyTx {
 				if _err := tx.Rollback(); _err != nil {
 					logger.Warn("rollback failed after panic. err: %v", _err.Error())
 				}
-				panic(r)
 			}
-		}()
-	}
+			panic(r)
+		}
+	}()
 
-	// 执行
 	for _, fc := range b.txs {
+		if b.ctx != nil {
+			select {
+			case <-b.ctx.Done():
+				err = b.ctx.Err()
+				break
+			default:
+			}
+			if err != nil {
+				break
+			}
+		}
 		if err = fc(tx); err != nil {
 			break
 		}
 	}
 
-	// 如果是内部创建的事务，退出前需要结束事务
 	if isMyTx {
 		if err != nil {
 			if _err := tx.Rollback(); _err != nil {

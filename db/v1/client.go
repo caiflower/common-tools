@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sync"
+	"regexp"
 	"time"
 
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
@@ -36,6 +36,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/mysqldialect"
+	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 )
 
@@ -66,17 +67,20 @@ type Filter interface {
 }
 
 type Client struct {
-	DB     *bun.DB
-	config *Config
-	cancel context.CancelFunc
+	DB      *bun.DB
+	config  *Config
+	cancel  context.CancelFunc
+	metrics *metricsCollector
 }
-
-var once sync.Once
 
 func NewDBClient(config Config) (c *Client, err error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
-	logger.Info(" *** db Config *** %s", tools.ToJson(config))
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	logger.Info(" *** db Config *** %s", maskConfigPassword(tools.ToJson(config)))
 
 	switch config.Dialect {
 	case "mysql":
@@ -100,29 +104,34 @@ func NewDBClient(config Config) (c *Client, err error) {
 
 	c.DB.AddQueryHook(c)
 
-	// 关闭表名复数形式
+	// WARNING: SetTableNameInflector modifies process-level global state.
+	// If multiple Client instances with different Plural settings exist in the
+	// same process, the last one wins. Consider using bun.BaseModel table tag
+	// on individual models instead of relying on this global setting.
 	if !config.Plural {
+		logger.Warn("WARNING: schema.SetTableNameInflector modifies process-level global state. Multiple Client instances with different Plural settings will override each other. Consider using bun.BaseModel table tag on individual models instead.")
 		schema.SetTableNameInflector(func(tableName string) string {
 			return tableName
 		})
 	}
 
-	if config.EnableMetric {
+	if config.EnableMetric != nil && *config.EnableMetric {
+		ensureMetricsRegistered()
 		ctx, cancelFunc := context.WithCancel(context.Background())
 		c.cancel = cancelFunc
-		once.Do(func() {
-			startMetric(ctx, c.DB, &config)
-		})
-	}
-
-	if config.Dialect != "sqlite" {
-		if err = c.DB.Ping(); err != nil {
-			return nil, errors.New("connect to db failed")
-		}
+		c.metrics = newMetricsCollector(&config)
+		c.metrics.startPoolStats(ctx, c.DB)
 	}
 
 	global.DefaultResourceManger.AddWithOrder(c, 1000)
 	return c, nil
+}
+
+func configureConnectionPool(db *sql.DB, config *Config) {
+	db.SetConnMaxLifetime(config.ConnMaxLifetime)
+	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
+	db.SetMaxOpenConns(config.MaxOpen)
+	db.SetMaxIdleConns(config.MaxIdle)
 }
 
 func createMysqlClient(config *Config) (*Client, error) {
@@ -130,25 +139,21 @@ func createMysqlClient(config *Config) (*Client, error) {
 	if config.EnablePasswordEncrypt {
 		_tmpPassword, err := tools.AesDecryptRawBase64(password)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("mysql: decrypt password failed: %w", err)
 		}
 		password = _tmpPassword
 	}
 	dns := fmt.Sprintf("%s:%s@tcp(%s)/%s?charset=%s", config.User, password, config.Url, config.DbName, config.Charset)
 	db, err := sql.Open("mysql", dns)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mysql: open database failed: %w", err)
 	}
 
-	// See "Important settings" section.
-	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
-	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
-	db.SetMaxOpenConns(config.MaxOpen)
-	db.SetMaxIdleConns(config.MaxIdle)
+	configureConnectionPool(db, config)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelFunc()
 	if err = db.PingContext(ctx); err != nil {
-		return nil, errors.New("connect to db timeout")
+		return nil, fmt.Errorf("connect to db timeout: %w", err)
 	}
 
 	bunDB := bun.NewDB(db, mysqldialect.New())
@@ -160,45 +165,36 @@ func createPgsqlClient(config *Config) (*Client, error) {
 	if config.EnablePasswordEncrypt {
 		_tmpPassword, err := tools.AesDecryptRawBase64(password)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("pgsql: decrypt password failed: %w", err)
 		}
 		password = _tmpPassword
 	}
 	dsn := fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable",
-		config.User, config.Password, config.Url, config.DbName)
+		config.User, password, config.Url, config.DbName)
 	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
 
-	// See "Important settings" section.
-	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
-	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
-	db.SetMaxOpenConns(config.MaxOpen)
-	db.SetMaxIdleConns(config.MaxIdle)
+	configureConnectionPool(db, config)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelFunc()
 	if err := db.PingContext(ctx); err != nil {
-		return nil, errors.New("connect to db timeout")
+		return nil, fmt.Errorf("connect to db timeout: %w", err)
 	}
 
-	bunDB := bun.NewDB(db, mysqldialect.New())
+	bunDB := bun.NewDB(db, pgdialect.New())
 	return &Client{DB: bunDB, config: config}, nil
 }
 
 func createSqliteClient(config *Config) (*Client, error) {
 	db, err := sql.Open("sqlite3", config.Url)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sqlite: open database failed: %w", err)
 	}
 
-	// See "Important settings" section.
-	db.SetConnMaxLifetime(time.Second * time.Duration(config.ConnMaxLifetime))
-	db.SetConnMaxIdleTime(config.ConnMaxIdleTime)
-	db.SetMaxOpenConns(config.MaxOpen)
-	db.SetMaxIdleConns(config.MaxIdle)
-	//ctx, cancelFunc := context.WithTimeout(context.Background(), 15*time.Second)
-	//defer cancelFunc()
-	//if err = db.PingContext(ctx); err != nil {
-	//	return nil, errors.New("connect to db timeout")
-	//}
+	logger.Info("sqlite: overriding connection pool settings for single-writer model (MaxOpen=1, MaxIdle=1, ConnMaxLifetime=0, ConnMaxIdleTime=0)")
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	bunDB := bun.NewDB(db, sqlitedialect.New())
 	return &Client{DB: bunDB, config: config}, nil
@@ -243,6 +239,9 @@ func (c *Client) Order() int {
 	return 1000
 }
 
+// GetSelect returns a select query with a hardcoded "status>0" filter.
+// NOTE: This assumes all models have a "status" column. For models without
+// this column, use c.GetDB().NewSelect().Model(model) directly.
 func (c *Client) GetSelect(model interface{}) *bun.SelectQuery {
 	return c.GetDB().NewSelect().Model(model).Where("status>0")
 }
@@ -259,6 +258,9 @@ func (c *Client) GetDelete(model interface{}, tx ...*bun.Tx) *bun.DeleteQuery {
 	return c.GetTx(tx...).NewDelete().Model(model)
 }
 
+// GetSoftDelete returns an update query that sets "status=-1" for soft deletion.
+// NOTE: This assumes all models have a "status" column. For models without
+// this column, use c.GetTx(tx...).NewUpdate().Model(model) directly.
 func (c *Client) GetSoftDelete(model interface{}, tx ...*bun.Tx) *bun.UpdateQuery {
 	return c.GetTx(tx...).NewUpdate().Model(model).Set("status=-1")
 }
@@ -268,6 +270,9 @@ func (c *Client) Insert(ctx context.Context, data interface{}, tx ...*bun.Tx) (i
 }
 
 func (c *Client) SoftDelete(ctx context.Context, model interface{}, id interface{}, tx ...*bun.Tx) (int64, error) {
+	if id == nil {
+		return 0, fmt.Errorf("SoftDelete: id must not be nil")
+	}
 	handler := c.GetSoftDelete(model, tx...)
 	if reflect.TypeOf(id).Kind() == reflect.Slice {
 		handler.Where("id in (?)", bun.In(id))
@@ -278,6 +283,9 @@ func (c *Client) SoftDelete(ctx context.Context, model interface{}, id interface
 }
 
 func (c *Client) Delete(ctx context.Context, model interface{}, id interface{}, tx ...*bun.Tx) (int64, error) {
+	if id == nil {
+		return 0, fmt.Errorf("Delete: id must not be nil")
+	}
 	handler := c.GetDelete(model, tx...)
 	if reflect.TypeOf(id).Kind() == reflect.Slice {
 		handler.Where("id in (?)", bun.In(id))
@@ -287,6 +295,9 @@ func (c *Client) Delete(ctx context.Context, model interface{}, id interface{}, 
 	return c.GetRowsAffected(handler.Exec(ctx))
 }
 
+// QueryAll queries all records with default ordering by "id desc".
+// NOTE: This assumes all models have an "id" column. For models without
+// this column, use GetSelect(result) or a custom query directly.
 func (c *Client) QueryAll(ctx context.Context, result interface{}) (int, error) {
 	return c.GetSelect(result).Order("id desc").ScanAndCount(GetContextWithTraceID(ctx), result)
 }
@@ -324,9 +335,17 @@ func (c *Client) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context
 }
 
 func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
+	duration := time.Since(event.StartTime)
+
+	if c.metrics != nil && !isMetricsQuery(event.Query) {
+		c.metrics.recordQuery(event.Err, duration)
+	}
+
 	if c.config.Debug {
 		if requestId, trace := golocalv1.GetTraceID(), ctx.Value(traceId); requestId == "" && trace != nil {
-			golocalv1.PutTraceID(trace.(string))
+			if tid, ok := trace.(string); ok {
+				golocalv1.PutTraceID(tid)
+			}
 		}
 		rows := ""
 		if event.Result != nil {
@@ -334,9 +353,9 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 			rows = fmt.Sprintf(". rows_affected=%d.", row)
 		}
 		if event.Err == nil {
-			logger.Debug("SqlTrace -> %v. cost=%v%s", event.Query, time.Since(event.StartTime), rows)
+			logger.Debug("SqlTrace -> %v. cost=%v%s", event.Query, duration, rows)
 		} else {
-			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, time.Since(event.StartTime), rows, event.Err)
+			logger.Error("SqlTrace -> %v. cost=%v%s. err=%v", event.Query, duration, rows, event.Err)
 		}
 	}
 }
@@ -344,4 +363,10 @@ func (c *Client) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 // GetContext getContext with traceId
 func GetContextWithTraceID(ctx context.Context) context.Context {
 	return context.WithValue(ctx, traceId, golocalv1.GetTraceID())
+}
+
+var passwordRe = regexp.MustCompile(`(?i)"(password|pass|secret|token)"\s*:\s*"[^"]*"`)
+
+func maskConfigPassword(jsonStr string) string {
+	return passwordRe.ReplaceAllString(jsonStr, `"$1":"******"`)
 }

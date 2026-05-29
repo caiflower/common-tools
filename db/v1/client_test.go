@@ -17,6 +17,7 @@
 package dbv1
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -26,6 +27,8 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type ContainerRegistry struct {
@@ -43,12 +46,11 @@ type ContainerRegistry struct {
 
 func TestNewDBClient(t *testing.T) {
 	config := Config{
-		Url:          "127.0.0.1:3306",
-		User:         "root",
-		Password:     "admin",
-		DbName:       "test",
-		Debug:        true,
-		EnableMetric: true,
+		Url:      "127.0.0.1:3306",
+		User:     "root",
+		Password: "admin",
+		DbName:   "test",
+		Debug:    true,
 	}
 
 	l := logger.Config{
@@ -87,7 +89,6 @@ func TestTransactionTimeout(t *testing.T) {
 		Password:           "admin",
 		DbName:             "test",
 		Debug:              true,
-		EnableMetric:       true,
 		TransactionTimeout: transactionTimeout,
 	}
 
@@ -133,3 +134,148 @@ func TestTransactionTimeout(t *testing.T) {
 		logger.Error("test failed. Error: %v", err)
 	}
 }
+
+func TestNewDBClient_UnsupportedDialect(t *testing.T) {
+	cfg := Config{
+		Dialect:            "oracle",
+		Url:                "127.0.0.1:3306",
+		DbName:             "test",
+		MaxOpen:            200,
+		MaxIdle:            20,
+		TransactionTimeout: 30 * time.Second,
+	}
+	_, err := NewDBClient(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "dialect must be one of")
+}
+
+func TestNewDBClient_InvalidConfig(t *testing.T) {
+	cfg := Config{}
+	_, err := NewDBClient(cfg)
+	assert.Error(t, err)
+}
+
+func TestClient_ParseErr(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	assert.Nil(t, client.ParseErr(sql.ErrNoRows))
+
+	otherErr := errors.New("some db error")
+	assert.Equal(t, otherErr, client.ParseErr(otherErr))
+}
+
+func TestClient_GetTx_NoTx(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	result := client.GetTx()
+	assert.Equal(t, client.DB, result)
+}
+
+func TestClient_GetTx_WithTx(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	tx, err := client.DB.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	result := client.GetTx(&tx)
+	assert.Equal(t, &tx, result)
+}
+
+func TestClient_GetRowsAffected(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	result := &mockSQLResult{rowsAffected: 5}
+	affected, err := client.GetRowsAffected(result, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(5), affected)
+
+	dbErr := errors.New("exec error")
+	_, err = client.GetRowsAffected(nil, dbErr)
+	assert.Equal(t, dbErr, err)
+}
+
+func TestClient_Order(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	assert.Equal(t, 1000, client.Order())
+}
+
+func TestNewDBClient_Sqlite(t *testing.T) {
+	cfg := Config{
+		Dialect:            "sqlite",
+		Url:                ":memory:",
+		MaxOpen:            1,
+		MaxIdle:            1,
+		TransactionTimeout: 30 * time.Second,
+	}
+	client, err := NewDBClient(cfg)
+	require.NoError(t, err)
+	defer client.Close()
+
+	assert.NotNil(t, client.DB)
+
+	_, err = client.DB.NewCreateTable().Model((*testItem)(nil)).Exec(context.Background())
+	require.NoError(t, err)
+
+	_, err = client.Insert(context.Background(), &testItem{Name: "hello"})
+	require.NoError(t, err)
+
+	var items []testItem
+	count, err := client.DB.NewSelect().Model(&items).ScanAndCount(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+	assert.Equal(t, "hello", items[0].Name)
+}
+
+type mockSQLResult struct {
+	rowsAffected int64
+}
+
+func (m *mockSQLResult) LastInsertId() (int64, error) { return 0, nil }
+func (m *mockSQLResult) RowsAffected() (int64, error) { return m.rowsAffected, nil }

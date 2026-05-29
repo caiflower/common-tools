@@ -22,26 +22,26 @@ import (
 	"github.com/uptrace/bun/schema"
 )
 
-// 使用例子 //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -dsn 'mysql:root:root@tcp(127.0.0.1:3306)/test_db' pkg "github.com/caiflower/common-tools/dao" -tables test_table -dao_out ./dao
+// 使用例子 //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -dsn 'mysql:root:root@tcp(127.0.0.1:3306)/test_db' -pkg "github.com/caiflower/common-tools/dao" -tables test_table -dao_out ./dao
+// 配置文件  //go:generate go run -mod=mod github.com/caiflower/common-tools/db/v1/cmd@release-v0.1.0 -config config.yaml -pkg "github.com/caiflower/common-tools/dao" -tables test_table -dao_out ./dao
 
 type options struct {
-	Dialect   string
-	Host      string
-	Port      string
-	User      string
-	Password  string
-	DBName    string
-	Schema    string
-	Charset   string
-	Tables    []string
-	StructOut string
-	DaoOut    string
-	Plural    bool
-	DSN       string
-	Timeout   int
-	Keyword   string
-	Pkg       string
-	// FilterDisableZeroValue bool
+	Dialect   string   `yaml:"dialect"`
+	Host      string   `yaml:"host"`
+	Port      string   `yaml:"port"`
+	User      string   `yaml:"user"`
+	Password  string   `yaml:"password" json:"-"`
+	DBName    string   `yaml:"dbName"`
+	Schema    string   `yaml:"schema"`
+	Charset   string   `yaml:"charset"`
+	Tables    []string `yaml:"tables"`
+	StructOut string   `yaml:"structOut"`
+	DaoOut    string   `yaml:"daoOut"`
+	Plural    bool     `yaml:"plural"`
+	DSN       string   `yaml:"dsn"`
+	Timeout   int      `yaml:"timeout"`
+	Keyword   string   `yaml:"keyword"`
+	Pkg       string   `yaml:"pkg"`
 }
 
 type columnMeta struct {
@@ -83,32 +83,103 @@ func main() {
 
 func parseOptions() options {
 	var opt options
-	flag.StringVar(&opt.Dialect, "dialect", "mysql", "数据库类型: mysql 或 postgres")
-	flag.StringVar(&opt.DSN, "dsn", "", "完整DSN，设置后优先使用（例如 mysql:user:pass@tcp(host:3306)/db?charset=utf8mb4&parseTime=true&loc=Local）")
-	flag.StringVar(&opt.Host, "host", "127.0.0.1", "数据库主机")
-	flag.StringVar(&opt.Port, "port", "", "数据库端口，mysql默认3306，postgres默认5432")
-	flag.StringVar(&opt.User, "user", "root", "数据库用户")
-	flag.StringVar(&opt.Password, "password", "", "数据库密码")
-	flag.StringVar(&opt.DBName, "db", "", "数据库名（必填）")
-	flag.StringVar(&opt.Schema, "schema", "", "数据库schema，postgres默认public，mysql可留空")
-	flag.StringVar(&opt.Charset, "charset", "utf8mb4", "字符集(mysql)")
-	flag.StringVar(&opt.DaoOut, "dao_out", "./dao", "Dao 输出目录路径")
-	flag.StringVar(&opt.Pkg, "pkg", "", "Dao 包路径 (例如: github.com/caiflower/common-tools/dao)")
-	flag.BoolVar(&opt.Plural, "plural", false, "保留复数表名，默认关闭（与bun一致）")
-	flag.IntVar(&opt.Timeout, "timeout", 10, "执行超时时间")
-	flag.StringVar(&opt.Keyword, "keyword", "id", "关键字，设置之后不遵循驼峰命名规则，用逗号分隔。 例如：id,uuid")
-	// flag.BoolVar(&opt.FilterDisableZeroValue, "fiter_disable_zero_value", false, "保留复数表名，默认关闭（与bun一致）")
-	tables := flag.String("tables", "", "待生成的表名，多个以逗号分隔（必填）")
+	var configFile string
+
+	flag.StringVar(&configFile, "config", "", "YAML配置文件路径，设置后从文件读取数据库连接等参数")
+
+	var dialect, host, port, user, password, dbName, schema, charset, daoOut, dsn, keyword, pkg string
+	var plural bool
+	var timeout int
+	var tables string
+	var structOut string
+
+	flag.StringVar(&structOut, "struct_out", "", "Struct 输出目录路径")
+
+	flag.StringVar(&dialect, "dialect", "mysql", "数据库类型: mysql 或 postgres")
+	flag.StringVar(&dsn, "dsn", "", "完整DSN，设置后优先使用（例如 mysql:user:pass@tcp(host:3306)/db?charset=utf8mb4&parseTime=true&loc=Local）")
+	flag.StringVar(&host, "host", "127.0.0.1", "数据库主机")
+	flag.StringVar(&port, "port", "", "数据库端口，mysql默认3306，postgres默认5432")
+	flag.StringVar(&user, "user", "root", "数据库用户")
+	flag.StringVar(&password, "password", "", "数据库密码")
+	flag.StringVar(&dbName, "db", "", "数据库名（必填）")
+	flag.StringVar(&schema, "schema", "", "数据库schema，postgres默认public，mysql可留空")
+	flag.StringVar(&charset, "charset", "utf8mb4", "字符集(mysql)")
+	flag.StringVar(&daoOut, "dao_out", "./dao", "Dao 输出目录路径")
+	flag.StringVar(&pkg, "pkg", "", "Dao 包路径 (例如: github.com/caiflower/common-tools/dao)")
+	flag.BoolVar(&plural, "plural", false, "保留复数表名，默认关闭（与bun一致）")
+	flag.IntVar(&timeout, "timeout", 10, "执行超时时间")
+	flag.StringVar(&keyword, "keyword", "id", "关键字，设置之后不遵循驼峰命名规则，用逗号分隔。 例如：id,uuid")
+	flag.StringVar(&tables, "tables", "", "待生成的表名，多个以逗号分隔（必填）")
 	flag.Parse()
 
-	if *tables == "" {
-		exitUsage("tables 不能为空，例如: -tables=user,order")
-	}
-	for _, t := range strings.Split(*tables, ",") {
-		name := strings.TrimSpace(t)
-		if name != "" {
-			opt.Tables = append(opt.Tables, name)
+	if configFile != "" {
+		if err := tools.UnmarshalFileYaml(configFile, &opt); err != nil {
+			exitUsage(fmt.Sprintf("读取配置文件失败: %v", err))
 		}
+	}
+
+	visited := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		visited[f.Name] = true
+	})
+
+	if visited["dialect"] {
+		opt.Dialect = dialect
+	}
+	if visited["host"] {
+		opt.Host = host
+	}
+	if visited["port"] {
+		opt.Port = port
+	}
+	if visited["user"] {
+		opt.User = user
+	}
+	if visited["password"] {
+		opt.Password = password
+	}
+	if visited["db"] {
+		opt.DBName = dbName
+	}
+	if visited["schema"] {
+		opt.Schema = schema
+	}
+	if visited["charset"] {
+		opt.Charset = charset
+	}
+	if visited["dao_out"] {
+		opt.DaoOut = daoOut
+	}
+	if visited["pkg"] {
+		opt.Pkg = pkg
+	}
+	if visited["plural"] {
+		opt.Plural = plural
+	}
+	if visited["dsn"] {
+		opt.DSN = dsn
+	}
+	if visited["timeout"] {
+		opt.Timeout = timeout
+	}
+	if visited["keyword"] {
+		opt.Keyword = keyword
+	}
+	if visited["struct_out"] {
+		opt.StructOut = structOut
+	}
+	if visited["tables"] {
+		opt.Tables = nil
+		for _, t := range strings.Split(tables, ",") {
+			name := strings.TrimSpace(t)
+			if name != "" {
+				opt.Tables = append(opt.Tables, name)
+			}
+		}
+	}
+
+	if len(opt.Tables) == 0 {
+		exitUsage("tables 不能为空，例如: -tables=user,order")
 	}
 	if opt.DBName == "" && opt.DSN != "" {
 		opt.DBName = inferDBNameFromDSN(opt.Dialect, opt.DSN)
@@ -478,7 +549,7 @@ func fillGoType(m *columnMeta, dialect string, keywords []string) {
 	}
 }
 
-func baseType(base string, nullable bool, needTime bool) string {
+func baseType(base string, _ bool, needTime bool) string {
 	//if nullable {
 	//	if strings.HasPrefix(base, "[]") {
 	//		return base
@@ -741,6 +812,9 @@ func renderStructBlocks(tables []tableMeta) string {
 
 func renderDaoBlocks(opts options, tables []tableMeta) string {
 	var b strings.Builder
+
+	b.WriteString(renderInterfaceFile(tables))
+
 	for _, t := range tables {
 		daoName := strings.ToLower(t.StructName[:1]) + t.StructName[1:] + "DAO"
 		daoName1 := t.StructName + "DAO"
@@ -751,10 +825,6 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 				hasStatus = true
 			}
 		}
-
-		// Generate interface file
-		interfaceContent := renderInterfaceFile(tables, t.HasPrimary)
-		b.WriteString(interfaceContent)
 
 		b.WriteString(fmt.Sprintf("const %s = \"%s\"\n\n", tableNameConst, t.TableName))
 		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
@@ -806,7 +876,7 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 	return b.String()
 }
 
-func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
+func renderInterfaceFile(tables []tableMeta) string {
 	var b strings.Builder
 	for _, t := range tables {
 		daoName := t.StructName + "DAO"
@@ -828,7 +898,7 @@ func renderInterfaceFile(tables []tableMeta, hasPrimary bool) string {
 		b.WriteString(fmt.Sprintf("\tInsert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
 		b.WriteString(fmt.Sprintf("\tBatchInsert(ctx context.Context, data []model.%s, tx ...*bun.Tx) (int64, error)\n", t.StructName))
 		b.WriteString(fmt.Sprintf("\tQueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error)\n", t.StructName, t.StructName))
-		if hasPrimary {
+		if t.HasPrimary {
 			b.WriteString(fmt.Sprintf("\tGetBy%s(ctx context.Context, id %s) (*model.%s, error)\n", pkName, pkType, t.StructName))
 			b.WriteString(fmt.Sprintf("\tDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error)\n", pkName, pkType))
 			if hasStatus {
