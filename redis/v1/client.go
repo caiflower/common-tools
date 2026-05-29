@@ -18,9 +18,11 @@ package redisv1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/caiflower/common-tools/global"
@@ -33,15 +35,18 @@ const (
 	ClusterMode = "cluster"
 )
 
+var (
+	ErrNil = errors.New("redis key does not exist")
+)
+
 type RedisClient interface {
 	GetRedis() redis.Cmdable
 	AddHook(hook redis.Hook)
 	Set(ctx context.Context, k string, v interface{}) error
 	SetPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
-	SetNX(ctx context.Context, k string, v interface{}) error
-	SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
-	SetEx(ctx context.Context, k string, v interface{}) error
-	SetEXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
+	SetNX(ctx context.Context, k string, v interface{}) (bool, error)
+	SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) (bool, error)
+	SetExPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
 	MSet(ctx context.Context, values ...interface{}) error
 	MSetNX(ctx context.Context, values ...interface{}) error
 	Get(ctx context.Context, k string, v interface{}) error
@@ -54,7 +59,7 @@ type RedisClient interface {
 	Del(ctx context.Context, k ...string) error
 	Expire(ctx context.Context, k string, period time.Duration) (bool, error)
 	Exist(ctx context.Context, k ...string) (bool, error)
-	GetKey(k string) string // get key with keyPrefix
+	GetKey(k string) string
 }
 
 type Config struct {
@@ -67,34 +72,42 @@ type Config struct {
 	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s" json:"writeTimeout"`
 	PoolSize              int           `yaml:"poolSize" json:"poolSize"`
 	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
-	MaxConnAge            time.Duration `yaml:"maxConnAge" json:"maxConnAge" default:"1800s" json:"maxConnAge"`
+	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"1800s" json:"maxConnAge"`
 	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"`
 	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
-	EnableMetrics         string        `yaml:"enableMetrics" default:"true"`
+	EnableMetrics         *bool         `yaml:"enableMetrics" default:"true" json:"enableMetrics"`
 }
 
 type redisClient struct {
-	config        *Config
-	client        *redis.Client
-	clusterClient *redis.ClusterClient
-	ctx           context.Context
-	cancel        context.CancelFunc
+	config    *Config
+	redis     redis.Cmdable
+	closeFn   func() error
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
 }
 
-func NewRedisClient(config Config) RedisClient {
+func NewRedisClient(config Config) (RedisClient, error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
-	logger.Info("**** Create Redis Client **** \n Redis config: %v", tools.ToJson(config))
+	if len(config.Addrs) == 0 {
+		return nil, fmt.Errorf("new redis client failed: addrs must not be empty")
+	}
+
+	safeConfig := config
+	safeConfig.Password = maskPassword(config.Password)
+	logger.Info("**** Create Redis Client **** \n Redis config: %v", tools.ToJson(safeConfig))
+
 	c := &redisClient{
 		config: &config,
 	}
 	password := config.Password
 	if config.EnablePasswordEncrypt {
-		_tmpPassword, err := tools.AesDecryptRawBase64(password)
+		decrypted, err := tools.AesDecryptRawBase64(password)
 		if err != nil {
-			panic(fmt.Sprintf("new redis client failed. err: %v", err))
+			return nil, fmt.Errorf("new redis client failed: %w", err)
 		}
-		password = _tmpPassword
+		password = decrypted
 	}
 	switch config.Mode {
 	case ClusterMode:
@@ -110,7 +123,9 @@ func NewRedisClient(config Config) RedisClient {
 		if config.MaxConnAge > 0 {
 			opts.MaxConnAge = config.MaxConnAge
 		}
-		c.clusterClient = redis.NewClusterClient(opts)
+		cc := redis.NewClusterClient(opts)
+		c.redis = cc
+		c.closeFn = cc.Close
 	default:
 		opts := &redis.Options{
 			Addr:         config.Addrs[0],
@@ -125,119 +140,149 @@ func NewRedisClient(config Config) RedisClient {
 		if config.MaxConnAge > 0 {
 			opts.MaxConnAge = config.MaxConnAge
 		}
-		c.client = redis.NewClient(opts)
+		sc := redis.NewClient(opts)
+		c.redis = sc
+		c.closeFn = sc.Close
 	}
 
 	timeout, cancelFunc := context.WithTimeout(context.Background(), config.ReadTimeout)
 	defer cancelFunc()
-	if ping := c.GetRedis().Ping(timeout); ping.Err() != nil {
-		panic("connect redis failed. Error: " + ping.Err().Error())
+	if ping := c.redis.Ping(timeout); ping.Err() != nil {
+		return nil, fmt.Errorf("connect redis failed: %w", ping.Err())
 	}
 
-	if strings.ToLower(config.EnableMetrics) == "true" {
+	if config.EnableMetrics != nil && *config.EnableMetrics {
 		c.AddHook(newMetricsHook(c.config))
 		c.ctx, c.cancel = context.WithCancel(context.Background())
 		startPoolMetrics(c.ctx, c)
 	}
 
 	global.DefaultResourceManger.AddWithOrder(c, 1000)
-	return c
+	return c, nil
 }
 
-func encodingObject(v interface{}) interface{} {
+func maskPassword(pwd string) string {
+	if pwd == "" {
+		return ""
+	}
+	runes := []rune(pwd)
+	if len(runes) <= 4 {
+		return "****"
+	}
+	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
+}
+
+func encodingObject(v interface{}) (interface{}, error) {
+	if v == nil {
+		return v, nil
+	}
 	switch reflect.TypeOf(v).Kind() {
-	case reflect.Struct, reflect.Ptr:
-		bytes, _ := tools.Marshal(v)
-		return string(bytes)
+	case reflect.Struct, reflect.Ptr, reflect.Map:
+		bytes, err := tools.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("encoding object failed: %w", err)
+		}
+		return string(bytes), nil
+	case reflect.Slice:
+		if b, ok := v.([]byte); ok {
+			return b, nil
+		}
+		bytes, err := tools.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("encoding object failed: %w", err)
+		}
+		return string(bytes), nil
 	default:
-		return v
+		return v, nil
 	}
 }
 
-// encodingValues
-func (c *redisClient) encodingValues(keyWithPrefix bool, values ...interface{}) interface{} {
-	switch values[0].(type) {
+func (c *redisClient) encodingValues(keyWithPrefix bool, values ...interface{}) (interface{}, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("encodingValues: values must not be empty")
+	}
+	switch v := values[0].(type) {
 	case map[string]interface{}:
-		m := values[0].(map[string]interface{})
 		m1 := make(map[string]interface{})
-		for k, v := range m {
+		for k, val := range v {
+			encoded, err := encodingObject(val)
+			if err != nil {
+				return nil, err
+			}
 			if keyWithPrefix {
-				m1[c.GetKey(k)] = encodingObject(v)
+				m1[c.GetKey(k)] = encoded
 			} else {
-				m1[k] = encodingObject(v)
+				m1[k] = encoded
 			}
 		}
-		return m1
+		return m1, nil
 	case map[string]string:
-		m := values[0].(map[string]string)
 		m1 := make(map[string]interface{})
-		for k, v := range m {
+		for k, val := range v {
 			if keyWithPrefix {
-				m1[c.GetKey(k)] = encodingObject(v)
+				m1[c.GetKey(k)] = val
 			} else {
-				m1[k] = encodingObject(v)
+				m1[k] = val
 			}
 		}
-		return m1
+		return m1, nil
 	case string:
-		for i, v := range values {
+		if len(values)%2 != 0 {
+			return nil, fmt.Errorf("encodingValues: key-value pairs must be even, got %d values", len(values))
+		}
+		copied := make([]interface{}, len(values))
+		copy(copied, values)
+		for i, elem := range copied {
 			if i&1 == 1 {
-				values[i] = encodingObject(v)
+				encoded, err := encodingObject(elem)
+				if err != nil {
+					return nil, err
+				}
+				copied[i] = encoded
 			} else {
 				if keyWithPrefix {
-					values[i] = c.GetKey(values[i].(string))
+					s, ok := elem.(string)
+					if !ok {
+						return nil, fmt.Errorf("encodingValues: key at index %d must be string, got %T", i, elem)
+					}
+					copied[i] = c.GetKey(s)
 				}
 			}
 		}
-		return values
+		return copied, nil
 	default:
-		fmt.Println(reflect.TypeOf(values[0]).Kind())
-		return values
+		return nil, fmt.Errorf("encodingValues: unsupported values type %T", values[0])
 	}
-
 }
 
 func (c *redisClient) Close() {
-	if c.cancel != nil {
-		c.cancel()
-	}
-
-	var err error
-	switch c.config.Mode {
-	case ClusterMode:
-		err = c.clusterClient.Close()
-	default:
-		err = c.client.Close()
-	}
-
-	if err != nil {
-		logger.Error("close redis client failed. err: %s", err.Error())
-	}
-	logger.Info("redis client closed successfully")
+	c.closeOnce.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if err := c.closeFn(); err != nil {
+			logger.Error("close redis client failed. err: %s", err.Error())
+		}
+		logger.Info("redis client closed successfully")
+	})
 }
 
-// Order returns the close order for graceful shutdown.
-// Redis clients should close after Kafka consumers (lower order) to ensure
-// consumers can finish processing messages that may need Redis access.
 func (c *redisClient) Order() int {
 	return 1000
 }
 
 func (c *redisClient) GetRedis() redis.Cmdable {
-	switch c.config.Mode {
-	case ClusterMode:
-		return c.clusterClient
-	default:
-		return c.client
-	}
+	return c.redis
 }
 
 func (c *redisClient) AddHook(hook redis.Hook) {
-	switch c.config.Mode {
-	case ClusterMode:
-		c.clusterClient.AddHook(hook)
+	switch r := c.redis.(type) {
+	case *redis.ClusterClient:
+		r.AddHook(hook)
+	case *redis.Client:
+		r.AddHook(hook)
 	default:
-		c.client.AddHook(hook)
+		logger.Warn("AddHook: unsupported redis.Cmdable type %T, hook not added", r)
 	}
 }
 
@@ -246,101 +291,143 @@ func (c *redisClient) Set(ctx context.Context, k string, v interface{}) error {
 }
 
 func (c *redisClient) SetPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().Set(ctx, c.GetKey(k), encodingObject(v), period).Err()
+	encoded, err := encodingObject(v)
+	if err != nil {
+		return err
+	}
+	return c.redis.Set(ctx, c.GetKey(k), encoded, period).Err()
 }
 
-func (c *redisClient) SetNX(ctx context.Context, k string, v interface{}) error {
+func (c *redisClient) SetNX(ctx context.Context, k string, v interface{}) (bool, error) {
 	return c.SetNXPeriod(ctx, k, v, 0)
 }
 
-func (c *redisClient) SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetNX(ctx, c.GetKey(k), encodingObject(v), period).Err()
+func (c *redisClient) SetNXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) (bool, error) {
+	encoded, err := encodingObject(v)
+	if err != nil {
+		return false, err
+	}
+	return c.redis.SetNX(ctx, c.GetKey(k), encoded, period).Result()
 }
 
-func (c *redisClient) SetEx(ctx context.Context, k string, v interface{}) error {
-	return c.SetEXPeriod(ctx, k, v, 0)
-}
-
-func (c *redisClient) SetEXPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
-	return c.GetRedis().SetEX(ctx, c.GetKey(k), encodingObject(v), period).Err()
+func (c *redisClient) SetExPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error {
+	if period <= 0 {
+		return fmt.Errorf("SetExPeriod: period must be positive, got %v", period)
+	}
+	encoded, err := encodingObject(v)
+	if err != nil {
+		return err
+	}
+	return c.redis.SetEX(ctx, c.GetKey(k), encoded, period).Err()
 }
 
 func (c *redisClient) Get(ctx context.Context, k string, v interface{}) error {
-	if bytes, err := c.GetRedis().Get(ctx, c.GetKey(k)).Bytes(); err != nil {
-		return err
-	} else {
-		return tools.Unmarshal(bytes, v)
+	bytes, err := c.redis.Get(ctx, c.GetKey(k)).Bytes()
+	if err != nil {
+		return wrapNilError(err)
 	}
+	return tools.Unmarshal(bytes, v)
 }
 
 func (c *redisClient) GetString(ctx context.Context, k string) (string, error) {
-	return c.GetRedis().Get(ctx, c.GetKey(k)).Result()
+	result, err := c.redis.Get(ctx, c.GetKey(k)).Result()
+	if err != nil {
+		return "", wrapNilError(err)
+	}
+	return result, nil
 }
 
 func (c *redisClient) Del(ctx context.Context, k ...string) error {
+	if len(k) == 0 {
+		return nil
+	}
 	var keys []string
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	return c.GetRedis().Del(ctx, keys...).Err()
+	return c.redis.Del(ctx, keys...).Err()
 }
 
 func (c *redisClient) Exist(ctx context.Context, k ...string) (bool, error) {
+	if len(k) == 0 {
+		return false, nil
+	}
 	var keys []string
 	for _, t := range k {
 		keys = append(keys, c.GetKey(t))
 	}
-	if v, err := c.GetRedis().Exists(ctx, keys...).Result(); err != nil {
+	v, err := c.redis.Exists(ctx, keys...).Result()
+	if err != nil {
 		return false, err
-	} else {
-		return v == 1, nil
 	}
+	return v > 0, nil
 }
 
 func (c *redisClient) Expire(ctx context.Context, k string, period time.Duration) (bool, error) {
-	return c.GetRedis().Expire(ctx, c.GetKey(k), period).Result()
+	return c.redis.Expire(ctx, c.GetKey(k), period).Result()
 }
 
 func (c *redisClient) MSet(ctx context.Context, values ...interface{}) error {
-	return c.GetRedis().MSet(ctx, c.encodingValues(true, values...)).Err()
+	encoded, err := c.encodingValues(true, values...)
+	if err != nil {
+		return err
+	}
+	return c.redis.MSet(ctx, encoded).Err()
 }
 
 func (c *redisClient) MSetNX(ctx context.Context, values ...interface{}) error {
-	return c.GetRedis().MSetNX(ctx, c.encodingValues(true, values...)).Err()
+	encoded, err := c.encodingValues(true, values...)
+	if err != nil {
+		return err
+	}
+	return c.redis.MSetNX(ctx, encoded).Err()
 }
 
 func (c *redisClient) HSet(ctx context.Context, key string, values ...interface{}) error {
-	return c.GetRedis().HSet(ctx, c.GetKey(key), c.encodingValues(false, values...)).Err()
+	encoded, err := c.encodingValues(false, values...)
+	if err != nil {
+		return err
+	}
+	return c.redis.HSet(ctx, c.GetKey(key), encoded).Err()
 }
 
 func (c *redisClient) HGet(ctx context.Context, key string, field string, v interface{}) error {
-	if bytes, err := c.GetRedis().HGet(ctx, c.GetKey(key), field).Bytes(); err != nil {
-		return err
-	} else {
-		return tools.Unmarshal(bytes, v)
+	bytes, err := c.redis.HGet(ctx, c.GetKey(key), field).Bytes()
+	if err != nil {
+		return wrapNilError(err)
 	}
+	return tools.Unmarshal(bytes, v)
 }
 
 func (c *redisClient) HGetString(ctx context.Context, key string, field string) (string, error) {
-	return c.GetRedis().HGet(ctx, c.GetKey(key), field).Result()
+	result, err := c.redis.HGet(ctx, c.GetKey(key), field).Result()
+	if err != nil {
+		return "", wrapNilError(err)
+	}
+	return result, nil
 }
 
+// HGetAll returns all fields and values of the hash stored at key.
+// If the key does not exist, an empty map is returned (not an error).
+// This differs from Get/HGet which return ErrNil for missing keys.
 func (c *redisClient) HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	return c.GetRedis().HGetAll(ctx, c.GetKey(key)).Result()
+	return c.redis.HGetAll(ctx, c.GetKey(key)).Result()
 }
 
 func (c *redisClient) HDel(ctx context.Context, key string, field string) error {
-	return c.GetRedis().HDel(ctx, c.GetKey(key), field).Err()
+	return c.redis.HDel(ctx, c.GetKey(key), field).Err()
 }
 
 func (c *redisClient) GetKey(origin string) string {
 	if c.config.KeyPrefix != "" {
-		return c.config.KeyPrefix + origin
+		return c.config.KeyPrefix + ":" + origin
 	}
 	return origin
 }
 
-// GetContext getContext with traceId
-//func ctx context.Context {
-//	return context.WithValue(golocalv1.ctx, "traceId", golocalv1.GetTraceID())
-//}
+func wrapNilError(err error) error {
+	if errors.Is(err, redis.Nil) {
+		return ErrNil
+	}
+	return err
+}

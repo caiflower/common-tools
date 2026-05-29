@@ -33,12 +33,19 @@ redis.call('SET', key, value)
 return {1, value}
 `
 
+func mustRegister(t *testing.T, sm *ScriptManager, op, script string) {
+	t.Helper()
+	if err := sm.Register(op, script); err != nil {
+		t.Fatalf("Register(%q) failed: %v", op, err)
+	}
+}
+
 func TestScriptManager_RegisterAndLoad(t *testing.T) {
 	_, client := setupMiniredis(t)
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
@@ -50,22 +57,15 @@ func TestScriptManager_RegisterDuplicate(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic on duplicate registration, but no panic occurred")
-		}
-		msg, ok := r.(string)
-		if !ok {
-			t.Fatalf("expected string panic, got %T: %v", r, r)
-		}
-		if msg != `script already registered for op "test_op"` {
-			t.Fatalf("unexpected panic message: %s", msg)
-		}
-	}()
-	sm.Register("test_op", "another script")
+	err := sm.Register("test_op", "another script")
+	if err == nil {
+		t.Fatal("expected error on duplicate registration, got nil")
+	}
+	if err.Error() != `script already registered for op "test_op"` {
+		t.Fatalf("unexpected error message: %s", err.Error())
+	}
 }
 
 func TestScriptManager_UnregisteredOp(t *testing.T) {
@@ -73,7 +73,7 @@ func TestScriptManager_UnregisteredOp(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestScriptManager_EvalShaInt(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestScriptManager_EvalSha(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScriptMultiReturn)
+	mustRegister(t, sm, "test_op", testScriptMultiReturn)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestScriptManager_NOSCRIPTFallback(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestScriptManager_ConcurrentEvalSha(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestScriptManager_ConcurrentNOSCRIPTRecovery(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", testScript)
+	mustRegister(t, sm, "test_op", testScript)
 	if err := sm.LoadScripts(context.Background()); err != nil {
 		t.Fatalf("LoadScripts failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestScriptManager_LoadScriptsFailure(t *testing.T) {
 	defer client.Close()
 
 	sm := NewScriptManager(client)
-	sm.Register("test_op", "invalid lua script !!!")
+	mustRegister(t, sm, "test_op", "invalid lua script !!!")
 
 	err := sm.LoadScripts(context.Background())
 	if err == nil {

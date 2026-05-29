@@ -29,6 +29,7 @@ import (
 )
 
 func common() (cluster1, cluster2, cluster3 *Cluster) {
+	var err error
 	c1 := Config{}
 	c2 := Config{}
 	c3 := Config{}
@@ -131,7 +132,7 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 		})
 
 	c1.Nodes[0].Local = true
-	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster1, err = NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
 		Level: "FATAL",
 	}))
 	if err != nil {
@@ -173,11 +174,14 @@ func TestSingleCluster(t *testing.T) {
 }
 
 func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
-	redisClient := redisv1.NewRedisClient(redisv1.Config{
+	redisClient, err := redisv1.NewRedisClient(redisv1.Config{
 		Addrs:    []string{"redis-master.app.svc.cluster.local:6379"},
 		Password: "",
 		DB:       0,
 	})
+	if err != nil {
+		panic(err)
+	}
 
 	redisDiscovery := RedisDiscovery{
 		DataPath:           "/test/redis",
@@ -284,7 +288,7 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 		})
 
 	c1.Nodes[0].Local = true
-	cluster1, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster1, err = NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
 		Level: "TRACE",
 	}))
 	if err != nil {

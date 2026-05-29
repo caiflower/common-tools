@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
+	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -15,9 +17,10 @@ type ScriptEntry struct {
 }
 
 type ScriptManager struct {
-	client  redis.Cmdable
-	mu      sync.RWMutex
-	scripts map[string]*ScriptEntry
+	client    redis.Cmdable
+	mu        sync.RWMutex
+	scripts   map[string]*ScriptEntry
+	reloading atomic.Bool
 }
 
 func NewScriptManager(client redis.Cmdable) *ScriptManager {
@@ -27,16 +30,15 @@ func NewScriptManager(client redis.Cmdable) *ScriptManager {
 	}
 }
 
-// Register adds a script entry for the given operation.
-// It must be called before LoadScripts. Duplicate op registration will panic.
-func (sm *ScriptManager) Register(op string, script string) {
+func (sm *ScriptManager) Register(op string, script string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
 	if _, exists := sm.scripts[op]; exists {
-		panic(fmt.Sprintf("script already registered for op %q", op))
+		return fmt.Errorf("script already registered for op %q", op)
 	}
 	sm.scripts[op] = &ScriptEntry{Script: script}
+	return nil
 }
 
 func (sm *ScriptManager) LoadScripts(ctx context.Context) error {
@@ -63,6 +65,22 @@ func (sm *ScriptManager) getSHA(op string) (string, string, error) {
 	return entry.SHA, entry.Script, nil
 }
 
+// triggerReload asynchronously reloads all script SHAs into Redis.
+// The current request always falls back to EVAL immediately; this reload
+// is solely for preparing subsequent requests so they can use EVALSHA.
+// A detached context (context.Background()) is used so the reload is not
+// cancelled when the triggering request's context expires.
+func (sm *ScriptManager) triggerReload() {
+	if sm.reloading.CompareAndSwap(false, true) {
+		go func() {
+			defer sm.reloading.Store(false)
+			if err := sm.LoadScripts(context.Background()); err != nil {
+				logger.Warn("ScriptManager: async reload failed: %v", err)
+			}
+		}()
+	}
+}
+
 func (sm *ScriptManager) evalShaCmd(ctx context.Context, op string, keys []string, args ...interface{}) *redis.Cmd {
 	sha, script, err := sm.getSHA(op)
 	if err != nil {
@@ -71,31 +89,22 @@ func (sm *ScriptManager) evalShaCmd(ctx context.Context, op string, keys []strin
 		return cmd
 	}
 
-	cmd := sm.client.EvalSha(ctx, sha, keys, args...)
-	if err := cmd.Err(); err != nil && isNOSCRIPTERR(err) {
-		if reloadErr := sm.LoadScripts(ctx); reloadErr != nil {
-			cmd.SetErr(fmt.Errorf("EVALSHA failed and script reload also failed: %w (reload: %v)", err, reloadErr))
+	if sha != "" {
+		cmd := sm.client.EvalSha(ctx, sha, keys, args...)
+		if err := cmd.Err(); err == nil || !isNOSCRIPTERR(err) {
 			return cmd
-		}
-
-		newSHA, _, shaErr := sm.getSHA(op)
-		if shaErr != nil {
-			cmd = sm.client.Eval(ctx, script, keys, args...)
-			if err := cmd.Err(); err != nil {
-				cmd.SetErr(fmt.Errorf("EVAL fallback failed: %w", err))
-			}
-			return cmd
-		}
-
-		cmd = sm.client.EvalSha(ctx, newSHA, keys, args...)
-		if err := cmd.Err(); err != nil && isNOSCRIPTERR(err) {
-			cmd = sm.client.Eval(ctx, script, keys, args...)
-			if err := cmd.Err(); err != nil {
-				cmd.SetErr(fmt.Errorf("EVAL fallback failed: %w", err))
-			}
 		}
 	}
 
+	// NOSCRIPT error or SHA not loaded yet:
+	// 1. Trigger async reload so subsequent requests can use EVALSHA.
+	// 2. Fall back to EVAL for the current request (reload is async, SHA not ready yet).
+	sm.triggerReload()
+
+	cmd := sm.client.Eval(ctx, script, keys, args...)
+	if err := cmd.Err(); err != nil {
+		cmd.SetErr(fmt.Errorf("EVAL fallback failed: %w", err))
+	}
 	return cmd
 }
 

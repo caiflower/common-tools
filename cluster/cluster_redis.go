@@ -102,8 +102,8 @@ func (c *Cluster) doRegisterNode(key string) error {
 		return fmt.Errorf("marshal node info failed: %w", err)
 	}
 
-	// 使用 SetEXPeriod 实现注册和续约（带过期时间）
-	if err = c.Redis.SetEXPeriod(c.ctx, key, string(data), c.config.RedisDiscovery.NodeRegisterTTL); err != nil {
+	// 使用 SetExPeriod 实现注册和续约（带过期时间）
+	if err = c.Redis.SetExPeriod(c.ctx, key, string(data), c.config.RedisDiscovery.NodeRegisterTTL); err != nil {
 		return fmt.Errorf("set node info failed: %w", err)
 	}
 
@@ -243,7 +243,7 @@ func (c *Cluster) redisFighting() {
 func (c *Cluster) redisFightingWithRetry(key string, retryCount int) error {
 	const maxRetries = 3
 
-	err := c.Redis.SetNXPeriod(c.ctx, key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod)
+	ok, err := c.Redis.SetNXPeriod(c.ctx, key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod)
 	if err != nil {
 		if retryCount < maxRetries {
 			backoff := time.Duration(retryCount+1) * time.Second
@@ -252,6 +252,9 @@ func (c *Cluster) redisFightingWithRetry(key string, retryCount int) error {
 			return c.redisFightingWithRetry(key, retryCount+1)
 		}
 		return fmt.Errorf("fighting failed after %d retries: %w", maxRetries, err)
+	}
+	if !ok {
+		return fmt.Errorf("fighting failed: key already held by another node")
 	}
 	return nil
 }

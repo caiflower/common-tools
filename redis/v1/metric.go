@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/global/env"
+	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -81,13 +82,21 @@ func init() {
 		[]string{"addr"},
 	)
 
-	_ = prometheus.Register(globalCmdTotal)
-	_ = prometheus.Register(globalCmdDuration)
-	_ = prometheus.Register(globalPipTotal)
-	_ = prometheus.Register(globalPipDuration)
-	_ = prometheus.Register(globalPoolIdleConns)
-	_ = prometheus.Register(globalPoolTotalConn)
-	_ = prometheus.Register(globalPoolStale)
+	for _, c := range []prometheus.Collector{
+		globalCmdTotal,
+		globalCmdDuration,
+		globalPipTotal,
+		globalPipDuration,
+		globalPoolIdleConns,
+		globalPoolTotalConn,
+		globalPoolStale,
+	} {
+		if err := prometheus.Register(c); err != nil {
+			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+				logger.Error("failed to register prometheus collector: %v", err)
+			}
+		}
+	}
 }
 
 // MetricsHook implements redis.Hook to collect Prometheus metrics per command.
@@ -185,29 +194,39 @@ func startPoolMetrics(ctx context.Context, c *redisClient) {
 }
 
 func collectPoolStats(c *redisClient, prevStale *uint32) {
-	switch c.config.Mode {
-	case ClusterMode:
+	switch r := c.redis.(type) {
+	case *redis.ClusterClient:
 		var totalIdle, totalConns, totalStale uint32
-		_ = c.clusterClient.ForEachShard(context.Background(), func(ctx context.Context, shard *redis.Client) error {
+		if err := r.ForEachShard(context.Background(), func(ctx context.Context, shard *redis.Client) error {
 			s := shard.PoolStats()
 			totalIdle += s.IdleConns
 			totalConns += s.TotalConns
 			totalStale += s.StaleConns
 			return nil
-		})
+		}); err != nil {
+			logger.Warn("collectPoolStats: ForEachShard failed: %v", err)
+		}
 		globalPoolIdleConns.WithLabelValues("cluster").Set(float64(totalIdle))
 		globalPoolTotalConn.WithLabelValues("cluster").Set(float64(totalConns))
-		if totalStale > *prevStale {
+		if totalStale >= *prevStale {
 			globalPoolStale.WithLabelValues("cluster").Add(float64(totalStale - *prevStale))
+		} else {
+			// Counter reset (e.g. Redis restart): treat current stale count as
+			// an approximate delta since we cannot determine the true increment.
+			globalPoolStale.WithLabelValues("cluster").Add(float64(totalStale))
 		}
 		*prevStale = totalStale
-	default:
+	case *redis.Client:
 		addr := c.config.Addrs[0]
-		s := c.client.PoolStats()
+		s := r.PoolStats()
 		globalPoolIdleConns.WithLabelValues(addr).Set(float64(s.IdleConns))
 		globalPoolTotalConn.WithLabelValues(addr).Set(float64(s.TotalConns))
-		if s.StaleConns > *prevStale {
+		if s.StaleConns >= *prevStale {
 			globalPoolStale.WithLabelValues(addr).Add(float64(s.StaleConns - *prevStale))
+		} else {
+			// Counter reset (e.g. Redis restart): treat current stale count as
+			// an approximate delta since we cannot determine the true increment.
+			globalPoolStale.WithLabelValues(addr).Add(float64(s.StaleConns))
 		}
 		*prevStale = s.StaleConns
 	}
