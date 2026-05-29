@@ -18,8 +18,10 @@ package xkafka
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/caiflower/common-tools/global/env"
+	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -31,47 +33,70 @@ const (
 	SyncErr      = "sync"
 )
 
-var consumerCount *prometheus.CounterVec           //消费次数
-var producerCount *prometheus.CounterVec           //生产次数
-var consumerErrCount *prometheus.CounterVec        //失败次数
-var producerErrCount *prometheus.CounterVec        //失败次数
-var consumerQueueSize *prometheus.GaugeVec         //队列大小
-var consumerConsumedHistogram prometheus.Histogram //消费者消费直方图
+var (
+	consumerCount             *prometheus.CounterVec
+	producerCount             *prometheus.CounterVec
+	consumerErrCount          *prometheus.CounterVec
+	producerErrCount          *prometheus.CounterVec
+	consumerQueueSize         *prometheus.GaugeVec
+	consumerConsumedHistogram prometheus.Histogram
+	metricsOnce               sync.Once
+)
 
-func init() {
-	constLabels := prometheus.Labels{"ip": env.GetLocalHostIP(), "version": "v2"}
-	consumerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_consumer_count", Help: "Number of messages consumed by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
-	producerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_count", Help: "Number of messages produced by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
-	consumerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_consumer_err_count", Help: "Number of errors encountered by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
-	producerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_err_count", Help: "Number of errors encountered by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
-	consumerQueueSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "kafka_consumer_queue_size", Help: "Size of kafka consumer cache queue", ConstLabels: constLabels}, []string{"name", "url", "key"})
-	consumerConsumedHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "kafka_consumer_consume_duration_ms", Help: "Histogram of kafka consumer message consumption durations in milliseconds.", Buckets: []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}, ConstLabels: constLabels})
-	_ = prometheus.Register(consumerErrCount)
-	_ = prometheus.Register(producerErrCount)
-	_ = prometheus.Register(consumerQueueSize)
-	_ = prometheus.Register(consumerConsumedHistogram)
+func registerMetric(collector prometheus.Collector) {
+	if err := prometheus.Register(collector); err != nil {
+		if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			logger.Warn("prometheus metric already registered: %v", err)
+		} else {
+			logger.Error("failed to register prometheus metric: %v", err)
+		}
+	}
+}
+
+func ensureMetricsRegistered() {
+	metricsOnce.Do(func() {
+		constLabels := prometheus.Labels{"ip": env.GetLocalHostIP(), "version": "v2"}
+		consumerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_consumer_count", Help: "Number of messages consumed by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
+		producerCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_count", Help: "Number of messages produced by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic"})
+		consumerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_consumer_err_count", Help: "Number of errors encountered by kafka consumer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
+		producerErrCount = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "kafka_producer_err_count", Help: "Number of errors encountered by kafka producer", ConstLabels: constLabels}, []string{"name", "url", "topic", "type"})
+		consumerQueueSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "kafka_consumer_queue_size", Help: "Size of kafka consumer cache queue", ConstLabels: constLabels}, []string{"name", "url", "key"})
+		consumerConsumedHistogram = prometheus.NewHistogram(prometheus.HistogramOpts{Name: "kafka_consumer_consume_duration_ms", Help: "Histogram of kafka consumer message consumption durations in milliseconds.", Buckets: []float64{20, 50, 100, 200, 500, 1000, 2000, 5000, 10000}, ConstLabels: constLabels})
+		registerMetric(consumerCount)
+		registerMetric(producerCount)
+		registerMetric(consumerErrCount)
+		registerMetric(producerErrCount)
+		registerMetric(consumerQueueSize)
+		registerMetric(consumerConsumedHistogram)
+	})
 }
 
 func AddConsumerError(cfg *Config, typ string) {
+	ensureMetricsRegistered()
 	consumerErrCount.WithLabelValues(cfg.Name, strings.Join(cfg.BootstrapServers, ","), strings.Join(cfg.Topics, ","), typ).Inc()
 }
 
 func AddProducerErrCount(cfg *Config, topic string, typ string) {
+	ensureMetricsRegistered()
 	producerErrCount.WithLabelValues(cfg.Name, strings.Join(cfg.BootstrapServers, ","), topic, typ).Inc()
 }
 
 func CountConsumer(cfg *Config) {
+	ensureMetricsRegistered()
 	consumerCount.WithLabelValues(cfg.Name, strings.Join(cfg.BootstrapServers, ","), strings.Join(cfg.Topics, ",")).Inc()
 }
 
 func CountProducer(cfg *Config, topic string) {
+	ensureMetricsRegistered()
 	producerCount.WithLabelValues(cfg.Name, strings.Join(cfg.BootstrapServers, ","), topic).Inc()
 }
 
 func SetQueueSize(cfg *Config, key string, value float64) {
+	ensureMetricsRegistered()
 	consumerQueueSize.WithLabelValues(cfg.Name, strings.Join(cfg.BootstrapServers, ","), key).Set(value)
 }
 
 func RecordConsumedDuration(duration int64) {
+	ensureMetricsRegistered()
 	consumerConsumedHistogram.Observe(float64(duration))
 }
