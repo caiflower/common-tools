@@ -40,8 +40,12 @@ var (
 )
 
 type RedisClient interface {
+	// Client management
 	GetRedis() redis.Cmdable
 	AddHook(hook redis.Hook)
+	GetKey(k string) string
+
+	// String
 	Set(ctx context.Context, k string, v interface{}) error
 	SetPeriod(ctx context.Context, k string, v interface{}, period time.Duration) error
 	SetNX(ctx context.Context, k string, v interface{}) (bool, error)
@@ -51,15 +55,52 @@ type RedisClient interface {
 	MSetNX(ctx context.Context, values ...interface{}) error
 	Get(ctx context.Context, k string, v interface{}) error
 	GetString(ctx context.Context, k string) (string, error)
+
+	// Hash
 	HSet(ctx context.Context, key string, value ...interface{}) error
 	HGet(ctx context.Context, key string, field string, v interface{}) error
 	HGetString(ctx context.Context, key string, field string) (string, error)
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
 	HDel(ctx context.Context, key string, field string) error
+
+	// Key management
 	Del(ctx context.Context, k ...string) error
-	Expire(ctx context.Context, k string, period time.Duration) (bool, error)
 	Exist(ctx context.Context, k ...string) (bool, error)
-	GetKey(k string) string
+	Expire(ctx context.Context, k string, period time.Duration) (bool, error)
+	TTL(ctx context.Context, k string) (time.Duration, error)
+
+	// Counter
+	Incr(ctx context.Context, k string) (int64, error)
+	IncrBy(ctx context.Context, k string, n int64) (int64, error)
+	Decr(ctx context.Context, k string) (int64, error)
+	DecrBy(ctx context.Context, k string, n int64) (int64, error)
+
+	// List
+	LPush(ctx context.Context, k string, values ...interface{}) error
+	RPush(ctx context.Context, k string, values ...interface{}) error
+	LRange(ctx context.Context, k string, start, stop int64) ([]string, error)
+	LLen(ctx context.Context, k string) (int64, error)
+	LPop(ctx context.Context, k string) (string, error)
+	RPop(ctx context.Context, k string) (string, error)
+
+	// Set
+	SAdd(ctx context.Context, k string, members ...interface{}) error
+	SMembers(ctx context.Context, k string) ([]string, error)
+	SRem(ctx context.Context, k string, members ...interface{}) error
+	SIsMember(ctx context.Context, k string, member interface{}) (bool, error)
+	SCard(ctx context.Context, k string) (int64, error)
+
+	// Sorted Set
+	ZAdd(ctx context.Context, k string, members ...*redis.Z) error
+	ZRange(ctx context.Context, k string, start, stop int64) ([]string, error)
+	ZRangeWithScores(ctx context.Context, k string, start, stop int64) ([]redis.Z, error)
+	ZRevRange(ctx context.Context, k string, start, stop int64) ([]string, error)
+	ZRevRangeWithScores(ctx context.Context, k string, start, stop int64) ([]redis.Z, error)
+	ZRem(ctx context.Context, k string, members ...interface{}) error
+	ZCard(ctx context.Context, k string) (int64, error)
+	ZScore(ctx context.Context, k string, member string) (float64, error)
+	ZRank(ctx context.Context, k string, member string) (int64, error)
+	ZRevRank(ctx context.Context, k string, member string) (int64, error)
 }
 
 type Config struct {
@@ -183,7 +224,7 @@ func encodingObject(v interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("encoding object failed: %w", err)
 		}
 		return string(bytes), nil
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		if b, ok := v.([]byte); ok {
 			return b, nil
 		}
@@ -195,6 +236,18 @@ func encodingObject(v interface{}) (interface{}, error) {
 	default:
 		return v, nil
 	}
+}
+
+func encodingObjects(values []interface{}) ([]interface{}, error) {
+	result := make([]interface{}, len(values))
+	for i, v := range values {
+		encoded, err := encodingObject(v)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = encoded
+	}
+	return result, nil
 }
 
 func (c *redisClient) encodingValues(keyWithPrefix bool, values ...interface{}) (interface{}, error) {
@@ -286,6 +339,15 @@ func (c *redisClient) AddHook(hook redis.Hook) {
 	}
 }
 
+func (c *redisClient) GetKey(origin string) string {
+	if c.config.KeyPrefix != "" {
+		return c.config.KeyPrefix + ":" + origin
+	}
+	return origin
+}
+
+// --- String ---
+
 func (c *redisClient) Set(ctx context.Context, k string, v interface{}) error {
 	return c.SetPeriod(ctx, k, v, 0)
 }
@@ -321,6 +383,22 @@ func (c *redisClient) SetExPeriod(ctx context.Context, k string, v interface{}, 
 	return c.redis.SetEX(ctx, c.GetKey(k), encoded, period).Err()
 }
 
+func (c *redisClient) MSet(ctx context.Context, values ...interface{}) error {
+	encoded, err := c.encodingValues(true, values...)
+	if err != nil {
+		return err
+	}
+	return c.redis.MSet(ctx, encoded).Err()
+}
+
+func (c *redisClient) MSetNX(ctx context.Context, values ...interface{}) error {
+	encoded, err := c.encodingValues(true, values...)
+	if err != nil {
+		return err
+	}
+	return c.redis.MSetNX(ctx, encoded).Err()
+}
+
 func (c *redisClient) Get(ctx context.Context, k string, v interface{}) error {
 	bytes, err := c.redis.Get(ctx, c.GetKey(k)).Bytes()
 	if err != nil {
@@ -337,51 +415,7 @@ func (c *redisClient) GetString(ctx context.Context, k string) (string, error) {
 	return result, nil
 }
 
-func (c *redisClient) Del(ctx context.Context, k ...string) error {
-	if len(k) == 0 {
-		return nil
-	}
-	var keys []string
-	for _, t := range k {
-		keys = append(keys, c.GetKey(t))
-	}
-	return c.redis.Del(ctx, keys...).Err()
-}
-
-func (c *redisClient) Exist(ctx context.Context, k ...string) (bool, error) {
-	if len(k) == 0 {
-		return false, nil
-	}
-	var keys []string
-	for _, t := range k {
-		keys = append(keys, c.GetKey(t))
-	}
-	v, err := c.redis.Exists(ctx, keys...).Result()
-	if err != nil {
-		return false, err
-	}
-	return v > 0, nil
-}
-
-func (c *redisClient) Expire(ctx context.Context, k string, period time.Duration) (bool, error) {
-	return c.redis.Expire(ctx, c.GetKey(k), period).Result()
-}
-
-func (c *redisClient) MSet(ctx context.Context, values ...interface{}) error {
-	encoded, err := c.encodingValues(true, values...)
-	if err != nil {
-		return err
-	}
-	return c.redis.MSet(ctx, encoded).Err()
-}
-
-func (c *redisClient) MSetNX(ctx context.Context, values ...interface{}) error {
-	encoded, err := c.encodingValues(true, values...)
-	if err != nil {
-		return err
-	}
-	return c.redis.MSetNX(ctx, encoded).Err()
-}
+// --- Hash ---
 
 func (c *redisClient) HSet(ctx context.Context, key string, values ...interface{}) error {
 	encoded, err := c.encodingValues(false, values...)
@@ -418,11 +452,211 @@ func (c *redisClient) HDel(ctx context.Context, key string, field string) error 
 	return c.redis.HDel(ctx, c.GetKey(key), field).Err()
 }
 
-func (c *redisClient) GetKey(origin string) string {
-	if c.config.KeyPrefix != "" {
-		return c.config.KeyPrefix + ":" + origin
+// --- Key management ---
+
+func (c *redisClient) Del(ctx context.Context, k ...string) error {
+	if len(k) == 0 {
+		return nil
 	}
-	return origin
+	var keys []string
+	for _, t := range k {
+		keys = append(keys, c.GetKey(t))
+	}
+	return c.redis.Del(ctx, keys...).Err()
+}
+
+func (c *redisClient) Exist(ctx context.Context, k ...string) (bool, error) {
+	if len(k) == 0 {
+		return false, nil
+	}
+	var keys []string
+	for _, t := range k {
+		keys = append(keys, c.GetKey(t))
+	}
+	v, err := c.redis.Exists(ctx, keys...).Result()
+	if err != nil {
+		return false, err
+	}
+	return v > 0, nil
+}
+
+func (c *redisClient) Expire(ctx context.Context, k string, period time.Duration) (bool, error) {
+	return c.redis.Expire(ctx, c.GetKey(k), period).Result()
+}
+
+// TTL returns the remaining time to live of a key.
+// Returns -2 if the key does not exist, -1 if the key exists but has no expiry.
+func (c *redisClient) TTL(ctx context.Context, k string) (time.Duration, error) {
+	return c.redis.TTL(ctx, c.GetKey(k)).Result()
+}
+
+// --- Counter ---
+
+func (c *redisClient) Incr(ctx context.Context, k string) (int64, error) {
+	return c.redis.Incr(ctx, c.GetKey(k)).Result()
+}
+
+func (c *redisClient) IncrBy(ctx context.Context, k string, n int64) (int64, error) {
+	return c.redis.IncrBy(ctx, c.GetKey(k), n).Result()
+}
+
+func (c *redisClient) Decr(ctx context.Context, k string) (int64, error) {
+	return c.redis.Decr(ctx, c.GetKey(k)).Result()
+}
+
+func (c *redisClient) DecrBy(ctx context.Context, k string, n int64) (int64, error) {
+	return c.redis.DecrBy(ctx, c.GetKey(k), n).Result()
+}
+
+// --- List ---
+
+func (c *redisClient) LPush(ctx context.Context, k string, values ...interface{}) error {
+	encoded, err := encodingObjects(values)
+	if err != nil {
+		return err
+	}
+	return c.redis.LPush(ctx, c.GetKey(k), encoded...).Err()
+}
+
+func (c *redisClient) RPush(ctx context.Context, k string, values ...interface{}) error {
+	encoded, err := encodingObjects(values)
+	if err != nil {
+		return err
+	}
+	return c.redis.RPush(ctx, c.GetKey(k), encoded...).Err()
+}
+
+// LRange returns the specified elements of the list stored at key.
+// If the key does not exist, an empty slice is returned (not an error).
+// This differs from LPop/RPop which return ErrNil for missing keys.
+func (c *redisClient) LRange(ctx context.Context, k string, start, stop int64) ([]string, error) {
+	return c.redis.LRange(ctx, c.GetKey(k), start, stop).Result()
+}
+
+// LLen returns the length of the list stored at key.
+// If the key does not exist, 0 is returned (not an error).
+func (c *redisClient) LLen(ctx context.Context, k string) (int64, error) {
+	return c.redis.LLen(ctx, c.GetKey(k)).Result()
+}
+
+func (c *redisClient) LPop(ctx context.Context, k string) (string, error) {
+	result, err := c.redis.LPop(ctx, c.GetKey(k)).Result()
+	if err != nil {
+		return "", wrapNilError(err)
+	}
+	return result, nil
+}
+
+func (c *redisClient) RPop(ctx context.Context, k string) (string, error) {
+	result, err := c.redis.RPop(ctx, c.GetKey(k)).Result()
+	if err != nil {
+		return "", wrapNilError(err)
+	}
+	return result, nil
+}
+
+// --- Set ---
+
+func (c *redisClient) SAdd(ctx context.Context, k string, members ...interface{}) error {
+	encoded, err := encodingObjects(members)
+	if err != nil {
+		return err
+	}
+	return c.redis.SAdd(ctx, c.GetKey(k), encoded...).Err()
+}
+
+// SMembers returns all members of the set stored at key.
+// If the key does not exist, an empty slice is returned (not an error).
+func (c *redisClient) SMembers(ctx context.Context, k string) ([]string, error) {
+	return c.redis.SMembers(ctx, c.GetKey(k)).Result()
+}
+
+func (c *redisClient) SRem(ctx context.Context, k string, members ...interface{}) error {
+	encoded, err := encodingObjects(members)
+	if err != nil {
+		return err
+	}
+	return c.redis.SRem(ctx, c.GetKey(k), encoded...).Err()
+}
+
+func (c *redisClient) SIsMember(ctx context.Context, k string, member interface{}) (bool, error) {
+	encoded, err := encodingObject(member)
+	if err != nil {
+		return false, err
+	}
+	return c.redis.SIsMember(ctx, c.GetKey(k), encoded).Result()
+}
+
+func (c *redisClient) SCard(ctx context.Context, k string) (int64, error) {
+	return c.redis.SCard(ctx, c.GetKey(k)).Result()
+}
+
+// --- Sorted Set ---
+
+// ZAdd adds members to a sorted set.
+// Note: redis.Z.Member is not automatically JSON-encoded. If you need to store
+// struct/map/slice as member, you must manually serialize it before passing to ZAdd.
+func (c *redisClient) ZAdd(ctx context.Context, k string, members ...*redis.Z) error {
+	return c.redis.ZAdd(ctx, c.GetKey(k), members...).Err()
+}
+
+func (c *redisClient) ZRange(ctx context.Context, k string, start, stop int64) ([]string, error) {
+	return c.redis.ZRange(ctx, c.GetKey(k), start, stop).Result()
+}
+
+func (c *redisClient) ZRangeWithScores(ctx context.Context, k string, start, stop int64) ([]redis.Z, error) {
+	return c.redis.ZRangeWithScores(ctx, c.GetKey(k), start, stop).Result()
+}
+
+func (c *redisClient) ZRevRange(ctx context.Context, k string, start, stop int64) ([]string, error) {
+	return c.redis.ZRevRange(ctx, c.GetKey(k), start, stop).Result()
+}
+
+func (c *redisClient) ZRevRangeWithScores(ctx context.Context, k string, start, stop int64) ([]redis.Z, error) {
+	return c.redis.ZRevRangeWithScores(ctx, c.GetKey(k), start, stop).Result()
+}
+
+// ZRem removes members from a sorted set.
+// Note: members are not automatically JSON-encoded, consistent with ZAdd behavior.
+// If you stored JSON-serialized members via ZAdd, pass the same serialized values here.
+func (c *redisClient) ZRem(ctx context.Context, k string, members ...interface{}) error {
+	return c.redis.ZRem(ctx, c.GetKey(k), members...).Err()
+}
+
+func (c *redisClient) ZCard(ctx context.Context, k string) (int64, error) {
+	return c.redis.ZCard(ctx, c.GetKey(k)).Result()
+}
+
+func (c *redisClient) ZScore(ctx context.Context, k string, member string) (float64, error) {
+	result, err := c.redis.ZScore(ctx, c.GetKey(k), member).Result()
+	if err != nil {
+		return 0, wrapNilError(err)
+	}
+	return result, nil
+}
+
+// ZRank returns the rank of member in the sorted set, with scores ordered low to high.
+// Returns ErrNil if the key or member does not exist.
+// Note: Redis does not distinguish between "key not found" and "member not found";
+// both cases return nil, which is converted to ErrNil.
+func (c *redisClient) ZRank(ctx context.Context, k string, member string) (int64, error) {
+	result, err := c.redis.ZRank(ctx, c.GetKey(k), member).Result()
+	if err != nil {
+		return 0, wrapNilError(err)
+	}
+	return result, nil
+}
+
+// ZRevRank returns the rank of member in the sorted set, with scores ordered high to low.
+// Returns ErrNil if the key or member does not exist.
+// Note: Redis does not distinguish between "key not found" and "member not found";
+// both cases return nil, which is converted to ErrNil.
+func (c *redisClient) ZRevRank(ctx context.Context, k string, member string) (int64, error) {
+	result, err := c.redis.ZRevRank(ctx, c.GetKey(k), member).Result()
+	if err != nil {
+		return 0, wrapNilError(err)
+	}
+	return result, nil
 }
 
 func wrapNilError(err error) error {
