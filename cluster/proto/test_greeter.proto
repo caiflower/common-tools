@@ -14,4 +14,5 @@ message TestHelloRequest {
 
 message TestHelloResponse {
   string message = 1;
+  string trace_id = 2;
 }

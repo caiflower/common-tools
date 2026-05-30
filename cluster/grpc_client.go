@@ -41,7 +41,7 @@ func (g *grpcNodeClient) ClientConn() grpc.ClientConnInterface {
 	return g.conn
 }
 
-func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig) (*grpcNodeClient, error) {
+func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig, traceIdKey string) (*grpcNodeClient, error) {
 	var opts []grpc.DialOption
 	opts = append(opts,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -49,6 +49,8 @@ func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig) (
 			Timeout:             5 * time.Second,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithUnaryInterceptor(traceIdUnaryClientInterceptor(traceIdKey)),
+		grpc.WithStreamInterceptor(traceIdStreamClientInterceptor(traceIdKey)),
 	)
 
 	if tlsCfg != nil && tlsCfg.Enabled {

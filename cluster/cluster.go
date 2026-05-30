@@ -94,11 +94,12 @@ const (
 )
 
 type Config struct {
-	Mode    string        `yaml:"mode" default:"cluster" json:"mode"`
-	Timeout time.Duration `yaml:"timeout" default:"5s" json:"timeout"`
-	Enable  string        `yaml:"enable" default:"true" json:"enable"`
-	TLS     TLSConfig     `yaml:"tls" json:"tls"`
-	Nodes   []*struct {
+	Mode       string        `yaml:"mode" default:"cluster" json:"mode"`
+	Timeout    time.Duration `yaml:"timeout" default:"5s" json:"timeout"`
+	Enable     string        `yaml:"enable" default:"true" json:"enable"`
+	TraceIdKey string        `yaml:"traceIdKey" default:"X-Request-ID" json:"traceIdKey"`
+	TLS        TLSConfig     `yaml:"tls" json:"tls"`
+	Nodes      []*struct {
 		Name  string
 		Ip    string
 		Port  int
@@ -721,7 +722,7 @@ func (c *Cluster) reconnect() {
 	resultCh := make(chan connectResult, len(pending))
 	for i := range pending {
 		go func(r connectResult) {
-			client, err := newGrpcNodeClient(ctx, r.node.address, &c.config.TLS)
+			client, err := newGrpcNodeClient(ctx, r.node.address, &c.config.TLS, c.config.TraceIdKey)
 			resultCh <- connectResult{nodeName: r.nodeName, node: r.node, client: client, err: err}
 		}(pending[i])
 	}
@@ -777,6 +778,8 @@ func (c *Cluster) listen() {
 			MinTime:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
+		grpc.UnaryInterceptor(traceIdUnaryServerInterceptor(c.config.TraceIdKey)),
+		grpc.StreamInterceptor(traceIdStreamServerInterceptor(c.config.TraceIdKey)),
 	)
 	if c.config.TLS.Enabled {
 		creds, err := loadTLSServerCredentials(&c.config.TLS)
@@ -873,16 +876,15 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 		if count >= quorum {
 			messages := c.askLeaderFromNodes(500*time.Millisecond, c.curNode.name, int(c.term.Load()))
-			if len(messages) < quorum {
-				break
-			}
 
 			leaderNode := ""
 			maxTerm := int32(0)
 			for _, message := range messages {
-				if message.Term >= maxTerm {
+				if message.Success && message.LeaderNodeName != "" && message.Term >= maxTerm {
 					maxTerm = message.Term
 					leaderNode = message.LeaderNodeName
+				} else if message.Success && message.Term >= maxTerm {
+					maxTerm = message.Term
 				}
 			}
 
@@ -894,9 +896,13 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 					node = c.curNode
 				}
 
-				if c.signLeader(node, int(maxTerm)) {
+				if node != nil && c.signLeader(node, int(maxTerm)) {
 					return
 				}
+			}
+
+			if len(messages) < quorum {
+				break
 			}
 
 			if int(maxTerm) >= c.GetMyTerm() {
@@ -1126,9 +1132,8 @@ func (c *Cluster) askLeaderFromNodes(timeout time.Duration, nodeName string, ter
 			NodeName: nodeName,
 			Term:     int32(term),
 		})
-		if err != nil {
-			c.logger.Error("[cluster] AskLeader to %s failed: %v", n.address, err)
-			c.markNodeUnavailable(n.name)
+		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+			c.logger.Warn("[cluster] AskLeader to %s failed: %v", n.address, err)
 			return nil, false
 		}
 		return resp, true
@@ -1141,9 +1146,8 @@ func (c *Cluster) askVoteFromNodes(timeout time.Duration, nodeName string, term 
 			NodeName: nodeName,
 			Term:     int32(term),
 		})
-		if err != nil {
-			c.logger.Error("[cluster] AskVote to %s failed: %v", n.address, err)
-			c.markNodeUnavailable(n.name)
+		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+			c.logger.Warn("[cluster] AskVote to %s failed: %v", n.address, err)
 			return nil, false
 		}
 		return resp, true
@@ -1157,9 +1161,8 @@ func (c *Cluster) broadcastLeaderToNodes(timeout time.Duration, nodeName string,
 			Term:           int32(term),
 			LeaderNodeName: leaderNodeName,
 		})
-		if err != nil {
-			c.logger.Error("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
-			c.markNodeUnavailable(n.name)
+		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+			c.logger.Warn("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
 			return nil, false
 		}
 		return resp, true
@@ -1450,20 +1453,22 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 
 	f.startTimer()
 
-	// 本地调用
+	f.mu.Lock()
+	f.onFinish = func() {
+		c.callCache.Delete(remoteCall + f.uuid)
+	}
+	f.mu.Unlock()
+
+	c.callCache.Set(remoteCall+f.uuid, f, f.timeout+cacheTTLExtension)
+
 	if c.GetMyNode().name == f.nodeName {
 		c.logger.Trace("[%s] call local func '%s'", f.uuid, f.funcName)
 		safego.Go(func() {
 			c.callLocalFunc(f)
 		})
-	} else { // 远程调用
+	} else {
 		c.logger.Trace("[%s] call remote func '%s' on node '%s'", f.uuid, f.funcName, f.nodeName)
 		c.callRemoteFunc(f)
-	}
-
-	c.callCache.Set(remoteCall+f.uuid, f, f.timeout+cacheTTLExtension)
-	f.onFinish = func() {
-		c.callCache.Delete(remoteCall + f.uuid)
 	}
 
 	f.wait()

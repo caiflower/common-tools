@@ -54,6 +54,9 @@ func (s *clusterServiceServer) AskLeader(ctx context.Context, req *proto.AskLead
 		resp.Term = int32(c.GetMyTerm())
 		resp.LeaderNodeName = c.GetLeaderName()
 		resp.Success = true
+	} else if req.Term <= int32(c.GetMyTerm()) {
+		resp.Term = int32(c.GetMyTerm())
+		resp.Success = true
 	}
 
 	if _, ok := c.aliveNodes.Load(req.NodeName); !ok {
