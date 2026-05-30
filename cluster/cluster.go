@@ -134,34 +134,38 @@ type ReplicasDiscovery struct {
 }
 
 type Cluster struct {
-	lock               sync.Locker                                            // 启动关闭锁
-	fightingState      uint32                                                 // 选举状态锁（modeCluster使用）
-	redisFightingState uint32                                                 // 选举状态锁（modeRedis使用）
-	redisWatchDogState uint32                                                 // WatchDog状态锁（modeRedis使用）
-	config             *Config                                                // 配置文件
-	curNode            *Node                                                  // 当前节点
-	leaderNode         *Node                                                  // 领导节点
-	leaderLock         sync.RWMutex                                           // leader锁
-	lostLeaderTime     time.Time                                              // 没有leader的时间
-	allNode            *sync.Map                                              // 所有的节点
-	aliveNodes         *sync.Map                                              // 所有存活的节点
-	term               int                                                    // 当前任期
-	sate               uint32                                                 // 集群状态
-	grpcServer         *grpc.Server                                           // gRPC 服务端
-	logger             logger.ILog                                            // 日志框架
-	votesMap           map[int]string                                         // 投票map term->nodeName
-	votesLock          sync.Locker                                            // 投票锁
-	localFuncs         map[string]func(data interface{}) (interface{}, error) // 本地函数
-	registeredServices map[string]*grpc.ServiceDesc                           // 预注册的 gRPC 服务
-	registeredImpls    map[string]interface{}                                 // 预注册的 gRPC 服务实现
-	Redis              redisv1.RedisClient                                    `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	lock               sync.Locker    // 启动关闭锁
+	fightingState      uint32         // 选举状态锁（modeCluster使用）
+	redisFightingState uint32         // 选举状态锁（modeRedis使用）
+	redisWatchDogState uint32         // WatchDog状态锁（modeRedis使用）
+	config             *Config        // 配置文件
+	curNode            *Node          // 当前节点
+	leaderNode         *Node          // 领导节点
+	leaderLock         sync.RWMutex   // leader锁
+	lostLeaderTime     time.Time      // 没有leader的时间
+	allNode            *sync.Map      // 所有的节点
+	aliveNodes         *sync.Map      // 所有存活的节点
+	term               atomic.Int64   // 当前任期
+	sate               uint32         // 集群状态
+	grpcServer         *grpc.Server   // gRPC 服务端
+	logger             logger.ILog    // 日志框架
+	votesMap           map[int]string // 投票map term->nodeName
+	votesLock          sync.Locker    // 投票锁
+	localFuncs         map[string]func(data interface{}) (interface{}, error)
+	localFuncsLock     sync.RWMutex
+	registeredServices map[string]*grpc.ServiceDesc // 预注册的 gRPC 服务
+	registeredImpls    map[string]interface{}       // 预注册的 gRPC 服务实现
+	Redis              redisv1.RedisClient          `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
 	ctx                context.Context
 	cancelFunc         context.CancelFunc
 	events             chan *event
+	eventMu            sync.RWMutex
+	eventsClosed       bool
 	jobTrackers        *sync.Map
 	closeSuccess       chan bool
 	currentReplicas    atomic.Value
 	connectLock        sync.Mutex
+	reconnectPending   uint32
 	callCache          *gocache.Cache
 	heartbeatStreams   *heartbeatStreamManager
 }
@@ -183,7 +187,6 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		config:             &config,
 		allNode:            &sync.Map{},
 		aliveNodes:         &sync.Map{},
-		term:               0,
 		sate:               _init,
 		logger:             logger,
 		lock:               syncx.NewSpinLock(),
@@ -250,7 +253,7 @@ func (c *Cluster) Start() error {
 		return errors.New("start cluster failed. can not find current node")
 	}
 
-	c.term = 0
+	c.term.Store(0)
 	atomic.StoreUint32(&c.sate, follower)
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
@@ -294,6 +297,7 @@ func (c *Cluster) Start() error {
 	case modeCluster:
 		fallthrough
 	default:
+		c.heartbeatStreams = newHeartbeatStreamManager(c)
 		go c.fighting()
 		go c.heartbeat()
 	}
@@ -344,20 +348,16 @@ func (c *Cluster) Close() {
 	})
 
 	if c.grpcServer != nil {
-		gracefulCh := make(chan struct{})
-		go func() {
-			c.grpcServer.GracefulStop()
-			close(gracefulCh)
-		}()
-		select {
-		case <-gracefulCh:
-		case <-time.After(3 * time.Second):
-			c.grpcServer.Stop()
-		}
+		c.grpcServer.Stop()
 	}
 
-	c.createEvent(eventNameClose, "")
-	close(c.events)
+	if c.events != nil {
+		c.eventMu.Lock()
+		c.events <- &event{eventNameClose, atomic.LoadUint32(&c.sate), c.GetMyName(), ""}
+		c.eventsClosed = true
+		close(c.events)
+		c.eventMu.Unlock()
+	}
 
 	c.jobTrackers.Range(func(key, value interface{}) bool {
 		closer, ok := value.(global.Resource)
@@ -367,7 +367,9 @@ func (c *Cluster) Close() {
 		return true
 	})
 
-	<-c.closeSuccess
+	if c.closeSuccess != nil {
+		<-c.closeSuccess
+	}
 	c.logger.Info("[cluster] closed")
 }
 
@@ -447,7 +449,7 @@ func (c *Cluster) GetMyName() string {
 }
 
 func (c *Cluster) GetMyTerm() int {
-	return c.term
+	return int(c.term.Load())
 }
 
 func (c *Cluster) GetAllNodeNames() (allNames []string) {
@@ -668,7 +670,19 @@ func (c *Cluster) markNodeUnavailable(nodeName string) {
 	}
 }
 
-// connect 集群建立连接
+func (c *Cluster) triggerReconnect() {
+	if c.IsClosed() {
+		return
+	}
+	if !atomic.CompareAndSwapUint32(&c.reconnectPending, 0, 1) {
+		return
+	}
+	safego.Go(func() {
+		defer atomic.StoreUint32(&c.reconnectPending, 0)
+		c.reconnect()
+	})
+}
+
 func (c *Cluster) reconnect() {
 	c.connectLock.Lock()
 	defer c.connectLock.Unlock()
@@ -701,24 +715,46 @@ func (c *Cluster) reconnect() {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(c.ctx, 5*time.Second)
+	defer cancel()
+
 	resultCh := make(chan connectResult, len(pending))
 	for i := range pending {
 		go func(r connectResult) {
-			client, err := newGrpcNodeClient(c.ctx, r.node.address, &c.config.TLS)
+			client, err := newGrpcNodeClient(ctx, r.node.address, &c.config.TLS)
 			resultCh <- connectResult{nodeName: r.nodeName, node: r.node, client: client, err: err}
 		}(pending[i])
 	}
 
 	for range len(pending) {
-		r := <-resultCh
-		if r.err != nil {
-			c.logger.Trace("[cluster] connect to %s failed: %v", r.node.address, r.err)
-			c.aliveNodes.Delete(r.nodeName)
-			continue
+		select {
+		case r := <-resultCh:
+			if r.err != nil {
+				c.logger.Trace("[cluster] connect to %s failed: %v", r.node.address, r.err)
+				c.aliveNodes.Delete(r.nodeName)
+				continue
+			}
+			r.node.setGrpcClient(r.client)
+			c.aliveNodes.Store(r.nodeName, r.node)
+			c.logger.Trace("[cluster] %s connected, now alive", r.nodeName)
+		case <-ctx.Done():
+			c.logger.Trace("[cluster] reconnect timeout, draining pending connections")
+			go func() {
+				drainCtx, drainCancel := context.WithTimeout(c.ctx, 10*time.Second)
+				defer drainCancel()
+				for {
+					select {
+					case r := <-resultCh:
+						if r.client != nil {
+							_ = r.client.Close()
+						}
+					case <-drainCtx.Done():
+						return
+					}
+				}
+			}()
+			return
 		}
-		r.node.setGrpcClient(r.client)
-		c.aliveNodes.Store(r.nodeName, r.node)
-		c.logger.Trace("[cluster] %s connected, now alive", r.nodeName)
 	}
 
 	c.updateMetrics(c.IsLeader())
@@ -796,7 +832,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 	defer func() {
 		if c.GetLeaderNode() != nil {
-			c.logger.Info("[cluster] node %s term %d election finished, leader=%s", c.curNode.name, c.term, c.GetLeaderName())
+			c.logger.Info("[cluster] node %s term %d election finished, leader=%s", c.curNode.name, c.term.Load(), c.GetLeaderName())
 		} else {
 			atomic.CompareAndSwapUint32(&c.sate, candidate, follower)
 
@@ -836,7 +872,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		c.logger.Info("[cluster] node %s, alive=%d, quorum=%d", c.curNode.name, count, quorum)
 
 		if count >= quorum {
-			messages := c.askLeaderFromNodes(500*time.Millisecond, c.curNode.name, c.term)
+			messages := c.askLeaderFromNodes(500*time.Millisecond, c.curNode.name, int(c.term.Load()))
 			if len(messages) < quorum {
 				break
 			}
@@ -865,7 +901,7 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 
 			if int(maxTerm) >= c.GetMyTerm() {
 				c.logger.Info("[cluster] update term to %d from other node", maxTerm)
-				c.term = int(maxTerm)
+				c.term.Store(int64(maxTerm))
 				break
 			}
 		} else {
@@ -886,8 +922,8 @@ func (c *Cluster) fightingWithRetry(retryCount int) {
 		return
 	}
 
-	nextTerm := c.term + 1
-	c.term = nextTerm
+	nextTerm := int(c.term.Load()) + 1
+	c.term.Store(int64(nextTerm))
 	c.logger.Info("[cluster] node %s term %d begin requesting votes", c.curNode.name, nextTerm)
 	c.createEvent(eventNameElectionStart, "")
 	defer func() {
@@ -967,8 +1003,6 @@ func (c *Cluster) heartbeat() {
 	leaderHeartbeatInterval := c.config.Timeout / 3
 	const followerCheckInterval = 500 * time.Millisecond
 
-	c.heartbeatStreams = newHeartbeatStreamManager(c)
-
 	ticker := time.NewTicker(followerCheckInterval)
 	defer ticker.Stop()
 
@@ -988,7 +1022,9 @@ func (c *Cluster) heartbeat() {
 					nodeName := key.(string)
 					node := value.(*Node)
 					if nodeName != c.GetMyName() {
-						c.heartbeatStreams.startStream(node)
+						if _, ok := c.heartbeatStreams.streams.Load(nodeName); !ok {
+							c.heartbeatStreams.startStream(node)
+						}
 					}
 					return true
 				})
@@ -1002,7 +1038,7 @@ func (c *Cluster) heartbeat() {
 					nodeName := key.(string)
 					if nodeName != c.GetMyName() {
 						total++
-						if c.heartbeatStreams.sendHeartbeat(nodeName, int32(c.term)) {
+						if c.heartbeatStreams.sendHeartbeat(nodeName, int32(c.term.Load())) {
 							success++
 						}
 					}
@@ -1033,7 +1069,7 @@ func (c *Cluster) heartbeat() {
 				ticker.Reset(followerCheckInterval)
 			}
 
-			c.reconnect()
+			c.triggerReconnect()
 		}
 	}
 }
@@ -1167,7 +1203,7 @@ func (c *Cluster) signLeader(node *Node, term int) bool {
 
 	c.lostLeaderTime = time.Time{}
 	c.leaderNode = node
-	c.term = term
+	c.term.Store(int64(term))
 	c.leaderLock.Unlock()
 
 	for _, ev := range eventsToSend {
@@ -1250,11 +1286,18 @@ func (c *Cluster) voteNode(term int, nodeName string) bool {
 }
 
 func (c *Cluster) createEvent(name, leaderName string) {
+	c.eventMu.RLock()
+	defer c.eventMu.RUnlock()
+	if c.eventsClosed || c.events == nil {
+		return
+	}
 	if c.IsClosed() && name != eventNameClose {
 		return
 	}
-	defer func() { recover() }()
-	c.events <- &event{name, atomic.LoadUint32(&c.sate), c.GetMyName(), leaderName}
+	select {
+	case c.events <- &event{name, atomic.LoadUint32(&c.sate), c.GetMyName(), leaderName}:
+	case <-c.ctx.Done():
+	}
 }
 
 func (c *Cluster) consumeEvent() {
@@ -1332,6 +1375,8 @@ func getStatusName(s uint32) string {
 }
 
 func (c *Cluster) RegisterFunc(funcName string, fn func(data interface{}) (interface{}, error)) {
+	c.localFuncsLock.Lock()
+	defer c.localFuncsLock.Unlock()
 	c.localFuncs[funcName] = fn
 }
 
@@ -1429,7 +1474,9 @@ func (c *Cluster) callLocalFunc(f *FuncSpec) {
 	golocalv1.PutTraceID(f.traceId)
 	defer golocalv1.Clean()
 
+	c.localFuncsLock.RLock()
 	fc := c.localFuncs[f.funcName]
+	c.localFuncsLock.RUnlock()
 	if fc == nil {
 		err := fmt.Errorf("not such function '%s' in the cluster", f.funcName)
 		c.logger.Error("[cluster] [remote call] %s failed: function '%s' not found", f.uuid, f.funcName)

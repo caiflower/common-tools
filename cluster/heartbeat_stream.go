@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/cluster/proto"
@@ -28,8 +29,9 @@ import (
 )
 
 type heartbeatStreamManager struct {
-	cluster *Cluster
-	streams sync.Map
+	cluster    *Cluster
+	streams    sync.Map
+	generation atomic.Int64
 }
 
 func newHeartbeatStreamManager(c *Cluster) *heartbeatStreamManager {
@@ -38,10 +40,12 @@ func newHeartbeatStreamManager(c *Cluster) *heartbeatStreamManager {
 
 func (m *heartbeatStreamManager) startStream(node *Node) {
 	ctx, cancel := context.WithCancel(m.cluster.ctx)
+	gen := m.generation.Add(1)
 
 	entry := &streamEntry{
-		node:   node,
-		cancel: cancel,
+		node:       node,
+		cancel:     cancel,
+		generation: gen,
 	}
 	if _, loaded := m.streams.LoadOrStore(node.name, entry); loaded {
 		cancel()
@@ -50,7 +54,7 @@ func (m *heartbeatStreamManager) startStream(node *Node) {
 
 	safego.Go(func() {
 		defer e.OnError("heartbeat stream")
-		m.runStream(ctx, node)
+		m.runStream(ctx, gen, node)
 	})
 }
 
@@ -90,7 +94,7 @@ func (m *heartbeatStreamManager) sendHeartbeat(nodeName string, term int32) bool
 	return err == nil
 }
 
-func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
+func (m *heartbeatStreamManager) runStream(ctx context.Context, gen int64, node *Node) {
 	c := m.cluster
 	backoff := time.Second
 
@@ -122,7 +126,12 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 			return
 		}
 		entry := v.(*streamEntry)
+		if entry.generation != gen {
+			return
+		}
+		entry.sendLock.Lock()
 		entry.stream = stream
+		entry.sendLock.Unlock()
 
 		for {
 			resp, err := stream.Recv()
@@ -147,7 +156,12 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 			}
 		}
 
+		if v, ok := m.streams.Load(node.name); !ok || v.(*streamEntry).generation != gen {
+			break
+		}
+		entry.sendLock.Lock()
 		entry.stream = nil
+		entry.sendLock.Unlock()
 
 		select {
 		case <-ctx.Done():
@@ -159,8 +173,9 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, node *Node) {
 }
 
 type streamEntry struct {
-	node     *Node
-	stream   proto.ClusterService_HeartbeatClient
-	cancel   context.CancelFunc
-	sendLock sync.Mutex
+	node       *Node
+	stream     proto.ClusterService_HeartbeatClient
+	cancel     context.CancelFunc
+	generation int64
+	sendLock   sync.Mutex
 }

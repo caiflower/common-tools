@@ -57,7 +57,7 @@ func (s *clusterServiceServer) AskLeader(ctx context.Context, req *proto.AskLead
 	}
 
 	if _, ok := c.aliveNodes.Load(req.NodeName); !ok {
-		go c.reconnect()
+		c.triggerReconnect()
 	}
 
 	return resp, nil
@@ -101,7 +101,7 @@ func (s *clusterServiceServer) BroadcastLeader(ctx context.Context, req *proto.B
 			leaderNode = c.curNode
 		} else if v, ok := c.allNode.Load(req.LeaderNodeName); ok {
 			leaderNode = v.(*Node)
-			go c.reconnect()
+			c.triggerReconnect()
 		}
 		if leaderNode != nil {
 			resp.Success = true
@@ -115,13 +115,19 @@ func (s *clusterServiceServer) BroadcastLeader(ctx context.Context, req *proto.B
 }
 
 func (s *clusterServiceServer) Heartbeat(stream proto.ClusterService_HeartbeatServer) error {
+	c := s.cluster
 	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		default:
+		}
+
 		req, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 
-		c := s.cluster
 		resp := &proto.HeartbeatResponse{
 			NodeName:       c.GetMyName(),
 			Term:           req.Term,

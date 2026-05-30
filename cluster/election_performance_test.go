@@ -73,7 +73,7 @@ func buildN100Clusters(n int) ([]*Cluster, []int) {
 	log := logger.NewLogger(&logger.Config{Level: "FATAL"}) // 减少日志干扰性能测试
 
 	for i := range n {
-		cfg := Config{}
+		cfg := Config{Timeout: time.Second}
 		// 深拷贝节点列表，并标记当前节点
 		for j, nd := range allNodes {
 			entry := &struct {
@@ -102,9 +102,11 @@ func buildN100Clusters(n int) ([]*Cluster, []int) {
 
 // TestElectionPerformance100Nodes 测试 100 个节点场景下的选主性能
 // 指标：
-//  1. 首次选主耗时（从所有节点 Start 到第一个节点成为 leader）
+//  1. 首次选主耗时（从开始启动到第一个节点成为 leader）
 //  2. 全部节点达成一致耗时（所有 follower 都认同同一个 leader）
-//  3. leader 故障后重新选主耗时
+//  3. 共识收敛耗时（从首个 leader 到全员共识的差值）
+//  4. leader 故障后重新选主耗时
+//  5. 故障收敛耗时（从新 leader 产生到全员共识的差值）
 func TestElectionPerformance100Nodes(t *testing.T) {
 	t.Log("========== 100节点选主性能测试 开始 ==========")
 	t.Logf("节点数量: %d", numNodes)
@@ -113,7 +115,7 @@ func TestElectionPerformance100Nodes(t *testing.T) {
 
 	// ---- 阶段1：并发启动所有节点，记录首次选主时间 ----
 	t.Log("[阶段1] 并发启动所有节点...")
-	startAll := time.Now()
+	startMeasure := time.Now()
 
 	var wg sync.WaitGroup
 	for _, c := range clusters {
@@ -127,26 +129,28 @@ func TestElectionPerformance100Nodes(t *testing.T) {
 	}
 	wg.Wait()
 
-	t.Logf("所有节点启动完毕，耗时: %v", time.Since(startAll))
+	startupElapsed := time.Since(startMeasure)
+	t.Logf("所有节点启动完毕，耗时: %v", startupElapsed)
 
 	// ---- 阶段2：等待首个 leader 出现 ----
 	t.Log("[阶段2] 等待首个 leader 出现...")
-	firstLeaderElapsed := waitForFirstLeader(clusters, 120*time.Second)
-	if firstLeaderElapsed < 0 {
+	firstLeaderResult := waitForFirstLeader(clusters, 120*time.Second)
+	if firstLeaderResult < 0 {
 		t.Fatal("超时：120秒内没有节点成为 leader")
 	}
-	t.Logf("首个 leader 出现耗时: %v", firstLeaderElapsed)
+	firstLeaderElapsed := time.Since(startMeasure)
+	t.Logf("首个 leader 出现耗时: %v（含启动 %v）", firstLeaderElapsed, startupElapsed)
 
-	// ---- 阶段3：等待所有节点达成 leader 一致 ----
 	t.Log("[阶段3] 等待所有节点达成 leader 共识...")
-	consensusElapsed, leaderName, agreedCount := waitForConsensus(clusters, 120*time.Second)
-	if consensusElapsed < 0 {
-		// 未达成全部一致，输出当前统计
+	consensusResult, leaderName, agreedCount := waitForConsensus(clusters, 120*time.Second)
+	totalConsensusElapsed := time.Since(startMeasure)
+	consensusConvergeElapsed := totalConsensusElapsed - firstLeaderElapsed
+	if consensusResult < 0 {
 		stats := collectLeaderStats(clusters)
 		t.Logf("120秒内未达成完全共识，当前各 leader 统计: %v", stats)
 		t.Logf("已认同 leader(%s) 的节点数: %d / %d", leaderName, agreedCount, numNodes)
 	} else {
-		t.Logf("所有节点达成共识耗时: %v，leader: %s", consensusElapsed, leaderName)
+		t.Logf("所有节点达成共识耗时: %v（共识收敛: %v），leader: %s", totalConsensusElapsed, consensusConvergeElapsed, leaderName)
 	}
 
 	// 输出当前集群状态快照
@@ -173,20 +177,21 @@ func TestElectionPerformance100Nodes(t *testing.T) {
 			}
 		}
 
-		newLeaderElapsed := waitForFirstLeader(remaining, 120*time.Second)
-		if newLeaderElapsed < 0 {
+		newLeaderResult := waitForFirstLeader(remaining, 120*time.Second)
+		if newLeaderResult < 0 {
 			t.Fatal("leader 故障后 120 秒内未选出新 leader")
 		}
-		t.Logf("leader 故障后重新选主耗时: %v (从关闭leader开始: %v)",
-			newLeaderElapsed, time.Since(failoverStart))
+		failoverElapsed := time.Since(failoverStart)
+		t.Logf("leader 故障后重新选主耗时: %v", failoverElapsed)
 
-		// 等待剩余节点达成共识
-		reConsensusElapsed, newLeader, agreedCnt := waitForConsensus(remaining, 120*time.Second)
-		if reConsensusElapsed < 0 {
+		reConsensusResult, newLeader, agreedCnt := waitForConsensus(remaining, 120*time.Second)
+		reConsensusTotal := time.Since(failoverStart)
+		reConsensusConverge := reConsensusTotal - failoverElapsed
+		if reConsensusResult < 0 {
 			t.Logf("重新选主后共识未完全达成，已认同新leader(%s)的节点数: %d / %d",
 				newLeader, agreedCnt, len(remaining))
 		} else {
-			t.Logf("重新选主后所有节点达成共识耗时: %v，新leader: %s", reConsensusElapsed, newLeader)
+			t.Logf("重新选主后所有节点达成共识耗时: %v（故障收敛: %v），新leader: %s", reConsensusTotal, reConsensusConverge, newLeader)
 		}
 
 		printClusterSnapshot(t, remaining)
@@ -212,10 +217,14 @@ func TestElectionScalability(t *testing.T) {
 	sizes := []int{3, 10, 30, 100}
 
 	type result struct {
-		size            int
-		firstLeaderMs   int64
-		fullConsensusMs int64
-		failoverMs      int64
+		size                int
+		startupMs           int64
+		firstLeaderMs       int64
+		fullConsensusMs     int64
+		consensusConvergeMs int64
+		failoverMs          int64
+		failoverConvergeMs  int64
+		failoverTotalMs     int64
 	}
 
 	results := make([]result, 0, len(sizes))
@@ -224,7 +233,7 @@ func TestElectionScalability(t *testing.T) {
 		t.Logf("===== 规模测试: %d 节点 =====", n)
 		clusters, _ := buildN100Clusters(n)
 
-		startAll := time.Now()
+		startMeasure := time.Now()
 		var wg sync.WaitGroup
 		for _, c := range clusters {
 			wg.Add(1)
@@ -234,18 +243,23 @@ func TestElectionScalability(t *testing.T) {
 			}(c)
 		}
 		wg.Wait()
-		_ = startAll
+		startupMs := time.Since(startMeasure).Milliseconds()
 
 		timeout := time.Duration(n) * 3 * time.Second
 		timeout = max(timeout, 30*time.Second)
 		timeout = min(timeout, 180*time.Second)
 
-		firstLeaderElapsed := waitForFirstLeader(clusters, timeout)
-		consensusElapsed, _, _ := waitForConsensus(clusters, timeout)
+		firstLeaderResult := waitForFirstLeader(clusters, timeout)
+		firstLeaderElapsed := time.Since(startMeasure)
+		consensusResult, _, _ := waitForConsensus(clusters, timeout)
+		totalConsensusElapsed := time.Since(startMeasure)
+		consensusConvergeElapsed := totalConsensusElapsed - firstLeaderElapsed
 
 		// leader 故障测试
 		leaderIdx := findLeaderIndex(clusters)
 		var failoverElapsed time.Duration
+		var failoverConsensusElapsed time.Duration
+		var failoverConvergeElapsed time.Duration
 		if leaderIdx >= 0 {
 			failoverStart := time.Now()
 			clusters[leaderIdx].Close()
@@ -256,12 +270,18 @@ func TestElectionScalability(t *testing.T) {
 				}
 			}
 			fe := waitForFirstLeader(remaining, timeout)
-			if fe >= 0 {
-				failoverElapsed = fe
-			} else {
+			failoverElapsed = time.Since(failoverStart)
+			if fe < 0 {
 				failoverElapsed = -1
+			} else {
+				reConsensusResult, _, _ := waitForConsensus(remaining, timeout)
+				failoverConsensusElapsed = time.Since(failoverStart)
+				failoverConvergeElapsed = failoverConsensusElapsed - failoverElapsed
+				if reConsensusResult < 0 {
+					failoverConsensusElapsed = -1
+					failoverConvergeElapsed = -1
+				}
 			}
-			_ = failoverStart
 			for _, c := range remaining {
 				wg.Add(1)
 				go func() {
@@ -282,29 +302,39 @@ func TestElectionScalability(t *testing.T) {
 
 		var r result
 		r.size = n
-		if firstLeaderElapsed >= 0 {
+		r.startupMs = startupMs
+		if firstLeaderResult >= 0 {
 			r.firstLeaderMs = firstLeaderElapsed.Milliseconds()
 		} else {
 			r.firstLeaderMs = -1
 		}
-		if consensusElapsed >= 0 {
-			r.fullConsensusMs = consensusElapsed.Milliseconds()
+		if consensusResult >= 0 {
+			r.fullConsensusMs = totalConsensusElapsed.Milliseconds()
+			r.consensusConvergeMs = consensusConvergeElapsed.Milliseconds()
 		} else {
 			r.fullConsensusMs = -1
+			r.consensusConvergeMs = -1
 		}
 		r.failoverMs = failoverElapsed.Milliseconds()
+		if failoverConsensusElapsed >= 0 {
+			r.failoverTotalMs = failoverConsensusElapsed.Milliseconds()
+			r.failoverConvergeMs = failoverConvergeElapsed.Milliseconds()
+		} else {
+			r.failoverTotalMs = -1
+			r.failoverConvergeMs = -1
+		}
 
 		results = append(results, r)
-		t.Logf("节点数=%d | 首个leader出现=%dms | 全员共识=%dms | 故障转移=%dms",
-			r.size, r.firstLeaderMs, r.fullConsensusMs, r.failoverMs)
+		t.Logf("节点数=%d | 启动=%dms | 首个leader=%dms | 全员共识=%dms | 共识收敛=%dms | 故障转移=%dms | 故障收敛=%dms | 故障恢复=%dms",
+			r.size, r.startupMs, r.firstLeaderMs, r.fullConsensusMs, r.consensusConvergeMs, r.failoverMs, r.failoverConvergeMs, r.failoverTotalMs)
 
-		time.Sleep(2 * time.Second) // 等待端口释放
+		time.Sleep(2 * time.Second)
 	}
 
 	t.Log("\n========== 规模测试汇总 ==========")
-	t.Logf("%-10s %-20s %-20s %-20s", "节点数", "首个leader(ms)", "全员共识(ms)", "故障转移(ms)")
+	t.Logf("%-6s %-8s %-12s %-12s %-12s %-12s %-12s %-12s", "节点数", "启动(ms)", "首个leader(ms)", "全员共识(ms)", "共识收敛(ms)", "故障转移(ms)", "故障收敛(ms)", "故障恢复(ms)")
 	for _, r := range results {
-		t.Logf("%-10d %-20d %-20d %-20d", r.size, r.firstLeaderMs, r.fullConsensusMs, r.failoverMs)
+		t.Logf("%-6d %-8d %-12d %-12d %-12d %-12d %-12d %-12d", r.size, r.startupMs, r.firstLeaderMs, r.fullConsensusMs, r.consensusConvergeMs, r.failoverMs, r.failoverConvergeMs, r.failoverTotalMs)
 	}
 }
 

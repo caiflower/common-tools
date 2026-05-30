@@ -67,7 +67,14 @@ func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig) (
 	}
 
 	client := proto.NewClusterServiceClient(conn)
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	pingTimeout := 2 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < pingTimeout {
+			pingTimeout = remaining
+		}
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
 	defer cancel()
 	if _, err := client.Ping(pingCtx, &proto.PingRequest{}); err != nil {
 		_ = conn.Close()
