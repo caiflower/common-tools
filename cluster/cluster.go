@@ -328,11 +328,12 @@ func (c *Cluster) Close() {
 
 	// 缩容或重启时，其他节点会通过各自的心跳/发现机制感知到拓扑变化，无需显式通知
 
+	c.releaseLeader()
+
 	if c.cancelFunc != nil {
 		c.cancelFunc()
 	}
 	c.curNode.clean()
-	c.releaseLeader()
 
 	atomic.StoreUint32(&c.sate, closed)
 
