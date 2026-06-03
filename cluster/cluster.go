@@ -1133,7 +1133,7 @@ func (c *Cluster) askLeaderFromNodes(timeout time.Duration, nodeName string, ter
 			NodeName: nodeName,
 			Term:     int32(term),
 		})
-		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			c.logger.Warn("[cluster] AskLeader to %s failed: %v", n.address, err)
 			return nil, false
 		}
@@ -1147,7 +1147,7 @@ func (c *Cluster) askVoteFromNodes(timeout time.Duration, nodeName string, term 
 			NodeName: nodeName,
 			Term:     int32(term),
 		})
-		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			c.logger.Warn("[cluster] AskVote to %s failed: %v", n.address, err)
 			return nil, false
 		}
@@ -1162,7 +1162,7 @@ func (c *Cluster) broadcastLeaderToNodes(timeout time.Duration, nodeName string,
 			Term:           int32(term),
 			LeaderNodeName: leaderNodeName,
 		})
-		if err != nil && !errors.Is(context.DeadlineExceeded, err) {
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 			c.logger.Warn("[cluster] BroadcastLeader to %s failed: %v", n.address, err)
 			return nil, false
 		}
