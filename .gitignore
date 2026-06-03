@@ -26,3 +26,5 @@ go.work
 .trae
 .claude
 .qoder
+skills-lock.json
+.agents
