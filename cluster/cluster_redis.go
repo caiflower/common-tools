@@ -26,6 +26,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/crontab"
 	"github.com/caiflower/common-tools/pkg/logger"
+	redisv1 "github.com/caiflower/common-tools/redis/v1"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -265,7 +266,7 @@ func (c *Cluster) redisSyncLeader() {
 	fn := func() {
 		leaderName, err := c.Redis.GetString(c.ctx, key)
 		if err != nil {
-			if errors.Is(err, redis.Nil) {
+			if errors.Is(err, redis.Nil) || errors.Is(err, redisv1.ErrNil) {
 				c.releaseLeader()
 				// 重新开始选举
 				go c.redisFighting()
