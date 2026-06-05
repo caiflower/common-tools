@@ -153,7 +153,7 @@ func GetResultAs[T any](fs *FuncSpec) (T, error) {
 	if v, ok := fs.result.(T); ok {
 		return v, nil
 	}
-	logger.Debug("GetResultAs: type assertion failed, falling back to marshal/unmarshal. funcName=%s, resultType=%T", fs.funcName, fs.result)
+	logger.Trace("GetResultAs: type assertion failed, falling back to marshal/unmarshal. funcName=%s, resultType=%T", fs.funcName, fs.result)
 	resultBytes, marshalErr := tools.Marshal(fs.result)
 	if marshalErr != nil {
 		return zero, fmt.Errorf("marshal result failed: %w", marshalErr)
