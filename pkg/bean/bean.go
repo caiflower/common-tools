@@ -34,6 +34,11 @@ const (
 	ConditionalOnProperty = "conditional_on_property"
 )
 
+var (
+	autoWriteRegex = regexp.MustCompile(`\b` + AutoWrite + `\b`)
+	autowiredRegex = regexp.MustCompile(`\b` + Autowired + `\b`)
+)
+
 var beanContext = beanManager{
 	beanMap: make(map[string]interface{}),
 }
@@ -81,9 +86,9 @@ func writeBean(beanName string, bean interface{}) {
 		// 2. 根据名称获取bean
 		// 3. 根据package.StructName获取bean
 		// 4. 根据package.InterfaceName获取bean
-		fieldBeanName := fieldType.Tag.Get(AutoWrite)
+		fieldBeanName := getBeanNameFromTag(fieldType.Tag.Get(AutoWrite))
 		if fieldBeanName == "" {
-			fieldBeanName = fieldType.Tag.Get(Autowired)
+			fieldBeanName = getBeanNameFromTag(fieldType.Tag.Get(Autowired))
 		}
 		var fieldBean interface{}
 
@@ -133,34 +138,90 @@ func writeBean(beanName string, bean interface{}) {
 }
 
 func needAutoWrite(tag reflect.StructTag) bool {
-	conditionalOnProperty := tag.Get(ConditionalOnProperty)
-	if strings.HasPrefix(conditionalOnProperty, "default.") {
-		splits := strings.Split(strings.TrimPrefix(conditionalOnProperty, "default."), "=")
-		if len(splits) != 2 {
-			panic("not supported conditionalOnProperty: " + conditionalOnProperty)
-		}
-		path := jsonpath.New("tagFilter")
-		t := "{." + splits[0] + "}"
-		if err := path.Parse(t); err != nil {
-			panic(fmt.Sprintf("autowired failed. parse '%s' failed. error: %v", ConditionalOnProperty, err))
-		}
-		buf := new(bytes.Buffer)
-		err := path.Execute(buf, GetBean("default"))
-		if err != nil {
-			panic(fmt.Sprintf("autowired failed. exec '%s' failed. error: %v", ConditionalOnProperty, err))
-		}
-
-		if buf.String() != splits[1] {
-			return false
-		}
+	// 判断是否有 autowired/autowrite 标签
+	hasAutoTag := autoWriteRegex.Match([]byte(tag)) || autowiredRegex.Match([]byte(tag))
+	if !hasAutoTag {
+		return false
 	}
 
-	return regexp.MustCompile(`\b`+AutoWrite+`\b`).Match([]byte(tag)) || regexp.MustCompile(`\b`+Autowired+`\b`).Match([]byte(tag))
+	// 1. 先从独立的 conditional_on_property 标签读取
+	conditionalOnProperty := tag.Get(ConditionalOnProperty)
+
+	// 2. 再从 autowired/autowrite 标签值中读取 |conditional_on_property:xxx=yyy
+	if conditionalOnProperty == "" {
+		tagValue := tag.Get(AutoWrite)
+		if tagValue == "" {
+			tagValue = tag.Get(Autowired)
+		}
+		conditionalOnProperty = parseConditionalFromTagValue(tagValue)
+	}
+
+	if conditionalOnProperty != "" {
+		return checkConditionalOnProperty(conditionalOnProperty)
+	}
+
+	return true
+}
+
+// parseConditionalFromTagValue 从 autowired/autowrite 标签值中解析 |conditional_on_property:xxx=yyy
+// 返回条件部分（不含前缀），如 "default.feature.enabled=true"
+func parseConditionalFromTagValue(tagValue string) string {
+	prefix := "|" + ConditionalOnProperty + ":"
+	idx := strings.Index(tagValue, prefix)
+	if idx < 0 {
+		return ""
+	}
+	return tagValue[idx+len(prefix):]
+}
+
+// getBeanNameFromTag 从 autowired/autowrite 标签值中提取 bean 名称，剥离 | 后的条件部分
+func getBeanNameFromTag(tagValue string) string {
+	idx := strings.Index(tagValue, "|")
+	if idx >= 0 {
+		return tagValue[:idx]
+	}
+	return tagValue
+}
+
+// checkConditionalOnProperty 检查条件是否满足，不满足返回 false
+func checkConditionalOnProperty(conditionalOnProperty string) bool {
+	splits := strings.SplitN(conditionalOnProperty, "=", 2)
+	if len(splits) != 2 {
+		panic("not supported conditionalOnProperty: " + conditionalOnProperty)
+	}
+
+	// 解析 beanName 和 jsonPath
+	// 格式: beanName.jsonPath=value 或 jsonPath=value（默认从 default bean 读取）
+	pathPart := splits[0]
+	var beanName string
+	var jsonPath string
+
+	dotIndex := strings.Index(pathPart, ".")
+	if dotIndex > 0 {
+		beanName = pathPart[:dotIndex]
+		jsonPath = pathPart[dotIndex+1:]
+	} else {
+		beanName = "default"
+		jsonPath = pathPart
+	}
+
+	path := jsonpath.New("tagFilter")
+	t := "{." + jsonPath + "}"
+	if err := path.Parse(t); err != nil {
+		panic(fmt.Sprintf("autowired failed. parse '%s' failed. error: %v", ConditionalOnProperty, err))
+	}
+	buf := new(bytes.Buffer)
+	err := path.Execute(buf, GetBean(beanName))
+	if err != nil {
+		panic(fmt.Sprintf("autowired failed. exec '%s' failed. error: %v", ConditionalOnProperty, err))
+	}
+
+	return buf.String() == splits[1]
 }
 
 func AddBean(bean interface{}) {
 	if reflect.TypeOf(bean).Kind() != reflect.Interface && reflect.TypeOf(bean).Kind() != reflect.Ptr {
-		panic(fmt.Sprintf("Add bean failed. Bean kind must be interface or ptr. "))
+		panic("Add bean failed. Bean kind must be interface or ptr. ")
 	}
 
 	name := getBeanNameFromValue(bean)

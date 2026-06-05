@@ -144,7 +144,7 @@ func TestSetBeanOverwrite(t *testing.T) {
 	SetBeanOverwrite("test", test2)
 	assert.Same(t, GetBean("test"), test2)
 	assert.Equal(t, 2, GetBean("test").(*BeanWithField).Value)
-	
+
 	// 验证已经不是test1了
 	if GetBean("test") == test1 {
 		t.Error("GetBean should not return test1 after overwrite")
@@ -713,9 +713,9 @@ func TestAutowiredMixedAutoAndNamed(t *testing.T) {
 	}
 
 	type MixedService struct {
-		Logger     *Logger   `autowired:""`      // 自动注入
-		PrimaryDB  *Database `autowired:"main"`   // 指定名称
-		BackupDB   *Database `autowired:"backup"` // 指定名称
+		Logger    *Logger   `autowired:""`       // 自动注入
+		PrimaryDB *Database `autowired:"main"`   // 指定名称
+		BackupDB  *Database `autowired:"backup"` // 指定名称
 	}
 
 	logger := &Logger{}
@@ -777,4 +777,528 @@ func TestAutowiredInterfaceWithNamedBean(t *testing.T) {
 
 	assert.Same(t, service.Primary, service1)
 	assert.Same(t, service.Secondary, service2)
+}
+
+// ========== conditional_on_property 多配置源测试 ==========
+
+// TestConditionalOnPropertyDefaultBean 测试原有 default bean 格式兼容性
+func TestConditionalOnPropertyDefaultBean(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+		ClusterMode    string `json:"clusterMode"`
+	}
+
+	type FeatureService struct {
+		Name string
+	}
+
+	type ServiceWithDefaultCondition struct {
+		Feature *FeatureService `autowired:"featureBean" conditional_on_property:"default.featureEnabled=true"`
+		Cluster *FeatureService `autowired:"clusterBean" conditional_on_property:"default.clusterMode=cluster"`
+	}
+
+	config := &DefaultConfig{
+		FeatureEnabled: "true",
+		ClusterMode:    "cluster",
+	}
+
+	feature := &FeatureService{Name: "feature"}
+	clusterBean := &FeatureService{Name: "cluster"}
+
+	SetBean("default", config)
+	SetBean("clusterBean", clusterBean)
+	SetBean("featureBean", feature)
+
+	svc := &ServiceWithDefaultCondition{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Feature)
+	assert.Equal(t, "feature", svc.Feature.Name)
+	assert.NotNil(t, svc.Cluster)
+	assert.Equal(t, "cluster", svc.Cluster.Name)
+}
+
+// TestConditionalOnPropertyDefaultBeanNotMatch 测试 default bean 条件不匹配时不注入
+func TestConditionalOnPropertyDefaultBeanNotMatch(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type FeatureService struct {
+		Name string
+	}
+
+	type ServiceWithCondition struct {
+		Feature *FeatureService `autowired:"featureBean" conditional_on_property:"default.featureEnabled=true"`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "false"}
+
+	SetBean("default", config)
+	SetBean("featureBean", &FeatureService{Name: "feature"})
+
+	svc := &ServiceWithCondition{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.Feature)
+}
+
+// TestConditionalOnPropertyCustomBean 测试从自定义 bean 读取配置
+func TestConditionalOnPropertyCustomBean(t *testing.T) {
+	ClearBeans()
+
+	type AppConfig struct {
+		CacheEnabled string `json:"cacheEnabled"`
+	}
+
+	type CacheService struct {
+		Name string
+	}
+
+	type ServiceWithCustomCondition struct {
+		Cache *CacheService `autowired:"cacheBean" conditional_on_property:"myApp.cacheEnabled=true"`
+	}
+
+	appConfig := &AppConfig{CacheEnabled: "true"}
+
+	SetBean("myApp", appConfig)
+	SetBean("cacheBean", &CacheService{Name: "cache"})
+
+	svc := &ServiceWithCustomCondition{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Cache)
+	assert.Equal(t, "cache", svc.Cache.Name)
+}
+
+// TestConditionalOnPropertyCustomBeanNotMatch 测试自定义 bean 条件不匹配
+func TestConditionalOnPropertyCustomBeanNotMatch(t *testing.T) {
+	ClearBeans()
+
+	type AppConfig struct {
+		CacheEnabled string `json:"cacheEnabled"`
+	}
+
+	type CacheService struct {
+		Name string
+	}
+
+	type ServiceWithCustomCondition struct {
+		Cache *CacheService `autowired:"cacheBean" conditional_on_property:"myApp.cacheEnabled=true"`
+	}
+
+	appConfig := &AppConfig{CacheEnabled: "false"}
+
+	SetBean("myApp", appConfig)
+	SetBean("cacheBean", &CacheService{Name: "cache"})
+
+	svc := &ServiceWithCustomCondition{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.Cache)
+}
+
+// TestConditionalOnPropertyShorthand 测试无前缀简写格式（默认从 default bean 读取）
+func TestConditionalOnPropertyShorthand(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		Mode string `json:"mode"`
+	}
+
+	type ModeService struct {
+		Name string
+	}
+
+	type ServiceWithShorthand struct {
+		ModeSvc *ModeService `autowired:"modeBean" conditional_on_property:"mode=redis"`
+	}
+
+	config := &DefaultConfig{Mode: "redis"}
+
+	SetBean("default", config)
+	SetBean("modeBean", &ModeService{Name: "mode"})
+
+	svc := &ServiceWithShorthand{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.ModeSvc)
+	assert.Equal(t, "mode", svc.ModeSvc.Name)
+}
+
+// TestConditionalOnPropertyShorthandNotMatch 测试简写格式条件不匹配
+func TestConditionalOnPropertyShorthandNotMatch(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		Mode string `json:"mode"`
+	}
+
+	type ModeService struct {
+		Name string
+	}
+
+	type ServiceWithShorthand struct {
+		ModeSvc *ModeService `autowired:"modeBean" conditional_on_property:"mode=cluster"`
+	}
+
+	config := &DefaultConfig{Mode: "redis"}
+
+	SetBean("default", config)
+	SetBean("modeBean", &ModeService{Name: "mode"})
+
+	svc := &ServiceWithShorthand{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.ModeSvc)
+}
+
+// TestConditionalOnPropertyMultipleConditions 测试多个字段使用不同配置源
+func TestConditionalOnPropertyMultipleConditions(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type RedisConfig struct {
+		ClusterMode string `json:"clusterMode"`
+	}
+
+	type ServiceA struct{ Name string }
+	type ServiceB struct{ Name string }
+
+	type ServiceWithMultiConditions struct {
+		SvcA *ServiceA `autowired:"svcABean" conditional_on_property:"default.featureEnabled=yes"`
+		SvcB *ServiceB `autowired:"svcBBean" conditional_on_property:"redisConfig.clusterMode=redis"`
+	}
+
+	defaultConfig := &DefaultConfig{FeatureEnabled: "yes"}
+	redisConfig := &RedisConfig{ClusterMode: "redis"}
+
+	SetBean("default", defaultConfig)
+	SetBean("redisConfig", redisConfig)
+	SetBean("svcABean", &ServiceA{Name: "a"})
+	SetBean("svcBBean", &ServiceB{Name: "b"})
+
+	svc := &ServiceWithMultiConditions{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.SvcA)
+	assert.Equal(t, "a", svc.SvcA.Name)
+	assert.NotNil(t, svc.SvcB)
+	assert.Equal(t, "b", svc.SvcB.Name)
+}
+
+// TestConditionalOnPropertyInvalidFormat 测试无效格式 panic
+func TestConditionalOnPropertyInvalidFormat(t *testing.T) {
+	ClearBeans()
+
+	type Config struct {
+		Key string `json:"key"`
+	}
+
+	type ServiceWithInvalidCondition struct {
+		Field *TestAutoWrite1 `autowired:"" conditional_on_property:"no_equal_sign"`
+	}
+
+	SetBean("default", &Config{Key: "val"})
+	AddBean(&TestAutoWrite1{})
+
+	svc := &ServiceWithInvalidCondition{}
+	AddBean(svc)
+
+	defer func() {
+		if r := recover(); r != nil {
+			assert.Contains(t, r.(string), "not supported conditionalOnProperty")
+		}
+	}()
+
+	Ioc()
+	t.Fatal("should panic")
+}
+
+// TestConditionalOnPropertyMixedConditions 测试混合使用有条件和无条件注入
+func TestConditionalOnPropertyMixedConditions(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type OptionalService struct{ Name string }
+	type RequiredService struct{ Name string }
+
+	type MixedService struct {
+		Optional *OptionalService `autowired:"optBean" conditional_on_property:"default.featureEnabled=true"`
+		Required *RequiredService `autowired:""`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "false"}
+
+	SetBean("default", config)
+	SetBean("optBean", &OptionalService{Name: "optional"})
+	AddBean(&RequiredService{Name: "required"})
+
+	svc := &MixedService{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.Optional)
+	assert.NotNil(t, svc.Required)
+	assert.Equal(t, "required", svc.Required.Name)
+}
+
+// ========== conditional_on_property 新语法测试（| 分隔符） ==========
+
+// TestNewSyntaxWithDefaultBean 测试新语法 autowired:"beanName|conditional_on_property:default.xxx=yyy"
+func TestNewSyntaxWithDefaultBean(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type FeatureService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		Feature *FeatureService `autowired:"featureBean|conditional_on_property:default.featureEnabled=true"`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "true"}
+	SetBean("default", config)
+	SetBean("featureBean", &FeatureService{Name: "feature"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Feature)
+	assert.Equal(t, "feature", svc.Feature.Name)
+}
+
+// TestNewSyntaxWithDefaultBeanNotMatch 测试新语法条件不匹配
+func TestNewSyntaxWithDefaultBeanNotMatch(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type FeatureService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		Feature *FeatureService `autowired:"featureBean|conditional_on_property:default.featureEnabled=true"`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "false"}
+	SetBean("default", config)
+	SetBean("featureBean", &FeatureService{Name: "feature"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.Feature)
+}
+
+// TestNewSyntaxWithCustomBean 测试新语法使用自定义配置源
+func TestNewSyntaxWithCustomBean(t *testing.T) {
+	ClearBeans()
+
+	type AppConfig struct {
+		CacheEnabled string `json:"cacheEnabled"`
+	}
+
+	type CacheService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		Cache *CacheService `autowired:"cacheBean|conditional_on_property:myApp.cacheEnabled=true"`
+	}
+
+	appConfig := &AppConfig{CacheEnabled: "true"}
+	SetBean("myApp", appConfig)
+	SetBean("cacheBean", &CacheService{Name: "cache"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Cache)
+	assert.Equal(t, "cache", svc.Cache.Name)
+}
+
+// TestNewSyntaxWithCustomBeanNotMatch 测试新语法自定义配置源条件不匹配
+func TestNewSyntaxWithCustomBeanNotMatch(t *testing.T) {
+	ClearBeans()
+
+	type AppConfig struct {
+		CacheEnabled string `json:"cacheEnabled"`
+	}
+
+	type CacheService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		Cache *CacheService `autowired:"cacheBean|conditional_on_property:myApp.cacheEnabled=true"`
+	}
+
+	appConfig := &AppConfig{CacheEnabled: "false"}
+	SetBean("myApp", appConfig)
+	SetBean("cacheBean", &CacheService{Name: "cache"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.Nil(t, svc.Cache)
+}
+
+// TestNewSyntaxWithShorthand 测试新语法简写格式（无 beanName 前缀）
+func TestNewSyntaxWithShorthand(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		Mode string `json:"mode"`
+	}
+
+	type ModeService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		ModeSvc *ModeService `autowired:"modeBean|conditional_on_property:mode=redis"`
+	}
+
+	config := &DefaultConfig{Mode: "redis"}
+	SetBean("default", config)
+	SetBean("modeBean", &ModeService{Name: "mode"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.ModeSvc)
+	assert.Equal(t, "mode", svc.ModeSvc.Name)
+}
+
+// TestNewSyntaxEmptyBeanName 测试新语法空 bean 名（autowired:"|conditional_on_property:xxx=yyy"）
+func TestNewSyntaxEmptyBeanName(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+	}
+
+	type FeatureService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		Feature *FeatureService `autowired:"|conditional_on_property:default.featureEnabled=true"`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "true"}
+	SetBean("default", config)
+	AddBean(&FeatureService{Name: "feature"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Feature)
+}
+
+// TestNewSyntaxMixedWithOldSyntax 测试新旧语法混用
+func TestNewSyntaxMixedWithOldSyntax(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		FeatureEnabled string `json:"featureEnabled"`
+		CacheEnabled   string `json:"cacheEnabled"`
+	}
+
+	type FeatureService struct{ Name string }
+	type CacheService struct{ Name string }
+
+	type MixedService struct {
+		Feature *FeatureService `autowired:"featureBean|conditional_on_property:default.featureEnabled=true"`
+		Cache   *CacheService   `autowired:"cacheBean" conditional_on_property:"default.cacheEnabled=true"`
+	}
+
+	config := &DefaultConfig{FeatureEnabled: "true", CacheEnabled: "true"}
+	SetBean("default", config)
+	SetBean("featureBean", &FeatureService{Name: "feature"})
+	SetBean("cacheBean", &CacheService{Name: "cache"})
+
+	svc := &MixedService{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.Feature)
+	assert.Equal(t, "feature", svc.Feature.Name)
+	assert.NotNil(t, svc.Cache)
+	assert.Equal(t, "cache", svc.Cache.Name)
+}
+
+// TestNewSyntaxAutowriteTag 测试 autowrite 标签也支持新语法
+func TestNewSyntaxAutowriteTag(t *testing.T) {
+	ClearBeans()
+
+	type DefaultConfig struct {
+		Mode string `json:"mode"`
+	}
+
+	type ModeService struct {
+		Name string
+	}
+
+	type ServiceWithNewSyntax struct {
+		ModeSvc *ModeService `autowrite:"modeBean|conditional_on_property:mode=redis"`
+	}
+
+	config := &DefaultConfig{Mode: "redis"}
+	SetBean("default", config)
+	SetBean("modeBean", &ModeService{Name: "mode"})
+
+	svc := &ServiceWithNewSyntax{}
+	AddBean(svc)
+
+	Ioc()
+
+	assert.NotNil(t, svc.ModeSvc)
+	assert.Equal(t, "mode", svc.ModeSvc.Name)
 }

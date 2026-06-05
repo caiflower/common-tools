@@ -204,7 +204,9 @@ type UserService struct {
 
 ### `conditional_on_property`
 
-条件注入，基于配置决定是否注入。
+条件注入，基于配置决定是否注入。支持两种写法：独立标签和内联语法。
+
+#### 独立标签写法
 
 ```go
 type OptionalService struct {
@@ -212,7 +214,42 @@ type OptionalService struct {
 }
 ```
 
-需要先注册名为 `"default"` 的配置 Bean。
+#### 内联语法写法
+
+使用 `|` 分隔符将条件直接写在 `autowired`/`autowrite` 标签值中，更紧凑：
+
+```go
+type OptionalService struct {
+    // 指定 bean 名称 + 条件
+    Feature *FeatureService `autowired:"featureBean|conditional_on_property:default.feature.enabled=true"`
+    // 空 bean 名称 + 条件（自动按类型查找）
+    Cache   *CacheService   `autowired:"|conditional_on_property:default.cache.enabled=true"`
+}
+```
+
+#### 多配置源
+
+条件表达式支持从任意已注册的 Bean 中读取配置，不再局限于 `default`：
+
+| 格式 | 说明 | 示例 |
+|------|------|------|
+| `default.xxx=yyy` | 从 `default` Bean 读取（原有格式，完全兼容） | `default.cluster.mode=redis` |
+| `<beanName>.xxx=yyy` | 从指定名称的 Bean 读取 | `myApp.cache.enabled=true` |
+| `xxx=yyy` | 无前缀，默认从 `default` Bean 读取 | `cluster.mode=redis` |
+
+```go
+// 从自定义配置 Bean 读取
+type ClusterService struct {
+    Redis RedisClient `autowired:"redisBean|conditional_on_property:redisConfig.cluster.mode=redis"`
+}
+
+// 简写格式，默认从 default 读取
+type FeatureService struct {
+    Mode *ModeService `autowired:"modeBean|conditional_on_property:mode=redis"`
+}
+```
+
+**注意：** 需要先注册对应的配置 Bean（如 `default`、`redisConfig` 等），配置结构体的字段需添加 `json` tag 以便 jsonpath 解析。
 
 ## 💡 使用示例
 
