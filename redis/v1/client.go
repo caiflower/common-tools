@@ -104,6 +104,7 @@ type RedisClient interface {
 }
 
 type Config struct {
+	Name                  string        `yaml:"name" json:"name"`
 	Mode                  string        `yaml:"mode" json:"mode"`
 	Addrs                 []string      `yaml:"addrs" json:"addrs"`
 	Password              string        `yaml:"password" json:"password"`

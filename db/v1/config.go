@@ -22,6 +22,7 @@ import (
 )
 
 type Config struct {
+	Name                  string        `yaml:"name" json:"name"`
 	Dialect               string        `yaml:"dialect" default:"mysql" json:"dialect"`
 	Url                   string        `yaml:"url" default:"127.0.0.1:3306" json:"url"`
 	DbName                string        `yaml:"dbName" json:"dbName"`

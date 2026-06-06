@@ -30,6 +30,7 @@ import (
 )
 
 type WebConfig struct {
+	Name          string `yaml:"name" json:"name"`
 	Addr          string `yaml:"addr" default:"0.0.0.0:8080"`
 	EnableSwagger bool   `yaml:"enable_swagger"`
 	EnablePprof   bool   `yaml:"enable_pprof"`
@@ -45,6 +46,42 @@ type DefaultConfig struct {
 	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
 	KafkaConfig      []xkafka.Config  `yaml:"kafka" json:"kafka"`
 	WebConfig        []WebConfig      `yaml:"web" json:"web"`
+}
+
+func (c *DefaultConfig) GetDatabaseConfigByName(name string) *dbv1.Config {
+	for i := range c.DatabaseConfig {
+		if c.DatabaseConfig[i].Name == name {
+			return &c.DatabaseConfig[i]
+		}
+	}
+	return nil
+}
+
+func (c *DefaultConfig) GetRedisConfigByName(name string) *redisv1.Config {
+	for i := range c.RedisConfig {
+		if c.RedisConfig[i].Name == name {
+			return &c.RedisConfig[i]
+		}
+	}
+	return nil
+}
+
+func (c *DefaultConfig) GetKafkaConfigByName(name string) *xkafka.Config {
+	for i := range c.KafkaConfig {
+		if c.KafkaConfig[i].Name == name {
+			return &c.KafkaConfig[i]
+		}
+	}
+	return nil
+}
+
+func (c *DefaultConfig) GetWebConfigByName(name string) *WebConfig {
+	for i := range c.WebConfig {
+		if c.WebConfig[i].Name == name {
+			return &c.WebConfig[i]
+		}
+	}
+	return nil
 }
 
 func LoadDefaultConfig(v *DefaultConfig) (err error) {
