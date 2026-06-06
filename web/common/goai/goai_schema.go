@@ -24,6 +24,7 @@ import (
 	"unicode"
 
 	"github.com/caiflower/common-tools/pkg/tools"
+	hjson "github.com/caiflower/common-tools/web/common/json"
 )
 
 type Schema struct {
@@ -168,7 +169,7 @@ func (s Schemas) MarshalJSON() ([]byte, error) {
 	if len(s.refs) == 0 {
 		return []byte("{}"), nil
 	}
-	r, err := tools.Marshal(s.refs)
+	r, err := hjson.Marshal(s.refs)
 	return r, err
 }
 

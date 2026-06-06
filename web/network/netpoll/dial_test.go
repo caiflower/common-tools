@@ -19,25 +19,23 @@ package netpoll
 
 import (
 	"context"
+	"crypto/tls"
 	"testing"
 	"time"
 
 	"github.com/caiflower/common-tools/web/app/server/config"
-	"github.com/caiflower/common-tools/web/network"
-	"github.com/stretchr/testify/assert"
+	"github.com/caiflower/common-tools/web/common/test/assert"
+	"github.com/caiflower/common-tools/web/common/test/mock"
+	"github.com/caiflower/common-tools/web/common/test/testutils"
 )
-
-func getListenerAddr(trans network.Transporter) string {
-	return trans.(*transporter).Listener().Addr().String()
-}
 
 func TestDial(t *testing.T) {
 	t.Run("NetpollDial", func(t *testing.T) {
-		const nw = "tcp"
-		var addr = "127.0.0.1:0"
+		ln := testutils.NewTestListener(t)
+		defer ln.Close()
+
 		transporter := NewTransporter(&config.Options{
-			Addr:    addr,
-			Network: nw,
+			Listener: ln,
 		})
 		go transporter.ListenAndServe(func(ctx context.Context, conn interface{}) error {
 			return nil
@@ -46,19 +44,30 @@ func TestDial(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		dial := NewDialer()
-		// DialConnection
-		_, err := dial.DialConnection("tcp", "localhost:10101", time.Second, nil) // wrong addr
-		assert.NotNil(t, err)
+		addr := ln.Addr().String()
+		nw := ln.Addr().Network()
 
-		addr = getListenerAddr(transporter)
+		// DialConnection
+		_, err := dial.DialConnection(nw, "localhost:10101", time.Second, nil) // wrong addr
+		assert.NotNil(t, err)
 		nwConn, err := dial.DialConnection(nw, addr, time.Second, nil)
 		assert.Nil(t, err)
 		defer nwConn.Close()
 		_, err = nwConn.Write([]byte("abcdef"))
 		assert.Nil(t, err)
 		// DialTimeout
-		nConn, err := dial.DialTimeout(nw, addr, time.Second, nil)
+		nConn, err := dial.DialTimeout("tcp", addr, time.Second, nil)
 		assert.Nil(t, err)
 		defer nConn.Close()
+	})
+
+	t.Run("NotSupportTLS", func(t *testing.T) {
+		dial := NewDialer()
+		_, err := dial.AddTLS(mock.NewConn(""), nil)
+		assert.DeepEqual(t, errNotSupportTLS, err)
+		_, err = dial.DialConnection("tcp", "localhost:10102", time.Microsecond, &tls.Config{})
+		assert.DeepEqual(t, errNotSupportTLS, err)
+		_, err = dial.DialTimeout("tcp", "localhost:10102", time.Microsecond, &tls.Config{})
+		assert.DeepEqual(t, errNotSupportTLS, err)
 	})
 }

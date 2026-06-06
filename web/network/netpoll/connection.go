@@ -21,6 +21,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/caiflower/common-tools/pkg/logger"
 	errs "github.com/caiflower/common-tools/web/common/errors"
 	"github.com/caiflower/common-tools/web/network"
 	"github.com/cloudwego/netpoll"
@@ -96,6 +97,7 @@ func (c *Conn) HandleSpecificError(err error, rip string) (needIgnore bool) {
 		if strings.Contains(err.Error(), "when flush") {
 			return true
 		}
+		logger.Debug("Netpoll error=%s, remoteAddr=%s", err.Error(), rip)
 		return true
 	}
 	return false

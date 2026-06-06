@@ -23,32 +23,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/test/assert"
 	"github.com/cloudwego/netpoll"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestReadBytes(t *testing.T) {
 	c := &mockConn{[]byte("a"), nil, 0}
 	conn := newConn(c)
-	assert.Equal(t, 1, conn.Len())
+	assert.DeepEqual(t, 1, conn.Len())
 
 	b, _ := conn.Peek(1)
-	assert.Equal(t, []byte{'a'}, b)
+	assert.DeepEqual(t, []byte{'a'}, b)
 
 	readByte, _ := conn.ReadByte()
-	assert.Equal(t, byte('a'), readByte)
+	assert.DeepEqual(t, byte('a'), readByte)
 
 	_, err := conn.ReadByte()
-	assert.Equal(t, errors.New("readByte error: index out of range"), err)
+	assert.DeepEqual(t, errors.New("readByte error: index out of range"), err)
 
 	c = &mockConn{[]byte("bcd"), nil, 0}
 	conn = newConn(c)
 
 	readBinary, _ := conn.ReadBinary(2)
-	assert.Equal(t, []byte{'b', 'c'}, readBinary)
+	assert.DeepEqual(t, []byte{'b', 'c'}, readBinary)
 
 	_, err = conn.ReadBinary(2)
-	assert.Equal(t, errors.New("readBinary error: index out of range"), err)
+	assert.DeepEqual(t, errors.New("readBinary error: index out of range"), err)
 }
 
 func TestPeekRelease(t *testing.T) {
@@ -58,25 +58,25 @@ func TestPeekRelease(t *testing.T) {
 	// release the buf
 	conn.Release()
 	_, err := conn.Peek(1)
-	assert.Equal(t, errors.New("peek error"), err)
+	assert.DeepEqual(t, errors.New("peek error"), err)
 
-	assert.Equal(t, errors.New("skip error"), conn.Skip(2))
+	assert.DeepEqual(t, errors.New("skip error"), conn.Skip(2))
 }
 
 func TestWriteLogin(t *testing.T) {
 	c := &mockConn{nil, []byte("abcdefg"), 0}
 	conn := newConn(c)
 	buf, _ := conn.Malloc(10)
-	assert.Equal(t, 10, len(buf))
+	assert.DeepEqual(t, 10, len(buf))
 	n, _ := conn.WriteBinary([]byte("abcdefg"))
-	assert.Equal(t, 7, n)
-	assert.Equal(t, errors.New("flush error"), conn.Flush())
+	assert.DeepEqual(t, 7, n)
+	assert.DeepEqual(t, errors.New("flush error"), conn.Flush())
 }
 
 func TestHandleSpecificError(t *testing.T) {
 	conn := &Conn{}
-	assert.Equal(t, false, conn.HandleSpecificError(nil, ""))
-	assert.Equal(t, true, conn.HandleSpecificError(netpoll.ErrConnClosed, ""))
+	assert.DeepEqual(t, false, conn.HandleSpecificError(nil, ""))
+	assert.DeepEqual(t, true, conn.HandleSpecificError(netpoll.ErrConnClosed, ""))
 }
 
 type mockConn struct {

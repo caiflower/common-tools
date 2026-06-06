@@ -31,6 +31,7 @@ import (
 	"github.com/caiflower/common-tools/web/common/compress"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
+	hjson "github.com/caiflower/common-tools/web/common/json"
 )
 
 var (
@@ -91,7 +92,7 @@ func setArgsOptimized(ctx *app.RequestCtx, arg interface{}, argInfo *basic.ArgIn
 			bytes = tmpBytes
 		}
 
-		if err := tools.Unmarshal(bytes, arg); err != nil {
+		if err := hjson.Unmarshal(bytes, arg); err != nil {
 			err = json.Unmarshal(bytes, arg)
 			var typeError *json.UnmarshalTypeError
 			if errors.As(err, &typeError) {

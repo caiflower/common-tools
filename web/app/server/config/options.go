@@ -68,6 +68,7 @@ type Options struct {
 	TLS                           *tls.Config
 	DisableHeaderNamesNormalizing bool          `yaml:"disableHeaderNamesNormalizing"`
 	ExitWaitTimeout               time.Duration `yaml:"exitWaitTimeout" default:"5s"`
+	Listener                      net.Listener
 	Http2Options
 }
 

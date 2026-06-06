@@ -1,4 +1,4 @@
-//go:build !(amd64 || arm64) && !stdjson
+//go:build (amd64 || arm64) && !stdjson
 
 /*
  * Copyright 2024 caiflower Authors
@@ -18,19 +18,22 @@
 
 package tools
 
-import jsoniter "github.com/json-iterator/go"
+import "github.com/bytedance/sonic"
+
+// Name is the name of the effective json package.
+const Name = "sonic"
 
 var (
-	json = jsoniter.ConfigCompatibleWithStandardLibrary
-	// Marshal is jsoniter implementation.
+	json = sonic.ConfigStd
+	// Marshal is sonic implementation exported by hertz which is used by rendering.
 	Marshal = json.Marshal
-	// Unmarshal is jsoniter implementation.
+	// Unmarshal is sonic implementation exported by hertz which is used by binding.
 	Unmarshal = json.Unmarshal
-	// MarshalIndent is jsoniter implementation.
+	// MarshalIndent is sonic implementation exported by hertz.
 	MarshalIndent = json.MarshalIndent
-	// NewDecoder is jsoniter implementation.
+	// NewDecoder is sonic implementation exported by hertz.
 	NewDecoder = json.NewDecoder
-	// NewEncoder is jsoniter implementation.
+	// NewEncoder is sonic implementation exported by hertz.
 	NewEncoder = json.NewEncoder
 )
 

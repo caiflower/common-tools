@@ -45,7 +45,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"github.com/caiflower/common-tools/pkg/tools"
+	hjson "github.com/caiflower/common-tools/web/common/json"
 	"github.com/caiflower/common-tools/web/protocol"
 )
 
@@ -55,7 +55,7 @@ type JSONMarshaler func(v interface{}) ([]byte, error)
 var jsonMarshalFunc JSONMarshaler
 
 func init() {
-	ResetJSONMarshal(tools.Marshal)
+	ResetJSONMarshal(hjson.Marshal)
 }
 
 func ResetJSONMarshal(fn JSONMarshaler) {

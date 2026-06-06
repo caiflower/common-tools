@@ -23,14 +23,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/test/assert"
 	"github.com/caiflower/common-tools/web/network"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestDialer(t *testing.T) {
 	SetDialer(&mockDialer{})
 	dialer := DefaultDialer()
-	assert.Same(t, &mockDialer{}, dialer)
+	assert.DeepEqual(t, &mockDialer{}, dialer)
 
 	_, err := AddTLS(nil, nil)
 	assert.NotNil(t, err)

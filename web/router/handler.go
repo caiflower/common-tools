@@ -35,6 +35,7 @@ import (
 	"github.com/caiflower/common-tools/web/common/adaptor"
 	"github.com/caiflower/common-tools/web/common/e"
 	"github.com/caiflower/common-tools/web/common/goai"
+	hjson "github.com/caiflower/common-tools/web/common/json"
 	"github.com/caiflower/common-tools/web/protocol/consts"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -546,7 +547,7 @@ func (h *Handler) writeError(ctx *app.RequestCtx, err e.ApiError) {
 		Error:     &e.Error{Code: err.GetCode(), Message: err.GetMessage(), Type: err.GetType(), Cause: err.GetCause()},
 	}
 
-	bytes, _ := tools.Marshal(res)
+	bytes, _ := hjson.Marshal(res)
 	str := ctx.GetAcceptEncoding()
 	if ctx.IsRestful() {
 		ctx.SetStatusCode(err.GetCode())
@@ -581,7 +582,7 @@ func (h *Handler) writeResponse(ctx *app.RequestCtx) {
 		Data:      ctx.GetData(),
 	}
 
-	bytes, _ := tools.Marshal(res)
+	bytes, _ := hjson.Marshal(res)
 	str := ctx.GetAcceptEncoding()
 	if strings.Contains(str, "gzip") {
 		bytes = compress.AppendGzipBytesLevel(nil, bytes, 5)
