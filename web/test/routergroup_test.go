@@ -1,0 +1,685 @@
+/*
+ * Copyright 2024 caiflower Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package webtest
+
+import (
+	"bytes"
+	"context"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/caiflower/common-tools/web"
+	"github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/app/server/config"
+	"github.com/caiflower/common-tools/web/common/json"
+	"github.com/caiflower/common-tools/web/common/resp"
+	"github.com/caiflower/common-tools/web/router"
+	"github.com/stretchr/testify/assert"
+)
+
+// TestRouterGroupBasic tests basic RouterGroup functionality
+func TestRouterGroupBasic(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register a simple HandlerFunc route (like Hertz)
+	engine.GET("/ping", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"message": "pong"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/ping", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+
+	var resp map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, "pong", resp["message"])
+}
+
+// TestRouterGroupWithPrefix tests RouterGroup with path prefix
+func TestRouterGroupWithPrefix(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-prefix"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Create a group with prefix
+	api := engine.Group("/api")
+	api.GET("/users", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"handler": "list-users"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/api/users", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+
+	var resp map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, "list-users", resp["handler"])
+}
+
+// TestRouterGroupNested tests nested RouterGroups
+func TestRouterGroupNested(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-nested"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	v1 := engine.Group("/api/v1")
+	v1.GET("/status", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"version": "v1"})
+	})
+
+	v2 := engine.Group("/api/v2")
+	v2.GET("/status", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"version": "v2"})
+	})
+
+	handler := engine.Handler()
+
+	// Test v1
+	req := httptest.NewRequest("GET", "/api/v1/status", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	assert.Equal(t, 200, w.Code)
+	var resp1 map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp1)
+	assert.Equal(t, "v1", resp1["version"])
+
+	// Test v2
+	req2 := httptest.NewRequest("GET", "/api/v2/status", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	assert.Equal(t, 200, w2.Code)
+	var resp2 map[string]string
+	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.Equal(t, "v2", resp2["version"])
+}
+
+// TestRouterGroupMiddleware tests middleware execution in RouterGroup
+func TestRouterGroupMiddleware(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-middleware"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var middlewareCalled bool
+
+	api := engine.Group("/api")
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		middlewareCalled = true
+		reqCtx.SetHeader("X-Middleware", "true")
+	})
+	api.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]bool{"ok": true})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.True(t, middlewareCalled, "middleware should have been called")
+}
+
+// TestRouterGroupMultipleMethods tests registering multiple HTTP methods
+func TestRouterGroupMultipleMethods(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-methods"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.GET("/resource", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"method": "GET"})
+	})
+	engine.POST("/resource", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"method": "POST"})
+	})
+	engine.PUT("/resource", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"method": "PUT"})
+	})
+	engine.DELETE("/resource", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"method": "DELETE"})
+	})
+
+	handler := engine.Handler()
+
+	methods := []string{"GET", "POST", "PUT", "DELETE"}
+	for _, m := range methods {
+		req := httptest.NewRequest(m, "/resource", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+		var resp map[string]string
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, m, resp["method"])
+	}
+}
+
+// TestRouterGroupGRPC tests gRPC route registration via RouterGroup
+func TestRouterGroupGRPC(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-grpc"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register gRPC route using the GRPC method
+	engine.GRPC("POST", "/grpc/search", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"test"}`
+	req := httptest.NewRequest("POST", "/grpc/search", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// Should not be 404 (route should be found)
+	assert.NotEqual(t, 404, w.Code, "gRPC route should be registered and found")
+}
+
+// TestRouterGroupAutoDetectHandler tests auto-detection of handler types
+func TestRouterGroupAutoDetectHandler(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-autodetect"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register with app.HandlerFunc (should be auto-detected as HandlerFuncTypeOfMethod)
+	engine.GET("/handler-func", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"type": "handler-func"})
+	})
+
+	// Register with a regular function (should be auto-detected as DefaultTypeOfMethod)
+	engine.POST("/regular-func", func(req *UserRequest) *UserResponse {
+		return &UserResponse{
+			Success: true,
+			Message: "regular func",
+		}
+	})
+
+	handler := engine.Handler()
+
+	// Test HandlerFunc route
+	req1 := httptest.NewRequest("GET", "/handler-func", nil)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	assert.Equal(t, 200, w1.Code)
+
+	var resp1 map[string]string
+	json.Unmarshal(w1.Body.Bytes(), &resp1)
+	assert.Equal(t, "handler-func", resp1["type"])
+
+	// Test regular function route
+	body, _ := json.Marshal(UserRequest{
+		ID:     1,
+		Name:   "Test",
+		Age:    25,
+		Status: "active",
+	})
+	req2 := httptest.NewRequest("POST", "/regular-func", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	assert.Equal(t, 200, w2.Code)
+}
+
+// TestRouterGroupAny tests the Any method which registers all HTTP methods
+func TestRouterGroupAny(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-any"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Any("/any", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"method": string(reqCtx.Method())})
+	})
+
+	handler := engine.Handler()
+
+	for _, m := range []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"} {
+		req := httptest.NewRequest(m, "/any", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, 200, w.Code, "method %s should return 200", m)
+	}
+}
+
+// TestRouterGroupHandle tests custom HTTP method registration
+func TestRouterGroupHandle(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-handle"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Handle("GET", "/custom", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"custom": "true"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/custom", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	assert.Equal(t, 200, w.Code)
+}
+
+// TestRouterGroupGRPCWithDifferentMethods tests PUTGRPC and PATCHGRPC
+func TestRouterGroupGRPCWithDifferentMethods(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-grpc-methods"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register gRPC with different HTTP methods
+	engine.GRPC("PUT", "/grpc/update", _IService_Search_Handler, &HelloImpl{})
+	engine.GRPC("PATCH", "/grpc/patch", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	// Test PUT gRPC route
+	req1 := httptest.NewRequest("PUT", "/grpc/update", bytes.NewReader([]byte(`{"query":"test"}`)))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	assert.NotEqual(t, 404, w1.Code, "PUT gRPC route should be found")
+
+	// Test PATCH gRPC route
+	req2 := httptest.NewRequest("PATCH", "/grpc/patch", bytes.NewReader([]byte(`{"query":"test"}`)))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	assert.NotEqual(t, 404, w2.Code, "PATCH gRPC route should be found")
+}
+
+// TestRouterGroupMiddlewareIsolation tests that middleware in one group does not affect another group
+func TestRouterGroupMiddlewareIsolation(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-isolation"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var groupAMiddlewareCalled bool
+	var groupBMiddlewareCalled bool
+
+	groupA := engine.Group("/a")
+	groupA.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		groupAMiddlewareCalled = true
+	})
+	groupA.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"group": "a"})
+	})
+
+	groupB := engine.Group("/b")
+	groupB.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"group": "b"})
+	})
+
+	handler := engine.Handler()
+
+	// Request /b/test should NOT trigger groupA's middleware
+	req := httptest.NewRequest("GET", "/b/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.False(t, groupAMiddlewareCalled, "groupA middleware should NOT be called for /b/test")
+	assert.False(t, groupBMiddlewareCalled, "groupB has no middleware, should remain false")
+}
+
+// TestRouterGroupMiddlewareChainedUse tests multiple Use calls execute middleware in order
+func TestRouterGroupMiddlewareChainedUse(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-chained-use"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	api := engine.Group("/api")
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw1")
+	})
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw2")
+	})
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw3")
+	})
+	api.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "handler")
+		reqCtx.JSON(200, map[string]bool{"ok": true})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, []string{"mw1", "mw2", "mw3", "handler"}, order, "middleware and handler should execute in registration order")
+}
+
+// TestRouterGroupMiddlewareNestedInheritance tests that nested groups inherit parent middleware
+func TestRouterGroupMiddlewareNestedInheritance(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-nested-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	api := engine.Group("/api")
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "api-mw")
+	})
+
+	v1 := api.Group("/v1")
+	v1.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "v1-mw")
+	})
+	v1.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "handler")
+		reqCtx.JSON(200, map[string]bool{"ok": true})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/api/v1/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, []string{"api-mw", "v1-mw", "handler"}, order, "parent and child middleware should both execute in order")
+}
+
+// TestRouterGroupDefaultTypeWithValidation tests DefaultTypeOfMethod with parameter validation
+func TestRouterGroupDefaultTypeWithValidation(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-validation"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register a regular function route (DefaultTypeOfMethod) with validation tags
+	engine.POST("/users", func(req *UserRequest) *UserResponse {
+		return &UserResponse{
+			Success: true,
+			Message: "ok",
+			Data: map[string]interface{}{
+				"id":     req.ID,
+				"name":   req.Name,
+				"age":    req.Age,
+				"status": req.Status,
+			},
+		}
+	})
+
+	handler := engine.Handler()
+
+	t.Run("valid request", func(t *testing.T) {
+		body, _ := json.Marshal(UserRequest{
+			ID:     1,
+			Name:   "John",
+			Age:    25,
+			Status: "active",
+		})
+		req := httptest.NewRequest("POST", "/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		// DefaultTypeOfMethod return value is wrapped in result.Data
+		respMap, ok := result.Data.(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, true, respMap["success"])
+		innerData, ok := respMap["data"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, float64(1), innerData["id"])
+		assert.Equal(t, "John", innerData["name"])
+	})
+
+	t.Run("missing required name", func(t *testing.T) {
+		body, _ := json.Marshal(UserRequest{
+			ID:     1,
+			Name:   "", // required, empty should fail
+			Age:    25,
+			Status: "active",
+		})
+		req := httptest.NewRequest("POST", "/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.NotEqual(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NotNil(t, result.Error)
+		assert.Contains(t, result.Error.Message, "Name")
+	})
+
+	t.Run("age out of range", func(t *testing.T) {
+		body, _ := json.Marshal(UserRequest{
+			ID:     1,
+			Name:   "John",
+			Age:    150, // max 120
+			Status: "active",
+		})
+		req := httptest.NewRequest("POST", "/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.NotEqual(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NotNil(t, result.Error)
+		assert.Contains(t, result.Error.Message, "Age")
+	})
+
+	t.Run("invalid status value", func(t *testing.T) {
+		body, _ := json.Marshal(UserRequest{
+			ID:     1,
+			Name:   "John",
+			Age:    25,
+			Status: "unknown", // not in [active, inactive, pending]
+		})
+		req := httptest.NewRequest("POST", "/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.NotEqual(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NotNil(t, result.Error)
+		assert.Contains(t, result.Error.Message, "Status")
+	})
+
+	t.Run("id out of range", func(t *testing.T) {
+		body, _ := json.Marshal(UserRequest{
+			ID:     0, // must be between 1-1000
+			Name:   "John",
+			Age:    25,
+			Status: "active",
+		})
+		req := httptest.NewRequest("POST", "/users", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.NotEqual(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NotNil(t, result.Error)
+		assert.Contains(t, result.Error.Message, "ID")
+	})
+}
+
+// TestRouterGroupDefaultTypeWithGroupAndValidation tests DefaultTypeOfMethod in a group with validation
+func TestRouterGroupDefaultTypeWithGroupAndValidation(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-group-validation"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	api := engine.Group("/api")
+	api.POST("/products", func(req *ProductRequest) *UserResponse {
+		return &UserResponse{
+			Success: true,
+			Message: "product created",
+			Data: map[string]interface{}{
+				"product_id":   req.ProductID,
+				"product_name": req.ProductName,
+				"price":        req.Price,
+				"category":     req.Category,
+			},
+		}
+	})
+
+	handler := engine.Handler()
+
+	t.Run("valid product request", func(t *testing.T) {
+		body, _ := json.Marshal(ProductRequest{
+			ProductID:   100,
+			ProductName: "Laptop",
+			Price:       999.99,
+			Category:    "Electronics",
+		})
+		req := httptest.NewRequest("POST", "/api/products", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		respMap, ok := result.Data.(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, true, respMap["success"])
+		innerData, ok := respMap["data"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, float64(100), innerData["product_id"])
+	})
+
+	t.Run("missing required product_name", func(t *testing.T) {
+		body, _ := json.Marshal(ProductRequest{
+			ProductID:   100,
+			ProductName: "", // required
+			Price:       999.99,
+			Category:    "Electronics",
+		})
+		req := httptest.NewRequest("POST", "/api/products", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.NotEqual(t, 200, w.Code)
+		var result resp.Result
+		json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NotNil(t, result.Error)
+		assert.Contains(t, result.Error.Message, "ProductName")
+	})
+}
+
+// TestRouterGroupUnsupportedHandlerPanic tests that registering an unsupported handler type panics
+func TestRouterGroupUnsupportedHandlerPanic(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-router-group-panic"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	t.Run("string handler should panic", func(t *testing.T) {
+		assert.Panics(t, func() {
+			engine.GET("/bad", "not-a-function")
+		}, "registering a non-function handler should panic")
+	})
+
+	t.Run("int handler should panic", func(t *testing.T) {
+		assert.Panics(t, func() {
+			engine.GET("/bad2", 123)
+		}, "registering an int handler should panic")
+	})
+
+	t.Run("nil handler should panic", func(t *testing.T) {
+		assert.Panics(t, func() {
+			engine.GET("/bad3", nil)
+		}, "registering a nil handler should panic")
+	})
+
+	t.Run("struct handler should panic", func(t *testing.T) {
+		assert.Panics(t, func() {
+			engine.GET("/bad4", UserRequest{})
+		}, "registering a struct handler should panic")
+	})
+}
+
+// TestRouterGroupImplementsIRoutes verifies RouterGroup implements IRoutes interface
+func TestRouterGroupImplementsIRoutes(t *testing.T) {
+	var _ router.IRoutes = (*router.RouterGroup)(nil)
+	var _ router.IRouter = (*router.RouterGroup)(nil)
+}

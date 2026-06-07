@@ -17,7 +17,10 @@
 package method
 
 import (
+	"context"
+
 	"github.com/caiflower/common-tools/pkg/basic"
+	"github.com/caiflower/common-tools/web/app"
 	"google.golang.org/grpc"
 )
 
@@ -26,6 +29,7 @@ type MethodType uint8
 const (
 	DefaultTypeOfMethod MethodType = iota
 	GrpcTypeOfMethod
+	HandlerFuncTypeOfMethod
 )
 
 type Method struct {
@@ -33,6 +37,7 @@ type Method struct {
 	methodDesc   *grpc.MethodDesc
 	srv          interface{}
 	t            MethodType
+	handlerFunc  app.HandlerFunc
 }
 
 func NewDefaultTypeMethod(method *basic.Method) *Method {
@@ -50,6 +55,13 @@ func NewGrpcTypeMethod(methodDesc *grpc.MethodDesc, srv interface{}, targetMetho
 	}
 }
 
+func NewHandlerFuncTypeMethod(handlerFunc app.HandlerFunc) *Method {
+	return &Method{
+		handlerFunc: handlerFunc,
+		t:           HandlerFuncTypeOfMethod,
+	}
+}
+
 func (m *Method) GetType() MethodType {
 	return m.t
 }
@@ -60,6 +72,8 @@ func (m *Method) GetAction() string {
 		return m.targetMethod.GetName()
 	case GrpcTypeOfMethod:
 		return m.methodDesc.MethodName
+	case HandlerFuncTypeOfMethod:
+		return app.GetHandlerName(m.handlerFunc)
 	default:
 		return ""
 	}
@@ -70,9 +84,21 @@ func (m *Method) GetInfo() (MethodType, *basic.Method, *grpc.MethodDesc, interfa
 }
 
 func (m *Method) HasArgs() bool {
+	if m.t == HandlerFuncTypeOfMethod {
+		return false
+	}
 	return m.targetMethod.HasArgs()
 }
 
 func (m *Method) GetTargetMethod() *basic.Method {
 	return m.targetMethod
+}
+
+func (m *Method) GetHandlerFunc() app.HandlerFunc {
+	return m.handlerFunc
+}
+
+// InvokeHandlerFunc directly invokes the HandlerFunc with the given context.
+func (m *Method) InvokeHandlerFunc(ctx context.Context, reqCtx *app.RequestContext) {
+	m.handlerFunc(ctx, reqCtx)
 }

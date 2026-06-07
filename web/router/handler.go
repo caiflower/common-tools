@@ -257,6 +257,8 @@ func (h *Handler) SortInterceptors() {
 	sort.Sort(h.interceptors)
 }
 
+// AddController adds a controller and registers its methods.
+// Deprecated: Use Engine.GET/POST/PUT/DELETE/PATCH/Group/Use/GRPC instead via RouterGroup.
 func (h *Handler) AddController(v interface{}) *controller.Controller {
 	c, err := controller.NewController(v, h.config.ControllerRootPkgName, h.config.RootPath)
 	if err != nil {
@@ -293,6 +295,8 @@ func (h *Handler) AddController(v interface{}) *controller.Controller {
 	return c
 }
 
+// Register registers a RestfulController route.
+// Deprecated: Use Engine.GET/POST/PUT/DELETE/PATCH/Group/Use/GRPC instead via RouterGroup.
 func (h *Handler) Register(ctl *controller.RestfulController) {
 	var (
 		m                           = ctl.GetMethod()
@@ -375,6 +379,24 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 	// method
 	if m, find = h.getTargetMethod(ctx); !find {
 		ctx.SetError(e.NewApiError(e.NotFound, "no such api.", nil))
+		return
+	}
+
+	// HandlerFuncTypeOfMethod: direct call, no parameter parsing
+	// Handler uses ctx.JSON() to write response directly (like Hertz).
+	// Abort to prevent afterDispatchCallbackFunc from writing again.
+	if m.GetType() == method.HandlerFuncTypeOfMethod {
+		targetMethod := func() e.ApiError {
+			m.InvokeHandlerFunc(ctx.GetContext(), ctx)
+			return nil
+		}
+
+		// aop
+		if err := h.interceptors.DoInterceptor(ctx, targetMethod); err != nil {
+			ctx.SetError(err)
+			return
+		}
+		ctx.Abort()
 		return
 	}
 
@@ -463,7 +485,15 @@ func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
 		if tree != nil {
 			res := tree.find(path, &ctx.Paths, false)
 			if res.handlers != nil {
-				m = &res.handlers[0]
+				// Execute middleware (all handlers except the last one)
+				for i := 0; i < len(res.handlers)-1; i++ {
+					mw := res.handlers[i]
+					if mw.GetType() == method.HandlerFuncTypeOfMethod {
+						mw.InvokeHandlerFunc(ctx.GetContext(), ctx)
+					}
+				}
+				// Return the last handler as the target method
+				m = &res.handlers[len(res.handlers)-1]
 				ctx.SetAction(m.GetAction())
 			}
 		}
@@ -698,10 +728,23 @@ func (h *Handler) GetCtxPool() *sync.Pool {
 	return &h.ctxPool
 }
 
+// RegisterGRPCService registers a gRPC service and its methods.
+// Deprecated: Use Engine.GRPC(httpMethod, path, handler, srv) instead via RouterGroup.
 func (h *Handler) RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller {
 	ctl := h.AddController(srv)
 	ctl.SetGrpcService(serviceDesc, srv)
 	return ctl
+}
+
+// addRoute adds a route with handlers to the method tree.
+// This implements the RouteRegistrar interface used by RouterGroup.
+func (h *Handler) addRoute(httpMethod string, path string, handlers HandlersChain) {
+	methodRouter := h.trees.get(httpMethod)
+	if methodRouter == nil {
+		methodRouter = &router{method: httpMethod, root: &node{}}
+		h.trees = append(h.trees, methodRouter)
+	}
+	methodRouter.addRoute(path, handlers)
 }
 
 func (h *Handler) recordMetric(ctx *app.RequestContext) {

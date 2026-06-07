@@ -35,6 +35,8 @@ type RestfulController struct {
 	srv interface{}
 }
 
+// NewRestFul creates a new RestfulController builder.
+// Deprecated: Use Engine.Group(path).GET/POST/PUT/DELETE/PATCH instead via RouterGroup.
 func NewRestFul() *RestfulController {
 	return &RestfulController{}
 }
