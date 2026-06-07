@@ -8,6 +8,16 @@ import (
 	"github.com/caiflower/common-tools/web/common/e"
 )
 
+// LoggerInterceptor is deprecated. Use RouterGroup.Use() middleware instead.
+// Example replacement:
+//
+//	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+//	    start := time.Now()
+//	    reqCtx.Next(ctx)
+//	    latency := time.Since(start)
+//	    logger.Info("| %3d | %13v | %15s | %7s %s",
+//	        reqCtx.GetStatusCode(), latency, reqCtx.ClientIP(), reqCtx.GetAction(), reqCtx.GetPath())
+//	})
 type LoggerInterceptor struct{}
 
 func (l *LoggerInterceptor) Before(ctx *app.Context) e.ApiError {

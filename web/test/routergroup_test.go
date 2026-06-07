@@ -143,6 +143,7 @@ func TestRouterGroupMiddleware(t *testing.T) {
 	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		middlewareCalled = true
 		reqCtx.SetHeader("X-Middleware", "true")
+		reqCtx.Next(ctx)
 	})
 	api.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
 		reqCtx.JSON(200, map[string]bool{"ok": true})
@@ -356,6 +357,7 @@ func TestRouterGroupMiddlewareIsolation(t *testing.T) {
 	groupA := engine.Group("/a")
 	groupA.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		groupAMiddlewareCalled = true
+		reqCtx.Next(ctx)
 	})
 	groupA.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
 		reqCtx.JSON(200, map[string]string{"group": "a"})
@@ -392,12 +394,15 @@ func TestRouterGroupMiddlewareChainedUse(t *testing.T) {
 	api := engine.Group("/api")
 	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "mw1")
+		reqCtx.Next(ctx)
 	})
 	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "mw2")
+		reqCtx.Next(ctx)
 	})
 	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "mw3")
+		reqCtx.Next(ctx)
 	})
 	api.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "handler")
@@ -428,11 +433,13 @@ func TestRouterGroupMiddlewareNestedInheritance(t *testing.T) {
 	api := engine.Group("/api")
 	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "api-mw")
+		reqCtx.Next(ctx)
 	})
 
 	v1 := api.Group("/v1")
 	v1.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "v1-mw")
+		reqCtx.Next(ctx)
 	})
 	v1.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
 		order = append(order, "handler")
@@ -682,4 +689,270 @@ func TestRouterGroupUnsupportedHandlerPanic(t *testing.T) {
 func TestRouterGroupImplementsIRoutes(t *testing.T) {
 	var _ router.IRoutes = (*router.RouterGroup)(nil)
 	var _ router.IRouter = (*router.RouterGroup)(nil)
+}
+
+// TestRouterGroupMiddlewareWithNext tests that middleware can call ctx.Next()
+// and execute post-handler logic after the handler completes.
+func TestRouterGroupMiddlewareWithNext(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-next"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.SetHeader("X-Before", "true")
+		reqCtx.Next(ctx)
+		reqCtx.SetHeader("X-After", "true")
+	})
+
+	engine.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.JSON(200, map[string]string{"message": "hello"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, "true", w.Header().Get("X-Before"))
+	assert.Equal(t, "true", w.Header().Get("X-After"))
+
+	var resp map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, "hello", resp["message"])
+}
+
+// TestRouterGroupMiddlewareChainedNext tests multiple middleware calling ctx.Next() in sequence.
+func TestRouterGroupMiddlewareChainedNext(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-chained-next"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw1-before")
+		reqCtx.Next(ctx)
+		order = append(order, "mw1-after")
+	})
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw2-before")
+		reqCtx.Next(ctx)
+		order = append(order, "mw2-after")
+	})
+
+	engine.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "handler")
+		reqCtx.JSON(200, map[string]string{"message": "ok"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, []string{"mw1-before", "mw2-before", "handler", "mw2-after", "mw1-after"}, order)
+}
+
+// TestRouterGroupMiddlewareWithoutNext tests that middleware NOT calling ctx.Next()
+// blocks the chain (backward compatible behavior).
+func TestRouterGroupMiddlewareWithoutNext(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-no-next"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	handlerCalled := false
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		// Middleware does NOT call ctx.Next() - handler should NOT execute
+		reqCtx.JSON(200, map[string]string{"blocked": "true"})
+	})
+
+	engine.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		handlerCalled = true
+		reqCtx.JSON(200, map[string]string{"message": "should not reach"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.False(t, handlerCalled, "handler should not be called when middleware doesn't call Next()")
+
+	var resp map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, "true", resp["blocked"])
+}
+
+// TestRouterGroupMiddlewareAbortInterruptsNext tests that ctx.Abort() stops the chain.
+func TestRouterGroupMiddlewareAbortInterruptsNext(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-abort-next"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	handlerCalled := false
+	afterAbortCalled := false
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.AbortWithMsg("forbidden", 403)
+		// After Abort, Next() should not execute further handlers
+		reqCtx.Next(ctx)
+		afterAbortCalled = true
+	})
+
+	engine.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		handlerCalled = true
+		reqCtx.JSON(200, map[string]string{"message": "should not reach"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	assert.False(t, handlerCalled, "handler should not be called after Abort()")
+	assert.True(t, afterAbortCalled, "code after Next() should still execute in the middleware")
+}
+
+// TestRouterGroupMiddlewareConditionalSkipNext tests that when a middleware in the
+// chain does NOT call Next(), all subsequent middlewares and the handler are skipped.
+func TestRouterGroupMiddlewareConditionalSkipNext(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-conditional-skip"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw1-before")
+		reqCtx.Next(ctx)
+		order = append(order, "mw1-after")
+	})
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw2-before")
+		// mw2 does NOT call Next() - simulating a condition check failure (e.g. auth denied)
+		reqCtx.JSON(403, map[string]string{"error": "forbidden"})
+		order = append(order, "mw2-after")
+	})
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw3-before")
+		reqCtx.Next(ctx)
+		order = append(order, "mw3-after")
+	})
+
+	engine.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "handler")
+		reqCtx.JSON(200, map[string]string{"message": "ok"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 403, w.Code)
+	// mw2 不调用 Next()，mw3 和 handler 都不执行
+	// 但 mw1 调用了 Next()，mw2 返回后 mw1-after 仍会执行（递归模型特性）
+	assert.Equal(t, []string{"mw1-before", "mw2-before", "mw2-after", "mw1-after"}, order)
+}
+
+// TestRouterGroupNextWithDefaultTypeMethod tests ctx.Next() with DefaultTypeOfMethod handler.
+func TestRouterGroupNextWithDefaultTypeMethod(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-next-default"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	middlewareCalled := false
+	afterNextCalled := false
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		middlewareCalled = true
+		reqCtx.SetHeader("X-Middleware", "true")
+		reqCtx.Next(ctx)
+		afterNextCalled = true
+	})
+
+	type GreetRequest struct {
+		Name string `query:"name" validate:"required"`
+	}
+
+	engine.GET("/greet", func(req *GreetRequest) string {
+		return "Hello " + req.Name
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/greet?name=World", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.True(t, middlewareCalled, "middleware should be called")
+	assert.True(t, afterNextCalled, "code after Next() should execute")
+	assert.Equal(t, "true", w.Header().Get("X-Middleware"))
+}
+
+// TestRouterGroupNextWithGroupMiddleware tests ctx.Next() in a group's middleware.
+func TestRouterGroupNextWithGroupMiddleware(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-next-group"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	api := engine.Group("/api")
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "api-before")
+		reqCtx.Next(ctx)
+		order = append(order, "api-after")
+	})
+
+	api.GET("/test", func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "handler")
+		reqCtx.JSON(200, map[string]string{"message": "ok"})
+	})
+
+	handler := engine.Handler()
+
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, []string{"api-before", "handler", "api-after"}, order)
 }

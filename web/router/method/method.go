@@ -102,3 +102,15 @@ func (m *Method) GetHandlerFunc() app.HandlerFunc {
 func (m *Method) InvokeHandlerFunc(ctx context.Context, reqCtx *app.RequestContext) {
 	m.handlerFunc(ctx, reqCtx)
 }
+
+// ToHandlerFunc converts the Method to an app.HandlerFunc.
+// For HandlerFuncTypeOfMethod, it returns the handlerFunc directly.
+// For other types, it uses the provided invokeFunc to handle parameter parsing and invocation.
+func (m *Method) ToHandlerFunc(invokeFunc func(m *Method, ctx context.Context, reqCtx *app.RequestContext)) app.HandlerFunc {
+	if m.t == HandlerFuncTypeOfMethod {
+		return m.handlerFunc
+	}
+	return func(ctx context.Context, reqCtx *app.RequestContext) {
+		invokeFunc(m, ctx, reqCtx)
+	}
+}

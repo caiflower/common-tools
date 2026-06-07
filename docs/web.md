@@ -2,7 +2,7 @@
 
 ## 概述
 
-Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、拦截器、HTTP客户端、GRPC集成等功能。支持两种请求风格：
+Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、中间件、HTTP客户端、GRPC集成等功能。支持两种请求风格：
 
 - **Action风格**：基于查询参数 `?action=xxx` 的传统风格
 - **RESTful风格**：基于HTTP方法和路径的REST API风格
@@ -12,7 +12,7 @@ Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路�
 - 🚀 **高性能**：支持 Netpoll 和 Standard 两种服务器模式
 - 🔄 **双路由**：Action 和 RESTful 两种风格并存
 - ✅ **参数校验**：内置强大的参数验证系统
-- 🎯 **拦截器**：AOP 支持，灵活的请求处理链
+- 🎯 **中间件**：基于 `ctx.Next()` 的中间件链，灵活的请求处理
 - 🌐 **HTTP客户端**：内置高性能 HTTP 客户端
 - 🔌 **GRPC集成**：无缝集成 GRPC 服务
 - 📊 **监控**：内置 Prometheus 指标导出
@@ -290,8 +290,6 @@ type Core interface {
     RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller
     Register(ctl *controller.RestfulController)
 
-    AddInterceptor(i interceptor.Interceptor, order int)
-
     SetBeforeDispatchCallBack(callbackFunc router.CallbackFunc)
     SetAfterDispatchCallBack(callbackFunc router.CallbackFunc)
 
@@ -299,14 +297,23 @@ type Core interface {
 }
 ```
 
-### Interceptor 接口
+### Engine 路由与中间件方法
+
+`Engine` 提供路由注册和中间件方法（这些方法不在 `Core` 接口中，而是 `Engine` 结构体的方法）：
 
 ```go
-type Interceptor interface {
-    Before(ctx *app.Context) e.ApiError                   // 执行业务前执行
-    After(ctx *app.Context, err e.ApiError) e.ApiError    // 执行业务后执行，参数err为业务返回的ApiErr信息
-    OnPanic(ctx *app.Context, err interface{}) e.ApiError // 发生panic时执行
-}
+// 注册中间件
+engine.Use(middleware ...app.HandlerFunc) IRoutes
+
+// 路由组
+engine.Group(relativePath string, handlers ...app.HandlerFunc) *RouterGroup
+
+// 路由注册
+engine.GET(relativePath string, handlers ...interface{}) IRoutes
+engine.POST(relativePath string, handlers ...interface{}) IRoutes
+engine.PUT(relativePath string, handlers ...interface{}) IRoutes
+engine.DELETE(relativePath string, handlers ...interface{}) IRoutes
+engine.PATCH(relativePath string, handlers ...interface{}) IRoutes
 ```
 
 ---
@@ -523,55 +530,116 @@ status := apiError.GRPCStatus()
 
 ---
 
-## 拦截器
+## 中间件
 
-实现 `Interceptor` 接口进行请求拦截：
+框架通过 `Use()` 注册中间件，中间件通过 `ctx.Next()` 控制链执行，与 Hertz/Gin 风格一致。
+
+### 注册中间件
 
 ```go
-package interceptor
-
-import (
-    "github.com/caiflower/common-tools/web/common/e"
-    "github.com/caiflower/common-tools/web/app"
-    "github.com/caiflower/common-tools/web/common/interceptor"
+engine := web.Default(
+    config.WithAddr(":8080"),
+    config.WithName("myapp"),
+    config.WithRootPath(""),
 )
 
-type LoggingInterceptor struct {
-}
-
-func (l *LoggingInterceptor) Before(ctx *app.Context) e.ApiError {
-    // 业务执行前
-    return nil
-}
-
-func (l *LoggingInterceptor) After(ctx *app.Context, err e.ApiError) e.ApiError {
-    // 业务执行后
-    return err
-}
-
-func (l *LoggingInterceptor) OnPanic(ctx *app.Context, err interface{}) e.ApiError {
-    // 发生panic时执行
-    return e.NewApiError(e.Internal, "Internal error", nil)
-}
-
-// 注册拦截器
-server.AddInterceptor(&LoggingInterceptor{}, 1)
+// 全局中间件
+engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    start := time.Now()
+    reqCtx.Next(ctx) // 调用后续 handler
+    latency := time.Since(start)
+    logger.Info("| %3d | %13v | %15s | %7s %s",
+        reqCtx.GetStatusCode(), latency, reqCtx.ClientIP(), reqCtx.GetAction(), reqCtx.GetPath())
+})
 ```
 
-### 中断请求
+### ctx.Next() 执行模型
 
-在拦截器中可以中断请求：
+中间件通过 `ctx.Next()` 驱动后续 handler 执行。`Next()` 之前的代码在 handler 前执行，`Next()` 之后的代码在 handler 后执行：
 
 ```go
-func (l *AuthInterceptor) Before(ctx *app.Context) e.ApiError {
-    token := ctx.Get("Authorization")
-    if token == nil {
-        ctx.Abort()  // 中断请求
-        return e.NewApiError(e.Unauthorized, "Unauthorized", nil)
-    }
-    return nil
-}
+engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    // Before: handler 执行前
+    fmt.Println("middleware before")
+
+    reqCtx.Next(ctx) // 执行后续中间件和 handler
+
+    // After: handler 执行后
+    fmt.Println("middleware after")
+})
 ```
+
+多个中间件按注册顺序形成链式调用：
+
+```
+mw1-before → mw2-before → handler → mw2-after → mw1-after
+```
+
+### 中断链执行
+
+中间件不调用 `ctx.Next()` 时，后续中间件和 handler 都不会执行：
+
+```go
+// 鉴权中间件：验证失败则中断
+engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    token := reqCtx.GetHeader("Authorization")
+    if token == "" {
+        reqCtx.AbortWithMsg("unauthorized", 401)
+        return // 不调用 Next()，链中断
+    }
+    reqCtx.Next(ctx)
+})
+```
+
+使用 `Abort()` 也可中断链执行：
+
+```go
+engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    reqCtx.AbortWithMsg("forbidden", 403)
+    reqCtx.Next(ctx) // Abort 后 Next() 不会执行后续 handler
+})
+```
+
+### 路由组中间件
+
+`Group()` 创建路由组，支持组级别中间件：
+
+```go
+api := engine.Group("/api")
+
+// 路由组级别中间件
+api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    reqCtx.SetHeader("X-API-Version", "v1")
+    reqCtx.Next(ctx)
+})
+
+// 路由组内的路由会继承组中间件
+api.GET("/users", userHandler)
+api.POST("/users", createUserHandler)
+
+// 嵌套路由组
+v1 := api.Group("/v1")
+v1.Use(authMiddleware) // v1 组专属中间件
+v1.GET("/profile", profileHandler)
+```
+
+### Panic 恢复中间件
+
+通过 `defer recover()` 实现 `OnPanic` 的等效功能：
+
+```go
+engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+    defer func() {
+        if err := recover(); err != nil {
+            logger.Error("panic recovered: %v", err)
+            reqCtx.AbortWithMsg("internal server error", 500)
+        }
+    }()
+    reqCtx.Next(ctx)
+})
+```
+
+---
 
 ### Web Context用法
 
@@ -590,17 +658,17 @@ func (c *Controller) MyAction(req *MyReq) (interface{}, error) {
     path := req.GetPath()           // 获取请求路径
     params := req.GetParams()       // 获取查询参数
     method := req.GetMethod()       // 获取HTTP方法
-    
+
     // 获取原始http对象
-    w, r := req.GetResponseWriterAndRequest() 
-    
+    w, r := req.GetResponseWriterAndRequest()
+
     // 设置自定义属性
     req.Put("key", "value")
     value := req.Get("key")
-    
+
     // 中断请求
     req.Abort()
-    
+
     return nil, nil
 }
 ```

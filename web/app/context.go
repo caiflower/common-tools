@@ -168,6 +168,10 @@ type RequestCtx struct {
 	networkType                   string
 	disableHeaderNamesNormalizing bool
 
+	// handler chain for ctx.Next() support
+	handlers     HandlersChain
+	handlerIndex int
+
 	// clientIPFunc get client ip by use custom function.
 	clientIPFunc ClientIP
 }
@@ -292,6 +296,8 @@ func (ctx *RequestCtx) Reset() {
 	ctx.Request.Reset()
 	ctx.enableTrace = false
 	ctx.keys = nil
+	ctx.handlers = nil
+	ctx.handlerIndex = 0
 }
 
 func (ctx *RequestCtx) GetConn() network.Conn {
@@ -380,6 +386,27 @@ func (ctx *RequestCtx) AbortWithMsg(msg string, statusCode int) {
 
 func (ctx *RequestCtx) Abort() {
 	ctx.special = -1
+}
+
+// Next increments the handler index and executes the next handler in the chain.
+// After the next handler completes, control returns to the calling middleware.
+// If Abort() was called or an error was set, Next() returns immediately without executing further handlers.
+// This follows the Hertz/Gin recursive model: each handler must call Next() to proceed to the next one.
+func (ctx *RequestCtx) Next(c context.Context) {
+	ctx.handlerIndex++
+	if ctx.handlerIndex < len(ctx.handlers) && !ctx.IsAbort() && ctx.err == nil {
+		handler := ctx.handlers[ctx.handlerIndex]
+		handler(c, ctx)
+	}
+}
+
+func (ctx *RequestCtx) SetHandlers(handlers HandlersChain) {
+	ctx.handlers = handlers
+	ctx.handlerIndex = -1
+}
+
+func (ctx *RequestCtx) GetHandlers() HandlersChain {
+	return ctx.handlers
 }
 
 func (ctx *RequestCtx) SetEnableTrace(b bool) {

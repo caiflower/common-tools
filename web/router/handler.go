@@ -148,7 +148,7 @@ type Handler struct {
 	// qos call back
 	qosCallback                CallbackFunc
 	beforeDispatchCallbackFunc CallbackFunc
-	interceptors               interceptor.ItemSort
+	interceptors               interceptor.ItemSort // Deprecated: Use RouterGroup.Use() middleware instead
 	afterDispatchCallbackFunc  CallbackFunc
 
 	// RequestContext pool
@@ -246,6 +246,8 @@ func (h *Handler) SetAfterDispatchCallBack(callbackFunc CallbackFunc) {
 	h.afterDispatchCallbackFunc = callbackFunc
 }
 
+// AddInterceptor adds an interceptor with the given order.
+// Deprecated: Use RouterGroup.Use() middleware with ctx.Next() instead.
 func (h *Handler) AddInterceptor(i interceptor.Interceptor, order int) {
 	h.interceptors = append(h.interceptors, interceptor.Item{
 		Interceptor: i,
@@ -253,6 +255,8 @@ func (h *Handler) AddInterceptor(i interceptor.Interceptor, order int) {
 	})
 }
 
+// SortInterceptors sorts interceptors by order.
+// Deprecated: Use RouterGroup.Use() middleware with ctx.Next() instead.
 func (h *Handler) SortInterceptors() {
 	sort.Sort(h.interceptors)
 }
@@ -370,10 +374,8 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 	defer h.onCrash("dispatch", ctx, e.NewApiError(e.Internal, "InternalError", nil))
 
 	var (
-		m          *method.Method
-		find       bool
-		inputValue []reflect.Value
-		inputArg   interface{}
+		m    *method.Method
+		find bool
 	)
 
 	// method
@@ -382,9 +384,35 @@ func (h *Handler) Dispatch(ctx *app.RequestCtx) {
 		return
 	}
 
+	// If handlers chain was set (RouterGroup route), use ctx.Next() to drive execution
+	if ctx.GetHandlers() != nil {
+		// Build the target method function for AOP
+		targetMethod := func() e.ApiError {
+			ctx.Next(ctx.GetContext())
+			return nil
+		}
+
+		// AOP
+		if err := h.interceptors.DoInterceptor(ctx, targetMethod); err != nil {
+			ctx.SetError(err)
+			return
+		}
+
+		// If the last handler was HandlerFuncTypeOfMethod, it writes response directly.
+		// Abort to prevent afterDispatchCallbackFunc from writing again.
+		if m.GetType() == method.HandlerFuncTypeOfMethod {
+			ctx.Abort()
+		}
+		return
+	}
+
+	// Legacy path: non-RouterGroup routes (action style, etc.)
+	var (
+		inputValue []reflect.Value
+		inputArg   interface{}
+	)
+
 	// HandlerFuncTypeOfMethod: direct call, no parameter parsing
-	// Handler uses ctx.JSON() to write response directly (like Hertz).
-	// Abort to prevent afterDispatchCallbackFunc from writing again.
 	if m.GetType() == method.HandlerFuncTypeOfMethod {
 		targetMethod := func() e.ApiError {
 			m.InvokeHandlerFunc(ctx.GetContext(), ctx)
@@ -485,13 +513,13 @@ func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
 		if tree != nil {
 			res := tree.find(path, &ctx.Paths, false)
 			if res.handlers != nil {
-				// Execute middleware (all handlers except the last one)
-				for i := 0; i < len(res.handlers)-1; i++ {
-					mw := res.handlers[i]
-					if mw.GetType() == method.HandlerFuncTypeOfMethod {
-						mw.InvokeHandlerFunc(ctx.GetContext(), ctx)
-					}
+				// Convert method.Method chain to app.HandlersChain and store on ctx
+				// This enables ctx.Next() to drive the middleware chain execution
+				handlers := make(app.HandlersChain, len(res.handlers))
+				for i, mh := range res.handlers {
+					handlers[i] = mh.ToHandlerFunc(h.invokeMethod)
 				}
+				ctx.SetHandlers(handlers)
 				// Return the last handler as the target method
 				m = &res.handlers[len(res.handlers)-1]
 				ctx.SetAction(m.GetAction())
@@ -500,6 +528,87 @@ func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
 	}
 
 	return m, m != nil
+}
+
+// invokeMethod handles the invocation of DefaultTypeOfMethod and GrpcTypeOfMethod
+// within the ctx.Next() chain, including parameter parsing and validation.
+func (h *Handler) invokeMethod(m *method.Method, ctx context.Context, reqCtx *app.RequestCtx) {
+	switch m.GetType() {
+	case method.DefaultTypeOfMethod:
+		h.invokeDefaultMethod(m, reqCtx)
+	case method.GrpcTypeOfMethod:
+		h.invokeGrpcMethod(m, reqCtx)
+	}
+}
+
+func (h *Handler) invokeDefaultMethod(m *method.Method, reqCtx *app.RequestCtx) {
+	var (
+		inputValue []reflect.Value
+		inputArg   interface{}
+	)
+
+	if m.HasArgs() {
+		var (
+			targetM = m.GetTargetMethod()
+			argLen  = len(targetM.GetArgs())
+			arg     reflect.Type
+		)
+
+		onlyCtx := false
+
+		inputValue = make([]reflect.Value, argLen)
+		if argLen == 2 {
+			inputValue[0] = reflect.ValueOf(reqCtx)
+			arg = targetM.GetArgs()[1]
+		} else {
+			arg = targetM.GetArgs()[0]
+			if arg.ConvertibleTo(reflect.TypeOf(reqCtx)) {
+				inputValue[0] = reflect.ValueOf(reqCtx)
+				onlyCtx = true
+			}
+		}
+
+		if !onlyCtx {
+			switch arg.Kind() {
+			case reflect.Ptr:
+				v := reflect.New(arg.Elem())
+				inputValue[len(inputValue)-1] = v
+				inputArg = v.Interface()
+			case reflect.Struct:
+				v := reflect.New(arg)
+				inputArg = v.Interface()
+				inputValue[len(inputValue)-1] = v.Elem()
+			default:
+				reqCtx.SetError(e.NewInternalError(fmt.Errorf("parse param failed. not support kind %s", arg.Kind())))
+				return
+			}
+
+			// set args
+			if err := setArgsOptimized(reqCtx, inputArg, targetM.GetArgInfo(0)); err != nil {
+				if err.IsInternalError() {
+					h.logger.Warn("setArgsOptimized failed. Error: %v", err)
+				}
+				reqCtx.SetError(err)
+				return
+			}
+
+			// valid args
+			if err := validArgs(inputArg); err != nil {
+				reqCtx.SetError(err)
+				return
+			}
+		}
+	}
+
+	if err := h.doTargetMethod(reqCtx, m, inputValue); err != nil {
+		reqCtx.SetError(err)
+	}
+}
+
+func (h *Handler) invokeGrpcMethod(m *method.Method, reqCtx *app.RequestCtx) {
+	if err := h.doTargetMethod(reqCtx, m, nil); err != nil {
+		reqCtx.SetError(err)
+	}
 }
 
 func (h *Handler) doTargetMethod(ctx *app.RequestCtx, targetMethodDesc *method.Method, inputValues []reflect.Value) e.ApiError {

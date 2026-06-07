@@ -33,6 +33,7 @@ type Core interface {
 	RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller
 	Register(ctl *controller.RestfulController)
 
+	// AddInterceptor is deprecated. Use RouterGroup.Use() middleware with ctx.Next() instead.
 	AddInterceptor(i interceptor.Interceptor, order int)
 
 	SetBeforeDispatchCallBack(callbackFunc router.CallbackFunc)

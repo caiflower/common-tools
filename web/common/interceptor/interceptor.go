@@ -21,14 +21,20 @@ import (
 	"github.com/caiflower/common-tools/web/common/e"
 )
 
+// Interceptor is deprecated. Use RouterGroup.Use() middleware with ctx.Next() instead.
+// Before logic → code before ctx.Next()
+// After logic → code after ctx.Next()
+// OnPanic logic → defer recover() in middleware
 type Interceptor interface {
 	Before(ctx *app.Context) e.ApiError                   // 执行业务前执行
 	After(ctx *app.Context, err e.ApiError) e.ApiError    // 执行业务后执行，参数err为业务返回的ApiErr信息
 	OnPanic(ctx *app.Context, err interface{}) e.ApiError // 发生panic时执行
 }
 
+// ItemSort is deprecated. Use RouterGroup.Use() middleware instead.
 type ItemSort []Item
 
+// Item is deprecated. Use RouterGroup.Use() middleware instead.
 type Item struct {
 	Interceptor Interceptor
 	Order       int
