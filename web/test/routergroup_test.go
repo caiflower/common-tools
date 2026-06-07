@@ -956,3 +956,155 @@ func TestRouterGroupNextWithGroupMiddleware(t *testing.T) {
 	assert.Equal(t, 200, w.Code)
 	assert.Equal(t, []string{"api-before", "handler", "api-after"}, order)
 }
+
+// OrderController is used for testing struct method registration
+type OrderController struct{}
+
+type CreateOrderReq struct {
+	ProductID int     `json:"product_id" verf:"required"`
+	Quantity  int     `json:"quantity" verf:"required"`
+	Price     float64 `json:"price" verf:"required"`
+}
+
+type OrderResponse struct {
+	OrderID    int     `json:"order_id"`
+	ProductID  int     `json:"product_id"`
+	Quantity   int     `json:"quantity"`
+	TotalPrice float64 `json:"total_price"`
+}
+
+func (oc *OrderController) CreateOrder(req *CreateOrderReq) *OrderResponse {
+	return &OrderResponse{
+		OrderID:    1001,
+		ProductID:  req.ProductID,
+		Quantity:   req.Quantity,
+		TotalPrice: req.Price * float64(req.Quantity),
+	}
+}
+
+type GetOrderReq struct {
+	OrderID int `path:"orderId" verf:"required"`
+}
+
+func (oc *OrderController) GetOrder(req *GetOrderReq) *OrderResponse {
+	return &OrderResponse{
+		OrderID:   req.OrderID,
+		ProductID: 42,
+		Quantity:  2,
+	}
+}
+
+// TestRouterGroupMethodValue tests registering struct method values directly (instance.Method).
+func TestRouterGroupMethodValue(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-method-value"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register method value directly: instance.MethodName
+	oc := &OrderController{}
+	engine.POST("/orders", oc.CreateOrder)
+	engine.GET("/orders/:orderId", oc.GetOrder)
+
+	handler := engine.Handler()
+
+	// Test POST /orders
+	body := `{"product_id":1,"quantity":3,"price":29.99}`
+	req := httptest.NewRequest("POST", "/orders", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	data := resp["data"].(map[string]interface{})
+	assert.Equal(t, float64(1001), data["order_id"])
+	assert.Equal(t, float64(1), data["product_id"])
+	assert.Equal(t, float64(3), data["quantity"])
+
+	// Test GET /orders/:orderId
+	req2 := httptest.NewRequest("GET", "/orders/55", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	assert.Equal(t, 200, w2.Code)
+	var resp2 map[string]interface{}
+	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	data2 := resp2["data"].(map[string]interface{})
+	assert.Equal(t, float64(55), data2["order_id"])
+}
+
+// TestRouterGroupMethodValueWithMiddleware tests method value registration with middleware.
+func TestRouterGroupMethodValueWithMiddleware(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-method-value-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	var order []string
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		order = append(order, "mw-before")
+		reqCtx.Next(ctx)
+		order = append(order, "mw-after")
+	})
+
+	oc := &OrderController{}
+	engine.POST("/orders", oc.CreateOrder)
+
+	handler := engine.Handler()
+
+	body := `{"product_id":1,"quantity":2,"price":10.0}`
+	req := httptest.NewRequest("POST", "/orders", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, []string{"mw-before", "mw-after"}, order)
+}
+
+// TestRouterGroupMethodValueInGroup tests method value registration within a RouterGroup.
+func TestRouterGroupMethodValueInGroup(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-method-value-group"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	oc := &OrderController{}
+
+	api := engine.Group("/api/v1")
+	api.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.SetHeader("X-API", "v1")
+		reqCtx.Next(ctx)
+	})
+	api.POST("/orders", oc.CreateOrder)
+	api.GET("/orders/:orderId", oc.GetOrder)
+
+	handler := engine.Handler()
+
+	// Test POST /api/v1/orders
+	body := `{"product_id":5,"quantity":1,"price":99.99}`
+	req := httptest.NewRequest("POST", "/api/v1/orders", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Equal(t, "v1", w.Header().Get("X-API"))
+
+	// Test GET /api/v1/orders/:orderId
+	req2 := httptest.NewRequest("GET", "/api/v1/orders/10", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	assert.Equal(t, 200, w2.Code)
+	assert.Equal(t, "v1", w2.Header().Get("X-API"))
+}

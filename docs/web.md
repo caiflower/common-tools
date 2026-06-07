@@ -2,17 +2,14 @@
 
 ## 概述
 
-Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、中间件、HTTP客户端、GRPC集成等功能。支持两种请求风格：
-
-- **Action风格**：基于查询参数 `?action=xxx` 的传统风格
-- **RESTful风格**：基于HTTP方法和路径的REST API风格
+Web包是一个高性能的RESTful Web框架，提供HTTP服务器、请求路由、参数校验、中间件、HTTP客户端、GRPC集成等功能。
 
 ### 核心特性
 
 - 🚀 **高性能**：支持 Netpoll 和 Standard 两种服务器模式
-- 🔄 **双路由**：Action 和 RESTful 两种风格并存
-- ✅ **参数校验**：内置强大的参数验证系统
 - 🎯 **中间件**：基于 `ctx.Next()` 的中间件链，灵活的请求处理
+- 🛣️ **RouterGroup**：支持路由分组、嵌套、组级别中间件
+- ✅ **参数校验**：内置强大的参数验证系统
 - 🌐 **HTTP客户端**：内置高性能 HTTP 客户端
 - 🔌 **GRPC集成**：无缝集成 GRPC 服务
 - 📊 **监控**：内置 Prometheus 指标导出
@@ -65,148 +62,84 @@ server := web.Default(
 server.Start()
 ```
 
-### 2. 定义Controller
+### 2. 定义Handler
 
-#### Action风格示例
+框架支持多种 handler 签名，通过 `engine.GET`/`engine.POST` 等方法自动识别：
 
 ```go
-package controller
+package handler
 
 import (
     "github.com/caiflower/common-tools/web/common/e"
 )
 
-type UserController struct {
+// 定义请求参数结构体
+type CreateUserReq struct {
+    Name  string `json:"name" verf:"required"`
+    Email string `json:"email" verf:"required"`
 }
 
-// 定义请求参数结构体
 type GetUserReq struct {
-    ID int `json:"id" verf:"required"`
+    ID string `path:"userId" verf:"required"`
 }
 
 // 定义响应结构体
 type User struct {
-    ID   int    `json:"id"`
-    Name string `json:"name"`
+    ID    int    `json:"id"`
+    Name  string `json:"name"`
+    Email string `json:"email"`
 }
 
-// 定义处理方法，返回 (data, error)
-func (c *UserController) GetUser(req *GetUserReq) (*User, error) {
-    return &User{ID: req.ID, Name: "John"}, nil
+// 方式1：返回 (data, error)
+func CreateUser(ctx context.Context, req *CreateUserReq) (*User, error) {
+    return &User{ID: 1, Name: req.Name, Email: req.Email}, nil
 }
 
-// 处理错误返回 ApiError
-func (c *UserController) DeleteUser(req *GetUserReq) (interface{}, e.ApiError) {
-    if req.ID <= 0 {
+// 方式2：返回 ApiError
+func DeleteUser(ctx context.Context, req *GetUserReq) (interface{}, e.ApiError) {
+    if req.ID == "" {
         return nil, e.NewApiError(e.InvalidArgument, "Invalid ID", nil)
     }
     return nil, nil
 }
-```
 
-**Action风格请求**：
-
-```
-POST /api/UserController?Action=GetUser
-Content-Type: application/json
-
-{
-    "id": 1
+// 方式3：使用 app.HandlerFunc 中间件风格
+func ListUsers(ctx context.Context, reqCtx *app.RequestContext) {
+    reqCtx.JSON(200, map[string]interface{}{
+        "users": []string{"Alice", "Bob"},
+    })
 }
 ```
 
-#### RESTful风格示例
+### 3. 注册路由
+
+使用 `engine.GET`/`engine.POST` 等方法注册路由，handler 类型自动识别：
 
 ```go
-package controller
-
-type ProductController struct {
-}
-
-type CreateProductReq struct {
-    Name  string  `json:"name" verf:"required"`
-    Price float64 `json:"price" verf:"required"`
-}
-
-type GetProductReq struct {
-    ID string `path:"productId" verf:"required"`
-}
-
-type Product struct {
-    ID    string  `json:"id"`
-    Name  string  `json:"name"`
-    Price float64 `json:"price"`
-}
-
-func (c *ProductController) CreateProduct(req *CreateProductReq) (*Product, error) {
-    return &Product{
-        ID:    "prod-123",
-        Name:  req.Name,
-        Price: req.Price,
-    }, nil
-}
-
-func (c *ProductController) GetProductByID(req *GetProductReq) (*Product, error) {
-    return &Product{
-        ID:    req.ID,
-        Name:  "Test Product",
-        Price: 99.99,
-    }, nil
-}
-```
-
-### 3. 注册Controller
-
-```go
-// 注册 Controller 到服务器
-// 这会自动注册 Action 风格的路由，并返回 *controller.Controller 实例供 RESTful 注册使用
-userController := server.AddController(&UserController{})
-productController := server.AddController(&ProductController{})
-```
-
-### 4. 注册RESTful路由
-
-RESTful 路由需要显式注册，通过 `controller.NewRestFul()` 构建路由规则，并绑定到具体的 Controller 方法上。
-
-```go
-import (
-    "github.com/caiflower/common-tools/web/router/controller"
+engine := web.Default(
+    config.WithAddr(":8080"),
+    config.WithName("myapp"),
 )
 
-// 创建路由组
-group := controller.NewRestFul().Group("/v1/products")
+// 注册路由，handler 类型自动识别
+engine.POST("/users", CreateUser)
+engine.GET("/users/:userId", GetUserReq{}, func(ctx context.Context, req *GetUserReq) (*User, error) {
+    return &User{ID: 1, Name: "John"}, nil
+})
+engine.DELETE("/users/:userId", DeleteUser)
 
-// 注册 POST /v1/products
-server.Register(group.
-    Method("POST").
-    RegisterMethod(productController.GetMethod("CreateProduct")),
-)
+// 使用 app.HandlerFunc 风格
+engine.GET("/users", ListUsers)
 
-// 注册 GET /v1/products/:productId
-server.Register(group.
-    Method("GET").
-    Path("/:productId").
-    RegisterMethod(productController.GetMethod("GetProductByID")),
-)
+// 使用路由组
+api := engine.Group("/api/v1")
+api.POST("/users", CreateUser)
+api.GET("/users/:userId", GetUserReq{}, handler.GetUser)
 ```
 
-**RESTful风格请求**：
+### 4. 注册GRPC服务
 
-```
-POST /api/v1/products HTTP/1.1
-Content-Type: application/json
-
-{
-    "name": "Product Name",
-    "price": 99.99
-}
-
-GET /api/v1/products/prod-123 HTTP/1.1
-```
-
-### 5. 注册GRPC服务
-
-框架支持将 GRPC 服务注册为 HTTP 接口：
+框架支持将 GRPC 服务直接注册为 HTTP 路由：
 
 ```go
 import (
@@ -223,20 +156,12 @@ func (s *HelloServiceImpl) SayHello(ctx context.Context, req *pb.HelloRequest) (
     return &pb.HelloReply{Message: "Hello " + req.Name}, nil
 }
 
-// 注册 GRPC 服务
+// 注册 GRPC 路由
 helloService := &HelloServiceImpl{}
-helloController := server.RegisterGRPCService(&pb.HelloService_ServiceDesc, helloService)
-
-// 将 GRPC 方法注册为 RESTful 路由
-group := controller.NewRestFul().Group("/v1")
-server.Register(group.
-    Method("POST").
-    Path("/hello").
-    RegisterGrpcMethod(helloController.GetGrpcMethodDesc("SayHello")),
-)
+engine.GRPC("POST", "/v1/hello", pb.HelloService_SayHello_Handler, helloService)
 ```
 
-### 6. 使用HTTP客户端
+### 5. 使用HTTP客户端
 
 框架内置高性能 HTTP 客户端：
 
@@ -286,10 +211,6 @@ type Core interface {
     Start() error
     Close()
 
-    AddController(v interface{}) *controller.Controller
-    RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller
-    Register(ctl *controller.RestfulController)
-
     SetBeforeDispatchCallBack(callbackFunc router.CallbackFunc)
     SetAfterDispatchCallBack(callbackFunc router.CallbackFunc)
 
@@ -299,21 +220,31 @@ type Core interface {
 
 ### Engine 路由与中间件方法
 
-`Engine` 提供路由注册和中间件方法（这些方法不在 `Core` 接口中，而是 `Engine` 结构体的方法）：
+`Engine` 提供路由注册和中间件方法：
 
 ```go
-// 注册中间件
+// 注册全局中间件
 engine.Use(middleware ...app.HandlerFunc) IRoutes
 
-// 路由组
+// 创建路由组
 engine.Group(relativePath string, handlers ...app.HandlerFunc) *RouterGroup
 
-// 路由注册
+// 路由注册（handler 类型自动识别：函数/结构体指针/HandlerFunc）
 engine.GET(relativePath string, handlers ...interface{}) IRoutes
 engine.POST(relativePath string, handlers ...interface{}) IRoutes
 engine.PUT(relativePath string, handlers ...interface{}) IRoutes
 engine.DELETE(relativePath string, handlers ...interface{}) IRoutes
 engine.PATCH(relativePath string, handlers ...interface{}) IRoutes
+engine.OPTIONS(relativePath string, handlers ...interface{}) IRoutes
+engine.HEAD(relativePath string, handlers ...interface{}) IRoutes
+engine.Any(relativePath string, handlers ...interface{}) IRoutes
+engine.Handle(httpMethod, relativePath string, handlers ...interface{}) IRoutes
+
+// GRPC 路由注册
+engine.GRPC(httpMethod, relativePath string, handler grpc.MethodHandler, srv interface{}) IRoutes
+
+// 获取根路由组
+engine.RouterGroup() *RouterGroup
 ```
 
 ---
@@ -331,7 +262,7 @@ type UserReq struct {
 }
 ```
 
-#### 查询参数绑定（GET/Action风格）
+#### 查询参数绑定（GET请求）
 
 使用 `json` tag 或 `query` tag 绑定查询参数。
 
@@ -341,7 +272,7 @@ type SearchReq struct {
     Page    int    `json:"page"`     // 兼容 json tag
 }
 
-func (c *UserController) Search(req *SearchReq) (interface{}, error) {
+func Search(ctx context.Context, req *SearchReq) (interface{}, error) {
     // ?keyword=test&page=1
     return nil, nil
 }
@@ -357,7 +288,7 @@ type GetProductReq struct {
     SubProductID string `path:"subProductId"`
 }
 
-func (c *ProductController) GetProduct(req *GetProductReq) (*Product, error) {
+func GetProduct(ctx context.Context, req *GetProductReq) (*Product, error) {
     // 对应路由路径：/products/:productId/sub/:subProductId
     return &Product{ID: req.ProductID}, nil
 }
@@ -475,17 +406,17 @@ type FilterReq struct {
 import "github.com/caiflower/common-tools/web/common/e"
 
 // 方式1：返回 error
-func (c *Controller) Method1(req *Req) (*Resp, error) {
+func Method1(ctx context.Context, req *Req) (*Resp, error) {
     return nil, fmt.Errorf("error message")
 }
 
 // 方式2：返回 ApiError
-func (c *Controller) Method2(req *Req) (*Resp, e.ApiError) {
+func Method2(ctx context.Context, req *Req) (*Resp, e.ApiError) {
     return nil, e.NewApiError(e.InvalidArgument, "Invalid argument", nil)
 }
 
 // 方式3：返回 (data, error)
-func (c *Controller) Method3(req *Req) (*Resp, e.ApiError) {
+func Method3(ctx context.Context, req *Req) (*Resp, e.ApiError) {
     if req.ID <= 0 {
         return nil, e.NewApiError(e.InvalidArgument, "ID must be positive", nil)
     }
@@ -549,7 +480,7 @@ engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
     reqCtx.Next(ctx) // 调用后续 handler
     latency := time.Since(start)
     logger.Info("| %3d | %13v | %15s | %7s %s",
-        reqCtx.GetStatusCode(), latency, reqCtx.ClientIP(), reqCtx.GetAction(), reqCtx.GetPath())
+        reqCtx.GetStatusCode(), latency, reqCtx.ClientIP(), reqCtx.GetMethod(), reqCtx.GetPath())
 })
 ```
 
@@ -653,7 +584,7 @@ type MyReq struct {
     app.Context // 嵌入Context获取上下文
 }
 
-func (c *Controller) MyAction(req *MyReq) (interface{}, error) {
+func MyHandler(ctx context.Context, req *MyReq) (interface{}, error) {
     // 获取请求信息
     path := req.GetPath()           // 获取请求路径
     params := req.GetParams()       // 获取查询参数
@@ -858,11 +789,10 @@ server := web.Default(
 
 ### 路由配置
 
-| Option函数                  | 参数   | 默认值         | 说明               |
-| --------------------------- | ------ | -------------- | ------------------ |
-| `WithRootPath`              | string | ""             | API根路径前缀      |
-| `WithHeaderTraceID`         | string | "X-Request-Id" | 追踪ID请求头       |
-| `WithControllerRootPkgName` | string | "controller"   | Controller包根名称 |
+| Option函数          | 参数   | 默认值         | 说明          |
+| ------------------- | ------ | -------------- | ------------- |
+| `WithRootPath`      | string | ""             | API根路径前缀 |
+| `WithHeaderTraceID` | string | "X-Request-Id" | 追踪ID请求头  |
 
 ### 功能开关
 
@@ -871,7 +801,6 @@ server := web.Default(
 | `WithEnablePprof`            | bool | false  | 是否启用性能分析           |
 | `WithEnableMetrics`          | bool | false  | 是否启用 Prometheus 指标   |
 | `WithEnableSwagger`          | bool | false  | 是否启用 Swagger 文档        |
-| `WithEnableActionController` | bool | false   | 是否启用 Action 风格控制器 |
 | `WithDisableOptimization`    | bool | false  | 是否禁用性能优化           |
 | `WithDisableKeepalive`       | bool | false  | 是否禁用 Keep-Alive        |
 
