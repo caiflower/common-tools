@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 import (
 	"fmt"
@@ -75,6 +75,12 @@ func (dq *DelayQueue) Add(value interface{}, delay time.Time) {
 //}
 
 func (dq *DelayQueue) Take() (value interface{}) {
+	return dq.TakeWithStop(nil)
+}
+
+// TakeWithStop 从延迟队列中取出元素，支持通过 stopChan 中断阻塞等待。
+// 当 stopChan 被关闭时，返回 nil。
+func (dq *DelayQueue) TakeWithStop(stopChan <-chan struct{}) (value interface{}) {
 	for {
 		var ok bool
 		func() {
@@ -105,8 +111,14 @@ func (dq *DelayQueue) Take() (value interface{}) {
 		// 取到了则返回，取不到则等待
 		if ok {
 			return
-		} else {
-			<-dq.timer.C
+		}
+
+		select {
+		case <-dq.timer.C:
+			// 定时器触发，继续循环尝试取出
+		case <-stopChan:
+			// 收到停止信号，立即返回
+			return nil
 		}
 	}
 }

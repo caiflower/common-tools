@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,10 @@ type taskDispatcher struct {
 	allocateWorkerInflight *inflight.InFlight
 	inQueueTasks           sync.Map
 	delayQueue             *basic.DelayQueue
+	leaderStopChan         chan struct{}
+	lastMasterCallTime     atomic.Value // 上次 MasterCall 时间，用于节流
+	taskCache              sync.Map     // taskID -> *cachedTask，缓存编译后的 DAG
+	randSource             *rand.Rand   // 局部随机数生成器，避免全局锁
 }
 
 type Config struct {
@@ -79,6 +84,17 @@ type affinity struct {
 	Worker string
 }
 
+// cachedTask 缓存编译后的 Task，避免每次调度都重建 DAG
+type cachedTask struct {
+	task      *Task
+	createdAt time.Time
+}
+
+const taskCacheTTL = 30 * time.Second
+
+// masterCallMinInterval MasterCall 最小调用间隔，避免频繁查询 DB
+const masterCallMinInterval = 5 * time.Second
+
 func InitTaskDispatcher(cfg *Config) {
 	initOnce.Do(func() {
 		_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
@@ -90,6 +106,7 @@ func InitTaskDispatcher(cfg *Config) {
 		_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
 		SingletonTaskDispatcher.cfg = cfg
 		SingletonTaskDispatcher.delayQueue = basic.NewDelayQueue()
+		SingletonTaskDispatcher.randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 		_tr.cfg = cfg
 		bean.AddBean(dao.NewTaskDAO())
 		bean.AddBean(dao.NewSubtaskBakDAO())
@@ -100,12 +117,26 @@ func InitTaskDispatcher(cfg *Config) {
 
 func (t *taskDispatcher) MasterCall() {
 	if t.Cluster == nil {
+		logger.Debug("[MasterCall] Cluster is nil, skip")
 		return
 	}
 	if t.runningL.Load() != nil && t.runningL.Load().(bool) {
+		logger.Debug("[MasterCall] already running, skip")
 		return
 	}
+
+	// 节流：距离上次调用不足 masterCallMinInterval 则跳过
+	if lastCall := t.lastMasterCallTime.Load(); lastCall != nil {
+		if time.Since(lastCall.(time.Time)) < masterCallMinInterval {
+			logger.Debug("[MasterCall] throttled, lastCall=%v, elapsed=%v", lastCall.(time.Time).Format("15:04:05.000"), time.Since(lastCall.(time.Time)))
+			return
+		}
+	}
+
+	logger.Debug("[MasterCall] executing, isLeader=%v, isReady=%v", t.Cluster.IsLeader(), t.Cluster.IsReady())
+
 	t.runningL.Store(true)
+	t.lastMasterCallTime.Store(time.Now())
 
 	golocalv1.PutTraceID(tools.UUID())
 	defer func() {
@@ -123,17 +154,24 @@ func (t *taskDispatcher) MasterCall() {
 func (t *taskDispatcher) OnStartedLeading() {
 	logger.Info("[taskDispatcher] node %s starts dispatching tasks", t.Cluster.GetMyName())
 	t.running.Store(true)
+	t.leaderStopChan = make(chan struct{})
 
 	// Start delay queue processor
 	for t.running.Load().(bool) {
-		// Take task from delay queue
-		item := t.delayQueue.Take()
+		// Take task from delay queue (supports stop signal)
+		item := t.delayQueue.TakeWithStop(t.leaderStopChan)
+		if item == nil {
+			// 收到停止信号
+			logger.Info("[taskDispatcher] leader stop signal received, exiting dispatch loop")
+			return
+		}
 
 		// Handle batch task IDs
 		var taskIDs = item.([]string)
 
 		// Batch handle tasks
 		if len(taskIDs) > 0 {
+			logger.Debug("[OnStartedLeading] took taskIDs=%v from delayQueue", taskIDs)
 
 			for _, v := range taskIDs {
 				t.inQueueTasks.Delete(v)
@@ -147,6 +185,16 @@ func (t *taskDispatcher) OnStartedLeading() {
 func (t *taskDispatcher) OnStoppedLeading() {
 	logger.Info("[taskDispatcher] node %s stops dispatching tasks", t.Cluster.GetMyName())
 	t.running.Store(false)
+	// 关闭 leaderStopChan，中断 TakeWithStop 的阻塞等待
+	if t.leaderStopChan != nil {
+		close(t.leaderStopChan)
+		t.leaderStopChan = nil
+	}
+	// 清理任务缓存
+	t.taskCache.Range(func(key, _ interface{}) bool {
+		t.taskCache.Delete(key)
+		return true
+	})
 }
 
 func SubmitTask(task *Task) error {
@@ -172,7 +220,7 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 
 	// if not rollback executor, set rollback to NoneRollback
 	for i, subtask := range subtaskBeans {
-		if getRollbackTaskExecutor(taskBean.TaskName, subtask.TaskName) == nil {
+		if task.em.getRollbackProvider(taskBean.TaskName, subtask.TaskName) == nil {
 			subtaskBeans[i].Rollback = string(NoneRollback)
 		}
 	}
@@ -188,6 +236,7 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 
 	if task.task.Urgent {
 		taskID := taskBean.ID
+		logger.Debug("[SubmitTask] urgent task %s, notifying leader %s (myName=%s)", taskID, t.Cluster.GetLeaderName(), t.Cluster.GetMyName())
 		t.notifyLeaderHandleTaskImmediately(ctx, taskID)
 	}
 
@@ -200,6 +249,14 @@ func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 
 func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *bun.Tx) error {
 	taskBean, subtaskBeans := task.convert2Bean()
+
+	// if not rollback executor, set rollback to NoneRollback（与 SubmitTask 保持一致）
+	for i, subtask := range subtaskBeans {
+		if task.em.getRollbackProvider(taskBean.TaskName, subtask.TaskName) == nil {
+			subtaskBeans[i].Rollback = string(NoneRollback)
+		}
+	}
+
 	_, err := t.TaskDao.Insert(ctx, taskBean, tx)
 	if err != nil {
 		return err
@@ -272,14 +329,26 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 	endTime := basic.NewFromTime(now.Add(2 * time.Minute))
 
 	// Get tasks by filter
-	tasks, err := t.TaskDao.GetTodoTask(ctx, []string{TaskPending, TaskRunning, TaskSubtaskRunning}, endTime)
+	tasks, err := t.TaskDao.GetTodoTask(ctx, []string{string(TaskPending), string(TaskRunning), string(TaskSubtaskRunning)}, endTime)
 	if err != nil {
 		logger.Error("[MasterCall] get tasks failed. err: %v", err)
 		return
 	}
+	logger.Debug("[handleTask] found %d todo tasks", len(tasks))
 	if len(tasks) == 0 {
 		return
 	}
+
+	// 清理 inQueueTasks 中已完成的任务（防止内存泄漏）
+	t.inQueueTasks.Range(func(key, _ interface{}) bool {
+		taskID := key.(string)
+		for _, task := range tasks {
+			if task.ID == taskID && isFinished(task.State) {
+				t.inQueueTasks.Delete(key)
+			}
+		}
+		return true
+	})
 
 	// Add task IDs to delay queue in batches
 	var immediateTasks []string
@@ -307,7 +376,7 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 
 	// Add immediate tasks as batch
 	if len(immediateTasks) > 0 {
-		logger.Debug("[MasterCall] add immediate tasks %v, executeTime = %s", immediateTasks, now.Format("2006-01-02 15:04:05.000"))
+		logger.Debug("[handleTask] add immediate tasks %v to delayQueue, executeTime = %s", immediateTasks, now.Format("2006-01-02 15:04:05.000"))
 		t.delayQueue.Add(immediateTasks, now)
 	}
 
@@ -320,57 +389,275 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 
 func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
 	if task.IsFinished() {
+		logger.Debug("[analysisTask] task=%s already finished, dbState=%s", task.GetID(), task.getState())
+		finished = true
+		// 同步 DB 状态：如果内存中判断已完成但 DB 状态未更新，需要更新 DB
+		hasFailed := false
+		for _, subtask := range subtaskMap {
+			if subtask.GetState() == string(TaskFailed) {
+				hasFailed = true
+				break
+			}
+		}
+		if hasFailed {
+			_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskFailed))
+			task.task.State = string(TaskFailed)
+		} else {
+			_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskSucceeded))
+			task.task.State = string(TaskSucceeded)
+		}
+		logger.Debug("[analysisTask] task=%s synced DB state to %s", task.GetID(), task.getState())
 		return
 	}
 
-	nextPendingSubTasks, rollback := task.NextSubTasks()
-	if len(nextPendingSubTasks) > 0 {
-		if rollback {
-			for _, subtask := range nextPendingSubTasks {
-				subtaskFromDB := subtaskMap[subtask.GetID()]
-				if t.canExecuteSubtask(subtaskFromDB, true) {
-					rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB.getModel())
-				}
+	// 处理分支选择：检查已完成的节点是否有分支，执行条件并 Skip 未选中的分支目标
+	t.processBranches(ctx, task)
+
+	// ========== 回滚检测与执行 ==========
+	rollbackableSubtasks := task.GetRollbackableSubtasks()
+	logger.Debug("[analysisTask] task=%s rollbackableSubtasks=%v", task.GetID(), rollbackableSubtasks)
+	for _, subtaskID := range rollbackableSubtasks {
+		subtaskFromDB := subtaskMap[subtaskID]
+		if subtaskFromDB != nil && t.canExecuteSubtask(subtaskFromDB, true) {
+			rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB.getModel())
+		}
+	}
+
+	rollbackableIDSet := make(map[string]bool)
+	for _, id := range rollbackableSubtasks {
+		rollbackableIDSet[id] = true
+	}
+
+	// 判断回滚是否真正触发：只有 state=failed 的子任务才表示重试已耗尽、需要回滚
+	// state=pending + retry>0 表示还在重试中，不应触发回滚
+	rollbackTriggered := false
+	hasRetrying := false
+	for _, subtask := range subtaskMap {
+		if subtask.GetState() == string(TaskFailed) && subtask.hasRollbackExecutor() {
+			rollbackTriggered = true
+		}
+		// 安全检查：是否有子任务正在重试（state=pending, 有rollback executor, 已执行过, retry>0）
+		if subtask.GetState() == string(TaskPending) && subtask.hasRollbackExecutor() &&
+			subtask.subtask.Retry > 0 && subtask.subtask.Worker != "" {
+			hasRetrying = true
+			logger.Debug("[analysisTask] task=%s subtask=%s is retrying (retry=%d)", task.GetID(), subtask.GetID(), subtask.subtask.Retry)
+		}
+	}
+
+	if rollbackTriggered {
+		// 回滚已触发：设置所有相关子任务的 rollback = rollback_pending
+		for _, subtask := range subtaskMap {
+			rb := subtask.getRollback()
+			if rb != string(NoneRollback) && rb != "" {
+				continue // 已有 rollback 状态，不覆盖
 			}
+			st := subtask.GetState()
+			if (st == string(TaskSucceeded) || st == string(TaskFailed)) && subtask.hasRollbackExecutor() {
+				// 终态子任务 + 有 rollback executor → 需要回滚
+				_ = t.SubtaskDao.SetRollbackAndState(ctx, subtask.GetID(), string(RollbackPending), subtask.subtask.Output)
+				subtask.subtask.Rollback = string(RollbackPending)
+				logger.Info("[analysisTask] task=%s set %s rollback=rollback_pending (terminal state=%s)", task.GetID(), subtask.GetID(), st)
+			} else if st == string(TaskPending) && !subtask.hasRollbackExecutor() {
+				// pending 子任务 + 无 rollback executor（如 stepFive）→ 永远不会执行
+				_ = t.SubtaskDao.SetRollbackAndState(ctx, subtask.GetID(), string(RollbackPending), subtask.subtask.Output)
+				subtask.subtask.Rollback = string(RollbackPending)
+				logger.Info("[analysisTask] task=%s set %s rollback=rollback_pending (pending, no executor)", task.GetID(), subtask.GetID())
+			}
+		}
+
+		if hasRetrying {
+			// 有子任务正在重试，暂停回滚和正常调度，等重试完成
+			logger.Debug("[analysisTask] task=%s has retrying subtasks, delaying rollback", task.GetID())
+			retry = true
 			return
 		}
 
+		// 叶子优先回滚：构建正向依赖（subtaskID → 依赖它的子任务）
+		dependsOn := make(map[string][]string)
+		for _, subtask := range subtaskMap {
+			if subtask.subtask.PreSubtaskID != "" {
+				for _, preID := range strings.Split(subtask.subtask.PreSubtaskID, ",") {
+					preID = strings.TrimSpace(preID)
+					if preID != "" {
+						dependsOn[preID] = append(dependsOn[preID], subtask.GetID())
+					}
+				}
+			}
+		}
+		// 只保留依赖都已回滚完成的叶子
+		var leafRollbackSubtasks []*model.Subtask
+		for _, subtask := range rollbackSubtasks {
+			isLeaf := true
+			for _, depID := range dependsOn[subtask.ID] {
+				depSubtask := subtaskMap[depID]
+				if depSubtask != nil && rollbackableIDSet[depID] && !isRollbackFinished(depSubtask.getRollback()) {
+					isLeaf = false
+					break
+				}
+			}
+			if isLeaf {
+				leafRollbackSubtasks = append(leafRollbackSubtasks, subtask)
+			}
+		}
+		rollbackSubtasks = leafRollbackSubtasks
+
+		if len(rollbackSubtasks) > 0 {
+			logger.Debug("[analysisTask] task=%s dispatching %d leaf rollback subtasks (of %d rollbackable)", task.GetID(), len(rollbackSubtasks), len(rollbackableSubtasks))
+			return
+		}
+		logger.Debug("[analysisTask] task=%s all rollbacks done or no leaves, checking allDone", task.GetID())
+	} else if len(rollbackableSubtasks) > 0 {
+		// 有已完成的子任务但回滚未触发（正常执行中）
+		// 清除可能被之前重试周期误设的 rollback_pending
+		for _, subtask := range subtaskMap {
+			if subtask.getRollback() == string(RollbackPending) && subtask.GetState() == string(TaskSucceeded) {
+				subtask.subtask.Rollback = string(NoneRollback)
+				_ = t.SubtaskDao.SetRollbackAndState(ctx, subtask.GetID(), string(NoneRollback), subtask.subtask.Output)
+				logger.Info("[analysisTask] task=%s reset %s rollback to none_rollback (retry succeeded)", task.GetID(), subtask.GetID())
+			}
+		}
+	}
+
+	// 获取下一个可执行的子任务
+	nextPendingSubTasks := task.NextSubTasks()
+	logger.Debug("[analysisTask] task=%s nextPendingSubTasks=%d", task.GetID(), len(nextPendingSubTasks))
+	if len(nextPendingSubTasks) > 0 {
 		for _, subtask := range nextPendingSubTasks {
 			subtaskFromDB := subtaskMap[subtask.GetID()]
-			if t.canExecuteSubtask(subtaskFromDB, false) {
+			canExec := t.canExecuteSubtask(subtaskFromDB, false)
+			logger.Debug("[analysisTask] task=%s subtask=%s canExec=%v state=%s", task.GetID(), subtask.GetID(), canExec, subtaskFromDB.GetState())
+			if canExec {
 				runningSubtasks = append(runningSubtasks, subtaskFromDB.getModel())
 			}
 		}
 
-		if task.GetState() == TaskPending {
-			_, err := t.TaskDao.SetState(ctx, task.GetID(), TaskSubtaskRunning)
+		if task.getState() == string(TaskPending) {
+			_, err := t.TaskDao.SetState(ctx, task.GetID(), string(TaskSubtaskRunning))
 			if err != nil {
+				logger.Debug("[analysisTask] task=%s SetState failed: %v", task.GetID(), err)
 				retry = true
 				return
 			}
+			// 同步更新内存状态
+			task.task.State = string(TaskSubtaskRunning)
 		}
 
 		return
 	}
 
-	if time.Now().After(task.task.LastRunTime.Time().Add(time.Duration(task.task.RetryInterval) * time.Second)) {
+	// 没有可执行的子任务：检查是否所有子任务都已完成
+	// 检查是否处于回滚模式（有子任务触发了回滚）
+	hasRollbackMode := false
+	for _, subtask := range subtaskMap {
+		rollback := subtask.getRollback()
+		if rollback != string(NoneRollback) && rollback != "" {
+			hasRollbackMode = true
+			break
+		}
+	}
+
+	allDone := true
+	hasFailed := false
+	for _, subtask := range subtaskMap {
+		state := subtask.GetState()
+		if state == string(TaskSucceeded) || state == string(TaskFailed) || state == string(TaskSkipped) {
+			if state == string(TaskFailed) {
+				hasFailed = true
+			}
+			continue
+		}
+		// 回滚模式下，pending 子任务不阻塞完成（它们永远不会被执行）
+		if hasRollbackMode && state == string(TaskPending) {
+			continue
+		}
+		logger.Debug("[analysisTask] task=%s subtask=%s not done yet, state=%s", task.GetID(), subtask.GetID(), state)
+		allDone = false
+		break
+	}
+
+	if allDone {
 		finished = true
+		// 如果有失败的子任务，将 task 状态设为 Failed
+		if hasFailed {
+			rows, err := t.TaskDao.SetState(ctx, task.GetID(), string(TaskFailed))
+			logger.Debug("[analysisTask] task=%s SetState to Failed, rows=%d err=%v", task.GetID(), rows, err)
+			task.task.State = string(TaskFailed)
+		} else {
+			rows, err := t.TaskDao.SetState(ctx, task.GetID(), string(TaskSucceeded))
+			logger.Debug("[analysisTask] task=%s SetState to Succeeded, rows=%d err=%v", task.GetID(), rows, err)
+			task.task.State = string(TaskSucceeded)
+		}
 	} else {
+		// 仍有未完成的子任务，但当前无可执行的（可能在等待重试间隔）
+		logger.Debug("[analysisTask] task=%s not all done but no runnable subtasks, retry=true", task.GetID())
 		retry = true
 	}
 
 	return
 }
 
+// processBranches 处理分支选择逻辑
+// 检查已完成的节点是否有分支定义，执行条件函数，并自动 Skip 未选中的分支目标节点
+func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
+	compiled := task.getCompiled()
+	if compiled == nil {
+		return
+	}
+
+	for nodeKey, branches := range compiled.GetBranchesMap() {
+		// 检查分支源节点是否已完成
+		node := task.dag.nodes[nodeKey]
+		if node == nil || node.state != NodeSucceeded {
+			continue
+		}
+
+		for _, branch := range branches {
+			if branch.Condition == nil {
+				continue
+			}
+
+			// 获取分支源节点的输出作为条件输入
+			ch := compiled.GetChannel(nodeKey)
+			var input any
+			if ch != nil {
+				data, _, _ := ch.get()
+				input = data
+			}
+
+			// 执行条件函数
+			selectedKey, err := branch.Condition(nil, input)
+			if err != nil {
+				logger.Error("[processBranches] branch condition for node %s failed: %v", nodeKey, err)
+				continue
+			}
+
+			// Skip 未选中的分支目标节点
+			for endKey := range branch.EndNodes {
+				if endKey == selectedKey {
+					continue
+				}
+				// 检查目标节点是否还是 Pending 状态
+				endNode := task.dag.nodes[endKey]
+				if endNode != nil && endNode.state == NodePending {
+					_ = task.SkipSubtask(endKey)
+					// 同步更新 DB 中的子任务状态为 Skipped
+					_ = t.SubtaskDao.SetOutputAndState(ctx, endKey, "", string(TaskSkipped))
+					logger.Info("[processBranches] skipped unselected branch target %s (selected: %s)", endKey, selectedKey)
+				}
+			}
+		}
+	}
+}
+
 func (t *taskDispatcher) canExecuteSubtask(subtask *Subtask, isRollback bool) bool {
 	now := time.Now()
-	retryTime := subtask.GetLastRunTime().Time().Add(time.Duration(subtask.GetRetryInterval()) * time.Second)
+	retryTime := subtask.getLastRunTime().Time().Add(time.Duration(subtask.getRetryInterval()) * time.Second)
 	if !now.After(retryTime) {
 		return false
 	}
 
 	if isRollback {
-		return !subtask.IsRollbackFinished()
+		return !subtask.isRollbackFinished()
 	}
 	return !subtask.IsFinished()
 }
@@ -386,15 +673,19 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 	}
 
 	aliveNodes, lostNodes := t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames()
+	logger.Debug("[allocateWorker] aliveNodes=%v lostNodes=%v", aliveNodes, lostNodes)
 	runningTasks := t.filterInflightTasks(_runningTasks)
 	runningSubtasks := t.filterInflightSubtasks(_runningSubtasks)
 	runningSubtaskRollbacks := t.filterInflightSubtasks(_runningSubtaskRollbacks)
+
+	logger.Debug("[allocateWorker] after inflight filter: tasks=%d subtasks=%d rollbacks=%d", len(runningTasks), len(runningSubtasks), len(runningSubtaskRollbacks))
 
 	if len(runningTasks) == 0 && len(runningSubtasks) == 0 && len(runningSubtaskRollbacks) == 0 {
 		return
 	}
 
-	defer t.cleanupInflight(runningTasks, runningSubtasks, runningSubtaskRollbacks)
+	// 注意：不在 allocateWorker 中清理 inflight，而是在 handleTaskImmediately 中
+	// 根据 DB 状态清理已完成的任务，避免在 dispatch 阶段过早清理导致重复分配
 
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
@@ -411,78 +702,143 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 		return affinityConf
 	}
 
-	for i := range runningSubtasks {
-		runningSubtask := runningSubtasks[i]
-		affinityConf := getAffinity(runningSubtask.TaskID)
+	// 先分配任务执行节点（子任务可能需要依赖 task 的 worker 做 affinity）
+	t.allocateItems(ctx, len(runningTasks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
+		return runningTasks[i].ID, runningTasks[i].ID, runningTasks[i].Worker, runningTasks[i].Worker
+	}, func(i int, nodeName string) (int64, error) {
+		return t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTasks[i].ID, nodeName, string(TaskRunning), runningTasks[i].Worker)
+	}, getAffinity, lostNodes, aliveNodes, taskWorkerMap)
 
-		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtask.Worker, lostNodes, aliveNodes)
-		if nodeName == "" {
-			logger.Warn("[allocateWorker] no available node for subtask %s", runningSubtask.ID)
-			continue
+	// 构建 taskWorker 查找表（task 分配完 worker 后，子任务可以参考）
+	taskAllocatedWorker := make(map[string]string) // taskID -> allocated worker
+	for nodeName, taskIDs := range taskWorkerMap {
+		for _, tid := range taskIDs {
+			taskAllocatedWorker[tid] = nodeName
 		}
-		if nodeName != runningSubtask.Worker {
-			cnt, err := t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtask.ID, nodeName, TaskRunning, runningSubtask.Worker)
-			if err != nil {
-				logger.Error("[allocateWorker] set worker for subtask %s failed. err: %v", runningSubtask.ID, err)
-				continue
-			}
-			if cnt == 0 {
-				logger.Warn("[allocateWorker] subtask %s worker changed, skip", runningSubtask.ID)
-				continue
-			}
-		}
-		subtaskWorkerMap[nodeName] = append(subtaskWorkerMap[nodeName], runningSubtask.ID)
 	}
-
+	// 同时从 DB 中已有 worker 的 task 获取
 	for i := range runningTasks {
-		runningTask := runningTasks[i]
-		affinityConf := getAffinity(runningTask.ID)
-
-		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningTask.Worker, lostNodes, aliveNodes)
-		if nodeName == "" {
-			logger.Warn("[allocateWorker] no available node for task %s", runningTask.ID)
-			continue
+		if runningTasks[i].Worker != "" {
+			taskAllocatedWorker[runningTasks[i].ID] = runningTasks[i].Worker
 		}
-		if nodeName != runningTask.Worker {
-			cnt, err := t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTask.ID, nodeName, TaskRunning, runningTask.Worker)
-			if err != nil {
-				logger.Error("[allocateWorker] set worker for task %s failed. err: %v", runningTask.ID, err)
-				continue
-			}
-			if cnt == 0 {
-				logger.Warn("[allocateWorker] task %s worker changed, skip", runningTask.ID)
-				continue
-			}
-		}
-		taskWorkerMap[nodeName] = append(taskWorkerMap[nodeName], runningTask.ID)
 	}
 
-	for i := range runningSubtaskRollbacks {
-		runningSubtaskRollback := runningSubtaskRollbacks[i]
-		affinityConf := getAffinity(runningSubtaskRollback.TaskID)
+	// 分配子任务执行节点
+	// 注意：currentWorker 是 DB 中的实际 worker（用于 CAS 条件），affinityNode 是亲和性提示（用于选节点）
+	t.allocateItems(ctx, len(runningSubtasks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
+		// affinityNode：如果子任务没有 worker，使用 task 的 worker 作为亲和性提示
+		affNode := runningSubtasks[i].Worker
+		if affNode == "" {
+			if tw, ok := taskAllocatedWorker[runningSubtasks[i].TaskID]; ok {
+				affNode = tw
+			}
+		}
+		return runningSubtasks[i].TaskID, runningSubtasks[i].ID, runningSubtasks[i].Worker, affNode
+	}, func(i int, nodeName string) (int64, error) {
+		return t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtasks[i].ID, nodeName, string(TaskRunning), runningSubtasks[i].Worker)
+	}, getAffinity, lostNodes, aliveNodes, subtaskWorkerMap)
 
-		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, runningSubtaskRollback.Worker, lostNodes, aliveNodes)
-		if nodeName == "" {
-			logger.Warn("[allocateWorker] no available node for subtask rollback %s", runningSubtaskRollback.ID)
-			continue
-		}
-		if nodeName != runningSubtaskRollback.Worker {
-			cnt, err := t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollback.ID, nodeName, string(RollingBack), runningSubtaskRollback.Worker)
-			if err != nil {
-				logger.Error("[allocateWorker] set worker for subtask rollback %s failed. err: %v", runningSubtaskRollback.ID, err)
-				continue
-			}
-			if cnt == 0 {
-				logger.Warn("[allocateWorker] subtask rollback %s worker changed, skip", runningSubtaskRollback.ID)
-				continue
-			}
-		}
-		subtaskRollbackWorkerMap[nodeName] = append(subtaskRollbackWorkerMap[nodeName], runningSubtaskRollback.ID)
-	}
+	// 分配回滚任务执行节点
+	t.allocateItems(ctx, len(runningSubtaskRollbacks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
+		return runningSubtaskRollbacks[i].TaskID, runningSubtaskRollbacks[i].ID, runningSubtaskRollbacks[i].Worker, runningSubtaskRollbacks[i].Worker
+	}, func(i int, nodeName string) (int64, error) {
+		return t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollbacks[i].ID, nodeName, string(RollingBack), runningSubtaskRollbacks[i].Worker)
+	}, getAffinity, lostNodes, aliveNodes, subtaskRollbackWorkerMap)
 
 	t.deliverToCluster(ctx, subtaskWorkerMap, deliverSubtask)
 	t.deliverToCluster(ctx, taskWorkerMap, deliverTask)
 	t.deliverToCluster(ctx, subtaskRollbackWorkerMap, deliverSubtaskRollback)
+
+	// 清理未被 deliver 的子任务的 inflight 标记，防止 CAS 失败导致死锁
+	for _, st := range _runningSubtasks {
+		delivered := false
+		for _, ids := range subtaskWorkerMap {
+			for _, id := range ids {
+				if id == st.ID {
+					delivered = true
+					break
+				}
+			}
+			if delivered {
+				break
+			}
+		}
+		if !delivered {
+			t.allocateWorkerInflight.DeleteString(st.ID)
+		}
+	}
+	// 清理未被 deliver 的 rollback 子任务的 inflight
+	for _, st := range _runningSubtaskRollbacks {
+		delivered := false
+		for _, ids := range subtaskRollbackWorkerMap {
+			for _, id := range ids {
+				if id == st.ID {
+					delivered = true
+					break
+				}
+			}
+			if delivered {
+				break
+			}
+		}
+		if !delivered {
+			t.allocateWorkerInflight.DeleteString(st.ID)
+		}
+	}
+	// 清理未被 deliver 的 task 的 inflight
+	for _, tk := range _runningTasks {
+		delivered := false
+		for _, ids := range taskWorkerMap {
+			for _, id := range ids {
+				if id == tk.ID {
+					delivered = true
+					break
+				}
+			}
+			if delivered {
+				break
+			}
+		}
+		if !delivered {
+			t.allocateWorkerInflight.DeleteString(tk.ID)
+		}
+	}
+}
+
+// allocateItemInfo 获取待分配项的信息
+// 返回: taskID, itemID, currentWorker(DB中的实际worker，用于CAS条件), affinityNode(亲和性提示节点，用于选节点)
+type allocateItemInfo func(i int) (taskID, itemID, currentWorker, affinityNode string)
+
+// allocateItemCAS 尝试 CAS 更新 worker，返回 (affectedRows, error)
+type allocateItemCAS func(i int, nodeName string) (int64, error)
+
+// allocateItems 通用的节点分配逻辑，消除 subtask/task/rollback 三段重复代码
+func (t *taskDispatcher) allocateItems(ctx context.Context, count int, getInfo allocateItemInfo, casUpdate allocateItemCAS, getAffinity func(string) affinity, lostNodes, aliveNodes []string, workerMap map[string][]string) {
+	for i := 0; i < count; i++ {
+		taskID, itemID, currentWorker, affinityNode := getInfo(i)
+		affinityConf := getAffinity(taskID)
+
+		nodeName := t.selectNodeByAffinity(affinityConf.Type, affinityConf.Worker, affinityNode, lostNodes, aliveNodes)
+		if nodeName == "" {
+			logger.Warn("[allocateItems] no available node for item %s", itemID)
+			continue
+		}
+		if nodeName != currentWorker {
+			cnt, err := casUpdate(i, nodeName)
+			if err != nil {
+				logger.Error("[allocateItems] set worker for item %s failed. err: %v", itemID, err)
+				continue
+			}
+			if cnt == 0 {
+				logger.Warn("[allocateItems] item %s CAS failed (worker changed), currentWorker=%s newNode=%s", itemID, currentWorker, nodeName)
+				continue
+			}
+			logger.Debug("[allocateItems] item %s allocated to %s (was %s)", itemID, nodeName, currentWorker)
+		} else {
+			logger.Debug("[allocateItems] item %s already on %s", itemID, nodeName)
+		}
+		workerMap[nodeName] = append(workerMap[nodeName], itemID)
+	}
 }
 
 func (t *taskDispatcher) filterInflightTasks(tasks []*model.Task) []model.Task {
@@ -505,18 +861,6 @@ func (t *taskDispatcher) filterInflightSubtasks(subtasks []*model.Subtask) []mod
 	return filtered
 }
 
-func (t *taskDispatcher) cleanupInflight(tasks []model.Task, subtasks, rollbackSubtasks []model.Subtask) {
-	for _, task := range tasks {
-		t.allocateWorkerInflight.DeleteString(task.ID)
-	}
-	for _, subtask := range subtasks {
-		t.allocateWorkerInflight.DeleteString(subtask.ID)
-	}
-	for _, subtask := range rollbackSubtasks {
-		t.allocateWorkerInflight.DeleteString(subtask.ID)
-	}
-}
-
 func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType, primaryWorker string, currentNode string, lostNodes, aliveNodes []string) string {
 	if len(aliveNodes) == 0 {
 		logger.Warn("[selectNode] no alive nodes available")
@@ -528,7 +872,11 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
 			return primaryWorker
 		}
-		return ""
+		if currentNode != "" && tools.StringSliceContains(aliveNodes, currentNode) && !tools.StringSliceContains(lostNodes, currentNode) {
+			return currentNode
+		}
+		// ForceSameNode 但没有指定 primaryWorker 且没有当前 worker，随机选一个
+		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
 	case AffinityPreferSameNode:
 		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
 			return primaryWorker
@@ -536,50 +884,63 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
 			return currentNode
 		}
-		return aliveNodes[rand.Intn(len(aliveNodes))]
+		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
 	case AffinityRandom:
 		fallthrough
 	default:
 		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
 			return currentNode
 		}
-		return aliveNodes[rand.Intn(len(aliveNodes))]
+		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
 	}
 }
 
 func (t *taskDispatcher) deliverToCluster(ctx context.Context, workerMap map[string][]string, method string) {
+	if len(workerMap) == 0 {
+		return
+	}
+
+	logger.Debug("[deliverToCluster] method=%s workerMap=%v", method, workerMap)
+
+	var wg sync.WaitGroup
 	for nodeName, ids := range workerMap {
 		if nodeName == t.Cluster.GetMyName() {
 			t.deliverLocal(ctx, method, ids)
 			continue
 		}
 
-		conn, err := t.Cluster.GetGRPCClient(nodeName)
-		if err != nil {
-			logger.Error("[deliverToCluster] get gRPC client for node '%s' failed. err: %v", nodeName, err)
-			continue
-		}
+		wg.Add(1)
+		go func(nodeName string, ids []string) {
+			defer wg.Done()
 
-		client := proto.NewTaskXServiceClient(conn)
-		ctx, cancel := context.WithTimeout(ctx, t.cfg.RemoteCallTimeout)
-		traceID := golocalv1.GetTraceID()
+			conn, err := t.Cluster.GetGRPCClient(nodeName)
+			if err != nil {
+				logger.Error("[deliverToCluster] get gRPC client for node '%s' failed. err: %v", nodeName, err)
+				return
+			}
 
-		switch method {
-		case deliverTask:
-			_, err = client.DeliverTask(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
-		case deliverSubtask:
-			_, err = client.DeliverSubtask(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
-		case deliverSubtaskRollback:
-			_, err = client.DeliverSubtaskRollback(ctx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
-		default:
-			logger.Error("[deliverToCluster] unknown deliver method: %s", method)
-		}
-		cancel()
+			client := proto.NewTaskXServiceClient(conn)
+			callCtx, cancel := context.WithTimeout(ctx, t.cfg.RemoteCallTimeout)
+			traceID := golocalv1.GetTraceID()
 
-		if err != nil {
-			logger.Error("[deliverToCluster] deliver %s to node '%s' failed. err: %v", method, nodeName, err)
-		}
+			switch method {
+			case deliverTask:
+				_, err = client.DeliverTask(callCtx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+			case deliverSubtask:
+				_, err = client.DeliverSubtask(callCtx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+			case deliverSubtaskRollback:
+				_, err = client.DeliverSubtaskRollback(callCtx, &proto.DeliverRequest{Ids: ids, TraceId: traceID})
+			default:
+				logger.Error("[deliverToCluster] unknown deliver method: %s", method)
+			}
+			cancel()
+
+			if err != nil {
+				logger.Error("[deliverToCluster] deliver %s to node '%s' failed. err: %v", method, nodeName, err)
+			}
+		}(nodeName, ids)
 	}
+	wg.Wait()
 }
 
 func (t *taskDispatcher) deliverLocal(ctx context.Context, method string, ids []string) {
@@ -607,6 +968,7 @@ func (t *taskDispatcher) deliverLocal(ctx context.Context, method string, ids []
 }
 
 func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, taskID string) {
+	logger.Debug("[notifyLeaderHandleTaskImmediately] taskID=%s leader=%s myName=%s", taskID, t.Cluster.GetLeaderName(), t.Cluster.GetMyName())
 	if t.Cluster.GetLeaderName() == t.Cluster.GetMyName() {
 		t.handleTaskImmediately(ctx, []string{taskID})
 		return
@@ -638,9 +1000,11 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 		_, err = client.HandleTaskImmediately(callCtx, &proto.HandleTaskImmediatelyRequest{TaskIds: []string{taskID}, TraceId: traceID})
 		cancel()
 		if err == nil {
+			logger.Debug("[notifyLeader] task %s notified leader %s via gRPC successfully", taskID, leaderName)
 			return
 		}
 		lastErr = err
+		logger.Warn("[notifyLeader] task %s gRPC call to leader '%s' failed (attempt %d/%d). err: %v", taskID, leaderName, i+1, maxRetries, err)
 		if i < maxRetries-1 {
 			logger.Warn("[notifyLeader] task %s remote call 'handleTaskImmediately' failed (attempt %d/%d). err: %v", taskID, i+1, maxRetries, err)
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -650,7 +1014,7 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 }
 
 func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
-	logger.Debug("[handleTaskImmediately] tasks %v", taskIDs)
+	logger.Debug("[handleTaskImmediately] tasks %v, isReady=%v, isLeader=%v", taskIDs, t.Cluster.IsReady(), t.Cluster.IsLeader())
 
 	if !t.Cluster.IsReady() {
 		logger.Debug("[handleTaskImmediately] cluster not ready, skip")
@@ -667,6 +1031,14 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 		logger.Error("[handleTaskImmediately] get tasks by IDs failed. err: %v", err)
 		return
 	}
+	logger.Debug("[handleTaskImmediately] got %d tasks from DB", len(tasks))
+
+	// 根据 DB 状态清理 inflight：已完成的任务不再需要 inflight 保护
+	for i := range tasks {
+		if isFinished(tasks[i].State) {
+			t.allocateWorkerInflight.DeleteString(tasks[i].ID)
+		}
+	}
 
 	var (
 		runningTasks     []*model.Task
@@ -678,28 +1050,56 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 	for i := range tasks {
 		dbTask := &tasks[i]
 
-		subtasks, err := t.SubtaskDao.GetByTaskID(ctx, dbTask.ID)
-		if err != nil {
+		// 跳过已完成的任务
+		if isFinished(dbTask.State) {
+			logger.Debug("[handleTaskImmediately] task=%s state=%s is finished, skip", dbTask.ID, dbTask.State)
 			continue
 		}
 
-		task := &Task{}
-		task, err = task.initByBean(dbTask, subtasks)
+		subtasks, err := t.SubtaskDao.GetByTaskID(ctx, dbTask.ID)
 		if err != nil {
-			logger.Error("[handleTaskImmediately] task %s initByBean failed. err: %v", dbTask.ID, err)
+			logger.Debug("[handleTaskImmediately] task=%s GetByTaskID failed: %v", dbTask.ID, err)
+			continue
+		}
+
+		logger.Debug("[handleTaskImmediately] task=%s state=%s got %d subtasks from DB", dbTask.ID, dbTask.State, len(subtasks))
+		for _, st := range subtasks {
+			logger.Debug("[handleTaskImmediately] task=%s subtask=%s state=%s worker=%s", dbTask.ID, st.ID, st.State, st.Worker)
+		}
+
+		// 清理所有子任务的 inflight（包括 pending/running），确保 retry 后能重新分配
+		// 已完成的子任务不会被重新分配，所以清理 inflight 是安全的
+		for j := range subtasks {
+			t.allocateWorkerInflight.DeleteString(subtasks[j].ID)
+		}
+
+		task := t.getOrInitTask(ctx, dbTask, subtasks)
+		if task == nil {
 			continue
 		}
 		taskAffinityMap[task.GetID()] = affinity{
-			Type:   task.GetAffinityType(),
-			Worker: task.GetPrimaryWorker(),
+			Type:   task.getAffinityType(),
+			Worker: task.getPrimaryWorker(),
 		}
 
 		finished, retry, running, rollback := t.analysisTask(ctx, task, task.subtaskMap)
+		logger.Debug("[handleTaskImmediately] task=%s state=%s finished=%v retry=%v running=%d rollback=%d", task.GetID(), dbTask.State, finished, retry, len(running), len(rollback))
 		if retry {
 			continue
 		} else if finished {
+			// 任务已完成，状态已在 analysisTask 中更新到 DB
+			t.allocateWorkerInflight.DeleteString(task.GetID())
+			// 执行 FinishedTask/FailedTask 回调（因为 execTask 在子任务未完成时跳过了回调）
+			t.invokeTaskCallback(ctx, task, dbTask)
+			continue
+		}
+
+		// task 从 Pending → SubtaskRunning，需要分配 worker 并 deliver
+		if dbTask.State == string(TaskPending) {
 			runningTasks = append(runningTasks, dbTask)
-		} else if len(running) > 0 {
+		}
+
+		if len(running) > 0 {
 			runningSubtasks = append(runningSubtasks, running...)
 		} else if len(rollback) > 0 {
 			rollbackSubtasks = append(rollbackSubtasks, rollback...)
@@ -707,7 +1107,153 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 	}
 
 	// Batch allocate workers
+	logger.Debug("[handleTaskImmediately] allocateWorker: tasks=%d subtasks=%d rollbacks=%d", len(runningTasks), len(runningSubtasks), len(rollbackSubtasks))
 	if len(runningTasks) > 0 || len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
 		t.allocateWorker(ctx, runningTasks, runningSubtasks, rollbackSubtasks, taskAffinityMap)
+	}
+}
+
+// invokeTaskCallback 执行任务的 FinishedTask/FailedTask 回调
+// 由于 execTask 在子任务未完成时会跳过回调，所以由 dispatcher 在任务完成时调用
+func (t *taskDispatcher) invokeTaskCallback(ctx context.Context, task *Task, dbTask *model.Task) {
+	taskExecutor := getTaskExecutor(dbTask.TaskName)
+	if taskExecutor == nil {
+		return
+	}
+
+	subtaskModels, err := t.SubtaskDao.GetByTaskID(ctx, dbTask.ID)
+	if err != nil {
+		logger.Error("[invokeTaskCallback] get subtasks for task %s failed: %v", dbTask.ID, err)
+		return
+	}
+
+	subtaskMap := make(map[string]Output)
+	for _, subtask := range subtaskModels {
+		var output Output
+		_ = tools.Unmarshal([]byte(subtask.Output), &output)
+		subtaskMap[subtask.TaskName] = output
+	}
+
+	taskData := &TaskData{
+		RequestId: dbTask.RequestID,
+		TaskId:    dbTask.ID,
+		Input:     dbTask.Input,
+		Subtasks:  subtaskMap,
+	}
+
+	hasFailed := false
+	for _, st := range subtaskModels {
+		if st.State == string(TaskFailed) {
+			hasFailed = true
+			break
+		}
+	}
+
+	if hasFailed {
+		if taskErr := taskExecutor.FailedTask(taskData); taskErr != nil {
+			logger.Error("[invokeTaskCallback] task %s FailedTask callback error: %v", dbTask.ID, taskErr)
+			output := tools.ToJson(&Output{Err: taskErr.Error()})
+			_ = t.TaskDao.SetOutputAndState(ctx, dbTask.ID, output, string(TaskFailed))
+		}
+	} else {
+		if taskErr := taskExecutor.FinishedTask(taskData); taskErr != nil {
+			logger.Error("[invokeTaskCallback] task %s FinishedTask callback error: %v", dbTask.ID, taskErr)
+			output := tools.ToJson(&Output{Err: taskErr.Error()})
+			_ = t.TaskDao.SetOutputAndState(ctx, dbTask.ID, output, string(TaskFailed))
+		}
+	}
+}
+
+// getOrInitTask 获取或初始化 Task（带缓存），避免每次调度都重建 DAG
+func (t *taskDispatcher) getOrInitTask(ctx context.Context, dbTask *model.Task, subtasks []model.Subtask) *Task {
+	// 检查缓存
+	if cached, ok := t.taskCache.Load(dbTask.ID); ok {
+		ct := cached.(*cachedTask)
+		// 缓存未过期，用 DB 中的最新状态刷新子任务状态
+		if time.Since(ct.createdAt) < taskCacheTTL {
+			t.refreshSubtaskStates(ct.task, subtasks)
+			return ct.task
+		}
+		// 缓存过期，删除
+		t.taskCache.Delete(dbTask.ID)
+	}
+
+	// 缓存未命中，重建 Task
+	task := &Task{}
+	task, err := task.initByBean(dbTask, subtasks)
+	if err != nil {
+		logger.Error("[getOrInitTask] task %s initByBean failed. err: %v", dbTask.ID, err)
+		return nil
+	}
+
+	// 写入缓存
+	t.taskCache.Store(dbTask.ID, &cachedTask{
+		task:      task,
+		createdAt: time.Now(),
+	})
+
+	return task
+}
+
+// refreshSubtaskStates 用 DB 中的最新状态刷新缓存 Task 的子任务状态
+// 同时同步 DAG 节点状态和 channel 通知，确保 GetExecutableNodes 返回正确结果
+func (t *taskDispatcher) refreshSubtaskStates(task *Task, subtasks []model.Subtask) {
+	for _, dbSubtask := range subtasks {
+		cached, ok := task.subtaskMap[dbSubtask.ID]
+		if !ok {
+			continue
+		}
+
+		oldState := cached.subtask.State
+		cached.subtask.State = dbSubtask.State
+		cached.subtask.Output = dbSubtask.Output
+		cached.subtask.Worker = dbSubtask.Worker
+		cached.subtask.Rollback = dbSubtask.Rollback
+		cached.subtask.Retry = dbSubtask.Retry
+		cached.subtask.LastRunTime = dbSubtask.LastRunTime
+
+		// 状态未变化，无需更新 DAG
+		if oldState == dbSubtask.State {
+			continue
+		}
+
+		logger.Debug("[refreshSubtaskStates] task=%s subtask=%s oldState=%s newState=%s", task.GetID(), dbSubtask.ID, oldState, dbSubtask.State)
+
+		// 同步 DAG 节点状态和 channel 通知
+		switch dbSubtask.State {
+		case string(TaskPending):
+			// retry 后状态从 running → pending，DAG 节点需要回退到 NodePending 以便重新执行
+			_ = task.dag.UpdateNodeState(dbSubtask.ID, NodePending)
+		case string(TaskSucceeded):
+			if err := task.dag.UpdateNodeState(dbSubtask.ID, NodeSucceeded); err != nil {
+				logger.Error("[refreshSubtaskStates] UpdateNodeState failed: %v", err)
+			} else {
+				logger.Debug("[refreshSubtaskStates] updated DAG node %s to Succeeded, node.state=%v", dbSubtask.ID, task.dag.GetNode(dbSubtask.ID).state)
+			}
+			if ch := task.compiled.GetChannel(dbSubtask.ID); ch != nil {
+				ch.reportDependencies(nil)
+				ch.reportValues(map[string]any{dbSubtask.ID: dbSubtask.Output})
+			}
+			for _, succKey := range task.dag.controlAdj[dbSubtask.ID] {
+				if ch := task.compiled.GetChannel(succKey); ch != nil {
+					ch.reportDependencies([]string{dbSubtask.ID})
+				}
+			}
+			for _, succKey := range task.dag.dataAdj[dbSubtask.ID] {
+				if ch := task.compiled.GetChannel(succKey); ch != nil {
+					ch.reportValues(map[string]any{dbSubtask.ID: dbSubtask.Output})
+				}
+			}
+		case string(TaskFailed):
+			if err := task.dag.UpdateNodeState(dbSubtask.ID, NodeFailed); err != nil {
+				logger.Error("[refreshSubtaskStates] UpdateNodeState to Failed failed: %v", err)
+			} else {
+				logger.Debug("[refreshSubtaskStates] updated DAG node %s to Failed", dbSubtask.ID)
+			}
+		case string(TaskSkipped):
+			_ = task.dag.UpdateNodeState(dbSubtask.ID, NodeSkipped)
+		case string(TaskRunning):
+			_ = task.dag.UpdateNodeState(dbSubtask.ID, NodeRunning)
+		}
 	}
 }

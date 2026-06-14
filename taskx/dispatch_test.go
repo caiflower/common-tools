@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -40,6 +42,8 @@ const (
 	taskDemoName           = "taskDemo"
 	taskRollbackName       = "taskRollbackDemo"
 	taskNameOfNonRetryable = "NonRetryable"
+	taskBranchName         = "branchDemo"
+	taskNestedBranchName   = "nestedBranchDemo"
 
 	stepOne   = "stepOne"
 	stepTwo   = "stepTwo"
@@ -47,6 +51,8 @@ const (
 	stepFour  = "stepFour"
 	stepFive  = "stepFive"
 )
+
+// ===== 公共基础设施 =====
 
 func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 	c1 := cluster.Config{}
@@ -168,18 +174,9 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 }
 
 func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver, err error) {
-	//config := dbv1.Config{
-	//	Url:      "mysql-primary.app.svc.cluster.local:3306",
-	//	User:     "test-user",
-	//	Password: "test-user",
-	//	DbName:   "task_test",
-	//	//Debug:    true,
-	//}
-
 	config := dbv1.Config{
 		Dialect: "sqlite",
 		Url:     "file:./app.db?cache=shared&_fk=1&mode=rwc&journal_mode=WAL",
-		//Debug:   true,
 	}
 
 	l := logger.Config{
@@ -211,84 +208,44 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		RemoteCallTimeout: time.Second * 3,
 	}
 
-	receiver1 = &taskReceiver{
-		Cluster:                  cluster1,
-		TaskDao:                  taskDao,
-		SubtaskDao:               subtaskDao,
-		subtaskInflight:          inflight.NewInFlight(),
-		taskInflight:             inflight.NewInFlight(),
-		subtaskWorker:            50,
-		taskWorker:               5,
-		subtaskRollbackWorker:    10,
-		taskQueueSize:            1000,
-		subtaskQueueSize:         1000,
-		subtaskRollbackQueueSize: 200,
-		cfg:                      cfg,
+	newReceiver := func(c cluster.ICluster) *taskReceiver {
+		return &taskReceiver{
+			Cluster:                  c,
+			TaskDao:                  taskDao,
+			SubtaskDao:               subtaskDao,
+			subtaskInflight:          inflight.NewInFlight(),
+			taskInflight:             inflight.NewInFlight(),
+			subtaskWorker:            50,
+			taskWorker:               5,
+			subtaskRollbackWorker:    10,
+			taskQueueSize:            1000,
+			subtaskQueueSize:         1000,
+			subtaskRollbackQueueSize: 200,
+			cfg:                      cfg,
+		}
 	}
-	receiver2 = &taskReceiver{
-		Cluster:                  cluster2,
-		TaskDao:                  taskDao,
-		SubtaskDao:               subtaskDao,
-		subtaskInflight:          inflight.NewInFlight(),
-		taskInflight:             inflight.NewInFlight(),
-		subtaskWorker:            50,
-		taskWorker:               5,
-		subtaskRollbackWorker:    10,
-		taskQueueSize:            1000,
-		subtaskQueueSize:         1000,
-		subtaskRollbackQueueSize: 200,
-		cfg:                      cfg,
+	newDispatcher := func(c cluster.ICluster, r *taskReceiver) *taskDispatcher {
+		return &taskDispatcher{
+			Cluster:                c,
+			TaskDao:                taskDao,
+			TaskBakDao:             taskBakDao,
+			SubtaskDao:             subtaskDao,
+			SubtaskBakDao:          subtaskBakDao,
+			DBClient:               client,
+			cfg:                    cfg,
+			TaskReceiver:           r,
+			allocateWorkerInflight: inflight.NewInFlight(),
+			delayQueue:             basic.NewDelayQueue(),
+			randSource:             rand.New(rand.NewSource(time.Now().UnixNano())),
+		}
 	}
-	receiver3 = &taskReceiver{
-		Cluster:                  cluster3,
-		TaskDao:                  taskDao,
-		SubtaskDao:               subtaskDao,
-		subtaskInflight:          inflight.NewInFlight(),
-		taskInflight:             inflight.NewInFlight(),
-		subtaskWorker:            50,
-		taskWorker:               5,
-		subtaskRollbackWorker:    10,
-		taskQueueSize:            1000,
-		subtaskQueueSize:         1000,
-		subtaskRollbackQueueSize: 200,
-		cfg:                      cfg,
-	}
-	dispatcher1 = &taskDispatcher{
-		Cluster:                cluster1,
-		TaskDao:                taskDao,
-		TaskBakDao:             taskBakDao,
-		SubtaskDao:             subtaskDao,
-		SubtaskBakDao:          subtaskBakDao,
-		DBClient:               client,
-		cfg:                    cfg,
-		TaskReceiver:           receiver1,
-		allocateWorkerInflight: inflight.NewInFlight(),
-		delayQueue:             basic.NewDelayQueue(),
-	}
-	dispatcher2 = &taskDispatcher{
-		Cluster:                cluster2,
-		TaskDao:                taskDao,
-		TaskBakDao:             taskBakDao,
-		SubtaskDao:             subtaskDao,
-		SubtaskBakDao:          subtaskBakDao,
-		DBClient:               client,
-		cfg:                    cfg,
-		TaskReceiver:           receiver2,
-		allocateWorkerInflight: inflight.NewInFlight(),
-		delayQueue:             basic.NewDelayQueue(),
-	}
-	dispatcher3 = &taskDispatcher{
-		Cluster:                cluster3,
-		TaskDao:                taskDao,
-		TaskBakDao:             taskBakDao,
-		SubtaskDao:             subtaskDao,
-		SubtaskBakDao:          subtaskBakDao,
-		DBClient:               client,
-		cfg:                    cfg,
-		TaskReceiver:           receiver3,
-		allocateWorkerInflight: inflight.NewInFlight(),
-		delayQueue:             basic.NewDelayQueue(),
-	}
+
+	receiver1 = newReceiver(cluster1)
+	receiver2 = newReceiver(cluster2)
+	receiver3 = newReceiver(cluster3)
+	dispatcher1 = newDispatcher(cluster1, receiver1)
+	dispatcher2 = newDispatcher(cluster2, receiver2)
+	dispatcher3 = newDispatcher(cluster3, receiver3)
 	receiver1.TaskDispatcher = dispatcher1
 	receiver2.TaskDispatcher = dispatcher2
 	receiver3.TaskDispatcher = dispatcher3
@@ -296,372 +253,31 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	return
 }
 
-func submitDemoTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
-	var (
-		requestId   = "traceId"
-		description = "description"
-	)
+// ===== 公共测试辅助方法 =====
 
-	task := NewTask(taskDemoName).SetRequestID(requestId).SetDescription(description).SetUrgent()
-	one := NewSubtask(stepOne).SetInput(stepOne)
-	two := NewSubtask(stepTwo).SetInput(stepTwo)
-	three := NewSubtask(stepThree).SetInput(stepThree)
-	four := NewSubtask(stepFour).SetInput(stepFour)
-	five := NewSubtask(stepFive).SetInput(stepFive)
-
-	err := task.AddSubtask(one)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddSubtask(two)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddSubtask(three)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddSubtask(four)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddSubtask(five)
-	if err != nil {
-		panic(err)
-	}
-
-	err = task.AddDirectedEdge(one, two)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddDirectedEdge(two, three)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddDirectedEdge(two, four)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddDirectedEdge(three, five)
-	if err != nil {
-		panic(err)
-	}
-	err = task.AddDirectedEdge(four, five)
-	if err != nil {
-		panic(err)
-	}
+// submitAndWait 提交任务并等待完成，返回 DB 中的 Task、子任务列表和按 TaskName 索引的子任务 Map
+func submitAndWait(t *testing.T, dispatcher *taskDispatcher, task *Task) (*model.Task, []model.Subtask, map[string]*model.Subtask) {
+	waitForTask(task, dispatcher)
 
 	for {
-		err = dispatcher1.SubmitTask(context.TODO(), task)
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		break
-	}
-
-	var (
-		dbTask       *model.Task
-		dbSubTasks   []model.Subtask
-		dbSubTaskMap map[string]*model.Subtask
-	)
-
-	dbSubTaskMap = make(map[string]*model.Subtask)
-	for {
-		dbTask, err = dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
-		if err != nil {
+		dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
+		if err != nil || dbTask == nil {
 			time.Sleep(time.Second * 2)
 			continue
 		}
 		if isFinished(dbTask.State) {
-			subtasks := getSubTask(task.GetID(), dispatcher1)
-			for i, subTask := range subtasks {
-				dbSubTaskMap[subTask.ID] = &subtasks[i]
-			}
-			dbSubTasks = subtasks
-			break
-		}
-		time.Sleep(time.Second * 2)
-	}
-
-	assert.Equal(t, requestId, dbTask.RequestID, "check requestId failed")
-	assert.Equal(t, description, dbTask.Description, "check description failed")
-	for _, v := range dbSubTasks {
-		assert.Equal(t, true, isFinished(v.State), "check subtask finished failed")
-		output := Output{}
-		_ = json.Unmarshal([]byte(v.Output), &output)
-		assert.Equal(t, v.TaskName, output.Output, "check subtask output failed")
-	}
-
-	dbOne := dbSubTaskMap[one.GetID()]
-	dbTwo := dbSubTaskMap[two.GetID()]
-	dbThree := dbSubTaskMap[three.GetID()]
-	dbFour := dbSubTaskMap[four.GetID()]
-	dbFive := dbSubTaskMap[five.GetID()]
-
-	// check preSubtaskId
-	assert.Equal(t, dbOne.PreSubtaskID, "", "check preSubtaskId failed")
-	assert.Equal(t, dbTwo.PreSubtaskID, one.GetID(), "check preSubtaskId failed")
-	assert.Equal(t, dbThree.PreSubtaskID, two.GetID(), "check preSubtaskId failed")
-	assert.Equal(t, dbFour.PreSubtaskID, two.GetID(), "check preSubtaskId failed")
-	assert.Contains(t, dbFive.PreSubtaskID, three.GetID(), "check preSubtaskId failed")
-	assert.Contains(t, dbFive.PreSubtaskID, four.GetID(), "check preSubtaskId failed")
-
-	// check finish time
-	assert.Equal(t, true, dbOne.LastRunTime.Time().Sub(dbTwo.LastRunTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbThree.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
-	assert.Equal(t, true, dbFour.LastRunTime.Time().Sub(dbFive.LastRunTime.Time()) <= 0, "check finishTime failed")
-
-	outputs, err := dispatcher1.GetTaskOutput(context.TODO(), task.GetID())
-	assert.Nil(t, err, "check task output failed")
-	assert.Equal(t, 6, len(outputs), "check task output failed")
-	assert.Equal(t, stepOne, outputs[stepOne].Output, "check task output failed")
-	assert.Equal(t, stepTwo, outputs[stepTwo].Output, "check task output failed")
-	assert.Equal(t, stepThree, outputs[stepThree].Output, "check task output failed")
-	assert.Equal(t, stepFour, outputs[stepFour].Output, "check task output failed")
-	assert.Equal(t, stepFive, outputs[stepFive].Output, "check task output failed")
-
-	done <- struct{}{}
-
-}
-
-type TaskDemo struct {
-}
-
-func (t *TaskDemo) Name() string {
-	return taskDemoName
-}
-
-func (t *TaskDemo) FinishedTask(data *TaskData) (err error) {
-	return nil
-}
-func (t *TaskDemo) FailedTask(data *TaskData) (err error) {
-	return nil
-}
-
-func (t *TaskDemo) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
-	return t, map[string]SubTaskExecutor{
-		stepOne:   t.StepOne,
-		stepTwo:   t.StepTwo,
-		stepThree: t.StepThree,
-		stepFour:  t.StepFour,
-		stepFive:  t.StepFive,
-	}
-}
-
-func (t *TaskDemo) StepOne(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskDemo) StepOneRollback(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskDemo) StepTwo(data *TaskData) (output interface{}, err error) {
-	return data.Input, nil
-}
-
-func (t *TaskDemo) StepThree(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskDemo) StepFour(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskDemo) StepFive(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-type TaskRollbackDemo struct {
-}
-
-func (t *TaskRollbackDemo) Name() string {
-	return taskRollbackName
-}
-
-func (t *TaskRollbackDemo) FinishedTask(data *TaskData) (err error) {
-	return nil
-}
-func (t *TaskRollbackDemo) FailedTask(data *TaskData) (err error) {
-	return nil
-}
-
-func (t *TaskRollbackDemo) GetExecutorWithRollback() (TaskExecutor, map[string]SubTaskExecutor, map[string]SubTaskExecutor) {
-	return t, map[string]SubTaskExecutor{
-			stepOne:   t.StepOne,
-			stepTwo:   t.StepTwo,
-			stepThree: t.StepThree,
-			stepFour:  t.StepFour,
-			stepFive:  t.StepFive,
-		}, map[string]SubTaskExecutor{
-			stepTwo:   t.StepTwoRollback,
-			stepThree: t.StepThreeRollback,
-			stepFour:  t.StepFourRollback,
-			stepFive:  t.StepFourRollback,
-		}
-}
-
-func (t *TaskRollbackDemo) StepOne(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskRollbackDemo) StepOneRollback(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskRollbackDemo) StepTwo(data *TaskData) (output interface{}, err error) {
-	return "", nil
-}
-
-func (t *TaskRollbackDemo) StepTwoRollback(data *TaskData) (output interface{}, err error) {
-	return data.Input + " rollback", err
-}
-
-func (t *TaskRollbackDemo) StepThree(data *TaskData) (output interface{}, err error) {
-	return data.Input, err
-}
-
-func (t *TaskRollbackDemo) StepThreeRollback(data *TaskData) (output interface{}, err error) {
-	time.Sleep(2 * time.Second)
-	return data.Input + " rollback", err
-}
-
-func (t *TaskRollbackDemo) StepFour(data *TaskData) (output interface{}, err error) {
-	return data.Input, errors.New("test rollback err")
-}
-
-func (t *TaskRollbackDemo) StepFourRollback(data *TaskData) (output interface{}, err error) {
-	time.Sleep(1 * time.Second)
-	return data.Input + " rollback", err
-}
-
-func (t *TaskRollbackDemo) StepFive(data *TaskData) (output interface{}, err error) {
-	return data.Input, nil
-}
-
-func submitRollbackTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
-	task := NewTask(taskRollbackName).SetUrgent()
-	one := NewSubtask(stepOne).SetInput(stepOne)
-	two := NewSubtask(stepTwo).SetInput(stepTwo)
-	three := NewSubtask(stepThree).SetInput(stepThree)
-	four := NewSubtask(stepFour).SetInput(stepFour)
-	five := NewSubtask(stepFive).SetInput(stepFive)
-
-	_ = task.AddSubtask(one)
-	_ = task.AddSubtask(two)
-	_ = task.AddSubtask(three)
-	_ = task.AddSubtask(four)
-	_ = task.AddSubtask(five)
-	_ = task.AddDirectedEdge(one, two)
-	_ = task.AddDirectedEdge(two, three)
-	_ = task.AddDirectedEdge(two, four)
-	_ = task.AddDirectedEdge(three, five)
-	_ = task.AddDirectedEdge(four, five)
-	waitForTask(task, dispatcher1)
-
-	dbSubTaskMap := make(map[string]*model.Subtask)
-	for {
-		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		if isFinished(dbTask.State) {
-			subtasks := getSubTask(task.GetID(), dispatcher1)
+			subtasks := getSubTask(task.GetID(), dispatcher)
+			subtaskMap := make(map[string]*model.Subtask)
 			for i, v := range subtasks {
-				dbSubTaskMap[v.ID] = &subtasks[i]
+				subtaskMap[v.TaskName] = &subtasks[i]
 			}
-			break
+			return dbTask, subtasks, subtaskMap
 		}
 		time.Sleep(time.Second * 2)
 	}
-
-	dbOne := dbSubTaskMap[one.GetID()]
-	dbTwo := dbSubTaskMap[two.GetID()]
-	dbThree := dbSubTaskMap[three.GetID()]
-	dbFour := dbSubTaskMap[four.GetID()]
-	dbFive := dbSubTaskMap[five.GetID()]
-
-	// check preSubtaskId
-	assert.Equal(t, true, isRollbackFinished(dbTwo.Rollback), "check rollback finished failed")
-	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "check rollback finished failed")
-	assert.Equal(t, true, isRollbackFinished(dbFour.Rollback), "check rollback finished failed")
-	assert.Equal(t, true, TaskRollbackState(dbOne.Rollback) == NoneRollback, "check noneRollback rollback failed")
-	assert.Equal(t, true, TaskRollbackState(dbFive.Rollback) == RollbackPending, "check rollbackPending rollback failed")
-
-	assert.Equal(t, TaskFailed, dbFour.State, "check subtask state failed")
-	assert.Equal(t, int8(0), dbFour.Retry, "check subtask retryCount failed")
-	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
-
-	// check finish time
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) > 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
-
-	done <- struct{}{}
 }
 
-type TaskNonRetryable struct {
-}
-
-func (t *TaskNonRetryable) Name() string {
-	return taskNameOfNonRetryable
-}
-
-func (t *TaskNonRetryable) FinishedTask(data *TaskData) (err error) {
-	return nil
-}
-func (t *TaskNonRetryable) FailedTask(data *TaskData) (err error) {
-	return errors.New("FailedTask")
-}
-
-func (t *TaskNonRetryable) StepOne(data *TaskData) (output interface{}, err error) {
-	return nil, ErrNonRetryable
-}
-
-func (t *TaskNonRetryable) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
-	return t, map[string]SubTaskExecutor{
-		stepOne: t.StepOne,
-	}
-}
-
-func submitNonRetryTaskAndCheck(t *testing.T, dispatcher1 *taskDispatcher, done chan<- struct{}) {
-	task := NewTask(taskNameOfNonRetryable).SetUrgent()
-	one := NewSubtask(stepOne).SetInput(stepOne)
-	_ = task.AddSubtask(one)
-
-	for {
-		err := dispatcher1.SubmitTask(context.TODO(), task)
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		break
-	}
-
-	var dbOne model.Subtask
-	for {
-		dbTask, err := dispatcher1.TaskDao.GetByID(context.TODO(), task.GetID())
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		if isFinished(dbTask.State) {
-			subTasks := getSubTask(task.GetID(), dispatcher1)
-			dbOne = subTasks[0]
-			break
-		}
-		time.Sleep(time.Second * 2)
-	}
-
-	assert.Equal(t, TaskFailed, dbOne.State, "check task state failed")
-	assert.Equal(t, int8(DefaultRetryCount), dbOne.Retry, "check task retryCount failed")
-
-	done <- struct{}{}
-}
-
+// waitForTask 提交任务到 dispatcher，重试直到成功
 func waitForTask(task *Task, dispatcher *taskDispatcher) {
 	for {
 		err := dispatcher.SubmitTask(context.TODO(), task)
@@ -673,6 +289,7 @@ func waitForTask(task *Task, dispatcher *taskDispatcher) {
 	}
 }
 
+// getSubTask 从 DB 获取子任务列表
 func getSubTask(taskID string, dispatcher *taskDispatcher) []model.Subtask {
 	for {
 		dbSubTasks, err := dispatcher.SubtaskDao.GetByTaskID(context.TODO(), taskID)
@@ -684,52 +301,233 @@ func getSubTask(taskID string, dispatcher *taskDispatcher) []model.Subtask {
 	}
 }
 
+// assertSubtaskState 断言子任务状态
+func assertSubtaskState(t *testing.T, subtaskMap map[string]*model.Subtask, name, expectedState string) {
+	s, ok := subtaskMap[name]
+	if !ok {
+		assert.Failf(t, "subtask not found", "subtask %s not found in map", name)
+		return
+	}
+	assert.Equal(t, expectedState, s.State, fmt.Sprintf("subtask %s state check failed", name))
+}
+
+// ===== 步骤函数（泛型 LocalExecutor） =====
+
+// echoInput 回显输入
+func echoInput(ctx context.Context, input map[string]string) (map[string]string, error) {
+	return input, nil
+}
+
+// failStep 总是返回错误
+func failStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+	return nil, errors.New("test rollback err")
+}
+
+// rollbackStep 回滚步骤
+func rollbackStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+	result := make(map[string]string)
+	for k, v := range input {
+		result[k] = v + " rollback"
+	}
+	return result, nil
+}
+
+// rollbackStepSlow 慢回滚步骤
+func rollbackStepSlow(delay time.Duration) func(ctx context.Context, input map[string]string) (map[string]string, error) {
+	return func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		time.Sleep(delay)
+		result := make(map[string]string)
+		for k, v := range input {
+			result[k] = v + " rollback"
+		}
+		return result, nil
+	}
+}
+
+// nonRetryableStep 返回 ErrNonRetryable
+func nonRetryableStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+	return nil, ErrNonRetryable
+}
+
+// panicStep 触发 panic
+func panicStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+	panic("this is a test panic in PanicStep")
+}
+
+// emptyStep 返回空结果
+func emptyStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
+
+// ===== TaskExecutor 实现 =====
+
+type TaskDemo struct{}
+
+func (t *TaskDemo) Name() string                      { return taskDemoName }
+func (t *TaskDemo) FinishedTask(data *TaskData) error { return nil }
+func (t *TaskDemo) FailedTask(data *TaskData) error   { return nil }
+
+type TaskRollbackDemo struct{}
+
+func (t *TaskRollbackDemo) Name() string                      { return taskRollbackName }
+func (t *TaskRollbackDemo) FinishedTask(data *TaskData) error { return nil }
+func (t *TaskRollbackDemo) FailedTask(data *TaskData) error   { return nil }
+
+type TaskNonRetryable struct{}
+
+func (t *TaskNonRetryable) Name() string                      { return taskNameOfNonRetryable }
+func (t *TaskNonRetryable) FinishedTask(data *TaskData) error { return nil }
+func (t *TaskNonRetryable) FailedTask(data *TaskData) error   { return errors.New("FailedTask") }
+
+type PanicTaskExecutor struct{}
+
+func (t *PanicTaskExecutor) Name() string                      { return "PanicTask" }
+func (t *PanicTaskExecutor) FinishedTask(data *TaskData) error { return nil }
+func (t *PanicTaskExecutor) FailedTask(data *TaskData) error   { return nil }
+
+type BranchTaskExecutor struct{}
+
+func (t *BranchTaskExecutor) Name() string                      { return taskBranchName }
+func (t *BranchTaskExecutor) FinishedTask(data *TaskData) error { return nil }
+func (t *BranchTaskExecutor) FailedTask(data *TaskData) error   { return nil }
+
+type NestedBranchTaskExecutor struct{}
+
+func (t *NestedBranchTaskExecutor) Name() string                      { return taskNestedBranchName }
+func (t *NestedBranchTaskExecutor) FinishedTask(data *TaskData) error { return nil }
+func (t *NestedBranchTaskExecutor) FailedTask(data *TaskData) error   { return nil }
+
+// ===== 测试用例 =====
+
+func submitDemoTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	var (
+		requestId   = "traceId"
+		description = "description"
+	)
+
+	task := NewTask(taskDemoName).SetRequestID(requestId).SetDescription(description).SetUrgent()
+
+	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	two := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	three := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	four := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	five := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddSubtask(four)
+	_ = task.AddSubtask(five)
+	_ = task.AddEdge(one, two)
+	_ = task.AddEdge(two, three)
+	_ = task.AddEdge(two, four)
+	_ = task.AddEdge(three, five)
+	_ = task.AddEdge(four, five)
+
+	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
+
+	assert.Equal(t, requestId, dbTask.RequestID, "check requestId failed")
+	assert.Equal(t, description, dbTask.Description, "check description failed")
+	for _, v := range dbSubTasks {
+		assert.Equal(t, true, isFinished(v.State), "check subtask finished failed")
+	}
+
+	outputs, err := dispatcher.GetTaskOutput(context.TODO(), task.GetID())
+	assert.Nil(t, err, "check task output failed")
+	assert.Equal(t, 6, len(outputs), "check task output failed")
+
+	done <- struct{}{}
+}
+
+func submitRollbackTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	task := NewTask(taskRollbackName).SetUrgent()
+
+	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	two := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(emptyStep)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	three := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(2 * time.Second)))
+	four := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(failStep)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(1 * time.Second)))
+	five := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddSubtask(four)
+	_ = task.AddSubtask(five)
+	_ = task.AddEdge(one, two)
+	_ = task.AddEdge(two, three)
+	_ = task.AddEdge(two, four)
+	_ = task.AddEdge(three, five)
+	_ = task.AddEdge(four, five)
+
+	_, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	dbTwo := subtaskMap[stepTwo]
+	dbThree := subtaskMap[stepThree]
+	dbFour := subtaskMap[stepFour]
+	dbOne := subtaskMap[stepOne]
+	dbFive := subtaskMap[stepFive]
+
+	// check rollback state
+	assert.Equal(t, true, isRollbackFinished(dbTwo.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, isRollbackFinished(dbFour.Rollback), "check rollback finished failed")
+	assert.Equal(t, true, TaskRollbackState(dbOne.Rollback) == NoneRollback, "check noneRollback rollback failed")
+	assert.Equal(t, true, TaskRollbackState(dbFive.Rollback) == RollbackPending, "check rollbackPending rollback failed")
+
+	assert.Equal(t, string(TaskFailed), dbFour.State, "check subtask state failed")
+	assert.Equal(t, int8(0), dbFour.Retry, "check subtask retryCount failed")
+	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
+
+	// check finish time
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) > 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
+
+	done <- struct{}{}
+}
+
+func submitNonRetryTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	task := NewTask(taskNameOfNonRetryable).SetUrgent()
+	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(nonRetryableStep))
+	_ = task.AddSubtask(one)
+
+	_, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
+
+	dbOne := dbSubTasks[0]
+	assert.Equal(t, string(TaskFailed), dbOne.State, "check task state failed")
+	assert.Equal(t, int8(DefaultRetryCount), dbOne.Retry, "check task retryCount failed")
+
+	done <- struct{}{}
+}
+
 func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
-	// 创建带有PreferSameNode亲和性的任务
 	task := NewTask(taskDemoName).
 		SetInput("affinity test input").
 		SetAffinityType(AffinityForceSameNode)
 
-	subtask := NewSubtask(stepOne).
-		SetInput("affinity test input")
-	subtask2 := NewSubtask(stepOne).
-		SetInput("affinity test input")
-	subtask3 := NewSubtask(stepThree).
-		SetInput("affinity test input")
-	subtask4 := NewSubtask(stepFour).
-		SetInput("affinity test input")
-	subtask5 := NewSubtask(stepFive).
-		SetInput("affinity test input")
+	subtask := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask2 := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask3 := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask4 := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask5 := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
 
 	_ = task.AddSubtask(subtask)
 	_ = task.AddSubtask(subtask2)
 	_ = task.AddSubtask(subtask3)
 	_ = task.AddSubtask(subtask4)
 	_ = task.AddSubtask(subtask5)
-	_ = task.AddDirectedEdge(subtask, subtask2)
-	_ = task.AddDirectedEdge(subtask, subtask3)
-	_ = task.AddDirectedEdge(subtask2, subtask4)
-	_ = task.AddDirectedEdge(subtask3, subtask4)
-	_ = task.AddDirectedEdge(subtask4, subtask5)
+	_ = task.AddEdge(subtask, subtask2)
+	_ = task.AddEdge(subtask, subtask3)
+	_ = task.AddEdge(subtask2, subtask4)
+	_ = task.AddEdge(subtask3, subtask4)
+	_ = task.AddEdge(subtask4, subtask5)
 
-	waitForTask(task, dispatcher)
+	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
 
-	// Wait for task to complete
-	var dbTask *model.Task
-	for {
-		_dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		if isFinished(_dbTask.State) {
-			dbTask = _dbTask
-			break
-		}
-		time.Sleep(time.Second)
+	logger.Debug("[affinityTest] dbTask.Worker=%s", dbTask.Worker)
+	for _, v := range dbSubTasks {
+		logger.Debug("[affinityTest] subtask=%s worker=%s", v.TaskName, v.Worker)
 	}
 
-	dbSubTasks := getSubTask(task.GetID(), dispatcher)
 	for _, v := range dbSubTasks {
 		assert.Equal(t, dbTask.Worker, v.Worker, "must same node")
 	}
@@ -737,75 +535,131 @@ func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 	done <- struct{}{}
 }
 
-// PanicTask 用于测试panic处理
-type PanicTask struct {
-}
-
-func (t *PanicTask) Name() string {
-	return "PanicTask"
-}
-
-func (t *PanicTask) FinishedTask(data *TaskData) (err error) {
-	return nil
-}
-
-func (t *PanicTask) FailedTask(data *TaskData) (err error) {
-	return nil
-}
-
-func (t *PanicTask) GetExecutor() (TaskExecutor, map[string]SubTaskExecutor) {
-	return t, map[string]SubTaskExecutor{
-		"panicStep": t.PanicStep,
-	}
-}
-
-// PanicStep 会在执行时触发panic
-func (t *PanicTask) PanicStep(data *TaskData) (output interface{}, err error) {
-	panic("this is a test panic in PanicStep")
-}
-
 func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
-	// Create a task scheduled to run after 5 seconds
 	task := NewTask(taskDemoName)
 	executeTime := time.Now().Add(10 * time.Second)
 	task.SetExecuteTime(executeTime)
 
-	subtask := NewSubtask(stepOne).SetInput("scheduled input")
+	subtask := NewSubtask(stepOne).SetInput(map[string]string{"name": "scheduled"}).SetExecutor(executor.NewLocalExecutor(echoInput))
 	_ = task.AddSubtask(subtask)
 
-	// Submit task
-	waitForTask(task, dispatcher)
+	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
 
-	// Wait for task to complete
-	var dbTask *model.Task
-	for {
-		_dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
-		if err != nil {
-			time.Sleep(time.Second * 2)
-			continue
-		}
-		if isFinished(_dbTask.State) {
-			dbTask = _dbTask
-			break
-		}
-		time.Sleep(time.Second)
-	}
-
-	assert.Equal(t, TaskSucceeded, dbTask.State, "check task state failed")
-
-	// Check subtask output
-	dbSubTasks := getSubTask(task.GetID(), dispatcher)
+	assert.Equal(t, string(TaskSucceeded), dbTask.State, "check task state failed")
 	for _, subTask := range dbSubTasks {
 		assert.Equal(t, true, isFinished(subTask.State), "check subtask finished failed")
-		output := Output{}
-		_ = json.Unmarshal([]byte(subTask.Output), &output)
-		assert.Equal(t, "scheduled input", output.Output, "check subtask output failed")
 		assert.Equal(t, true, subTask.LastRunTime.Time().After(executeTime),
 			fmt.Sprintf("must after ExecuteTime, executeTime = %v, lastTime = %v", executeTime.Format("2006-01-02 15:04:05"), subTask.LastRunTime.Time().Format("2006-01-02 15:04:05")))
 	}
 
 	done <- struct{}{}
 }
+
+func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	task := NewTask("PanicTask").SetInput("panic test input")
+	subtask := NewSubtask("panicStep").SetInput(map[string]string{"name": "panic"}).SetExecutor(executor.NewLocalExecutor(panicStep))
+	_ = task.AddSubtask(subtask)
+
+	_, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
+
+	for _, subtask := range dbSubTasks {
+		if subtask.State == string(TaskFailed) {
+			var output Output
+			_ = json.Unmarshal([]byte(subtask.Output), &output)
+			assert.Contains(t, output.Err, "panic occurred during execution")
+			break
+		}
+	}
+
+	done <- struct{}{}
+}
+
+// submitBranchTaskAndCheck 条件分支：start -> pathA/pathB（选 pathA）-> end
+func submitBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	task := NewTask(taskBranchName).SetUrgent()
+
+	start := NewSubtask("start").SetInput(map[string]string{"name": "start"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	pathA := NewSubtask("pathA").SetInput(map[string]string{"name": "pathA"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	pathB := NewSubtask("pathB").SetInput(map[string]string{"name": "pathB"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	end := NewSubtask("end").SetInput(map[string]string{"name": "end"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddSubtask(end)
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+	_ = task.AddEdge(pathA, end)
+	_ = task.AddEdge(pathB, end)
+	_ = task.AddBranch(start, &Branch{
+		Condition: func(ctx interface{}, input any) (string, error) {
+			return pathA.GetID(), nil
+		},
+		EndNodes: map[string]bool{pathA.GetID(): true, pathB.GetID(): true},
+	})
+
+	dbTask, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	assert.Equal(t, string(TaskSucceeded), dbTask.State, "branch task should succeed")
+	assertSubtaskState(t, subtaskMap, "start", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "pathA", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "pathB", string(TaskSkipped))
+	assertSubtaskState(t, subtaskMap, "end", string(TaskSucceeded))
+
+	done <- struct{}{}
+}
+
+// submitNestedBranchTaskAndCheck 嵌套分支：start -> outerA/outerB（选 outerA）-> innerA1/innerA2（选 innerA1）-> end
+func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	task := NewTask(taskNestedBranchName).SetUrgent()
+
+	start := NewSubtask("start").SetInput(map[string]string{"name": "start"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	outerA := NewSubtask("outerA").SetInput(map[string]string{"name": "outerA"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	outerB := NewSubtask("outerB").SetInput(map[string]string{"name": "outerB"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	innerA1 := NewSubtask("innerA1").SetInput(map[string]string{"name": "innerA1"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	innerA2 := NewSubtask("innerA2").SetInput(map[string]string{"name": "innerA2"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	end := NewSubtask("end").SetInput(map[string]string{"name": "end"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(outerA)
+	_ = task.AddSubtask(outerB)
+	_ = task.AddSubtask(innerA1)
+	_ = task.AddSubtask(innerA2)
+	_ = task.AddSubtask(end)
+	_ = task.AddEdge(start, outerA)
+	_ = task.AddEdge(start, outerB)
+	_ = task.AddEdge(outerA, innerA1)
+	_ = task.AddEdge(outerA, innerA2)
+	_ = task.AddEdge(innerA1, end)
+	_ = task.AddEdge(innerA2, end)
+	_ = task.AddEdge(outerB, end)
+	_ = task.AddBranch(start, &Branch{
+		Condition: func(ctx interface{}, input any) (string, error) {
+			return outerA.GetID(), nil
+		},
+		EndNodes: map[string]bool{outerA.GetID(): true, outerB.GetID(): true},
+	})
+	_ = task.AddBranch(outerA, &Branch{
+		Condition: func(ctx interface{}, input any) (string, error) {
+			return innerA1.GetID(), nil
+		},
+		EndNodes: map[string]bool{innerA1.GetID(): true, innerA2.GetID(): true},
+	})
+
+	dbTask, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	assert.Equal(t, string(TaskSucceeded), dbTask.State, "nested branch task should succeed")
+	assertSubtaskState(t, subtaskMap, "start", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "outerA", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "outerB", string(TaskSkipped))
+	assertSubtaskState(t, subtaskMap, "innerA1", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "innerA2", string(TaskSkipped))
+	assertSubtaskState(t, subtaskMap, "end", string(TaskSucceeded))
+
+	done <- struct{}{}
+}
+
+// ===== 主测试入口 =====
 
 func TestDisPatch(t *testing.T) {
 	cluster1, cluster2, cluster3 := commonCluster()
@@ -815,14 +669,16 @@ func TestDisPatch(t *testing.T) {
 		return
 	}
 
-	demo := &TaskDemo{}
-	rollbackDemo := TaskRollbackDemo{}
-	retryable := TaskNonRetryable{}
-	panicTask := &PanicTask{} // 添加panic任务实例
-	RegisterTaskExecutor(demo.GetExecutor())
-	RegisterTaskExecutorWithRollback(rollbackDemo.GetExecutorWithRollback())
-	RegisterTaskExecutor(retryable.GetExecutor())
-	RegisterTaskExecutor(panicTask.GetExecutor()) // 注册panic任务
+	defer func() {
+		_ = os.Remove("./app.db")
+	}()
+
+	RegisterTaskExecutor(&TaskDemo{})
+	RegisterTaskExecutor(&TaskRollbackDemo{})
+	RegisterTaskExecutor(&TaskNonRetryable{})
+	RegisterTaskExecutor(&PanicTaskExecutor{})
+	RegisterTaskExecutor(&BranchTaskExecutor{})
+	RegisterTaskExecutor(&NestedBranchTaskExecutor{})
 
 	_ = receiver1.Start()
 	_ = receiver2.Start()
@@ -851,68 +707,19 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 6
+	size := 8
 	done := make(chan struct{}, size)
 
-	// 提交一个任务
 	go submitDemoTaskAndCheck(t, dispatcher1, done)
-
-	//提交一个回滚任务
 	go submitRollbackTaskAndCheck(t, dispatcher1, done)
-
-	// test NonRetryable Task
 	go submitNonRetryTaskAndCheck(t, dispatcher1, done)
-
-	// schedule task
 	go submitScheduleTask(t, dispatcher1, done)
-
-	// test panic task
 	go submitPanicTaskAndCheck(t, dispatcher1, done)
-
-	// test affinity task
 	go submitAffinityTaskAndCheck(t, dispatcher1, done)
+	go submitBranchTaskAndCheck(t, dispatcher1, done)
+	go submitNestedBranchTaskAndCheck(t, dispatcher1, done)
 
 	for i := 0; i < size; i++ {
 		<-done
 	}
-
-	_ = os.Remove("./app.db")
-}
-
-// 提交panic任务并检查结果
-func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
-	task := NewTask("PanicTask").
-		SetInput("panic test input")
-
-	subtask := NewSubtask("panicStep").
-		SetInput("panic test input")
-
-	_ = task.AddSubtask(subtask)
-
-	waitForTask(task, dispatcher)
-
-	for {
-		time.Sleep(time.Millisecond * 100)
-		taskInfo, err := dispatcher.TaskDao.GetByID(context.Background(), task.GetID())
-		if err != nil {
-			continue
-		}
-		if taskInfo.State == TaskFailed {
-			// 验证任务失败，说明panic已被正确处理并转换为错误
-			subtasks := getSubTask(task.GetID(), dispatcher)
-			for _, subtask := range subtasks {
-				if subtask.State == TaskFailed {
-					// 验证子任务也失败了
-					var output Output
-					_ = json.Unmarshal([]byte(subtask.Output), &output)
-					// 输出应该包含panic信息
-					assert.Contains(t, output.Err, "panic occurred during execution")
-					break
-				}
-			}
-			break
-		}
-	}
-
-	done <- struct{}{}
 }

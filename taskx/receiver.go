@@ -32,6 +32,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/caiflower/common-tools/taskx/proto"
 )
 
@@ -355,7 +356,7 @@ func (t *taskReceiver) execTask(task *model.Task) {
 	executor := getTaskExecutor(task.TaskName)
 	if executor == nil {
 		logger.Error("[execTask] task %s executor not found", taskID)
-		err := t.TaskDao.SetOutputAndState(ctx, taskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s not found", task.TaskName)}), TaskFailed)
+		err := t.TaskDao.SetOutputAndState(ctx, taskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s not found", task.TaskName)}), string(TaskFailed))
 		if err != nil {
 			logger.Error("[execTask] task %s set output and state failed. err: %v", taskID, err)
 		}
@@ -383,14 +384,27 @@ func (t *taskReceiver) execTask(task *model.Task) {
 		return
 	}
 
+	// 检查是否所有子任务都已完成（成功、失败或跳过）
+	// 防止任务在子任务全部完成前被过早标记为终态
+	allDone := true
 	failed := false
 	for _, subtask := range subtasks {
-		if subtask.State == TaskFailed {
+		if subtask.State == string(TaskFailed) {
 			failed = true
+		}
+		if subtask.State != string(TaskSucceeded) && subtask.State != string(TaskFailed) && subtask.State != string(TaskSkipped) {
+			allDone = false
 		}
 		var output Output
 		_ = tools.Unmarshal([]byte(subtask.Output), &output)
 		subtaskMap[subtask.TaskName] = output
+	}
+
+	// 如果还有未完成的子任务（pending/running），不应执行 FinishedTask/FailedTask 回调
+	// 任务终态由 dispatcher 的 analysisTask 在所有子任务完成后设置
+	if !allDone {
+		logger.Debug("[execTask] task %s has unfinished subtasks (allDone=false), skip callback", taskID)
+		return
 	}
 
 	var (
@@ -414,9 +428,9 @@ func (t *taskReceiver) execTask(task *model.Task) {
 			}
 
 			output = tools.ToJson(&Output{Err: taskErr.Error()})
-			state = TaskFailed
+			state = string(TaskFailed)
 		} else {
-			state = TaskSucceeded
+			state = string(TaskSucceeded)
 		}
 	} else {
 		taskErr := executor.FailedTask(&TaskData{
@@ -435,7 +449,7 @@ func (t *taskReceiver) execTask(task *model.Task) {
 
 			output = tools.ToJson(&Output{Err: taskErr.Error()})
 		}
-		state = TaskFailed
+		state = string(TaskFailed)
 	}
 
 	err = t.TaskDao.SetOutputAndState(ctx, taskID, output, state)
@@ -447,6 +461,8 @@ func (t *taskReceiver) execTask(task *model.Task) {
 
 func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	defer t.subtaskInflight.DeleteString(subtask.ID)
+
+	logger.Debug("[execSubtask] start subtask=%s task=%s urgent=%v worker=%s myName=%s", subtask.ID, task.ID, task.Urgent, subtask.Worker, t.Cluster.GetMyName())
 
 	golocalv1.PutTraceID(task.RequestID)
 	defer golocalv1.Clean()
@@ -468,10 +484,13 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		return
 	}
 
-	executor := getSubTaskExecutor(task.TaskName, subtask.TaskName)
-	if executor == nil {
+	// 使用 ExecutorProvider 接口（统一本地函数、gRPC、HTTP、MCP）
+	provider := getProvider(task.TaskName, subtask.TaskName)
+	if provider == nil {
 		logger.Error("[execSubtask] subtask %s executor not found", subtaskID)
-		if err = t.SubtaskDao.SetOutputAndState(ctx, subtaskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s/%s not found", task.TaskName, subtask.TaskName)}), TaskFailed); err != nil {
+		if err = t.SubtaskDao.SetOutputAndState(ctx, subtaskID,
+			tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s/%s not found", task.TaskName, subtask.TaskName)}),
+			string(TaskFailed)); err != nil {
 			logger.Error("[execSubtask] subtask %s set output and state failed. err: %v", subtaskID, err)
 		}
 		return
@@ -482,23 +501,28 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		state   string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
-	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
+	output, err := t.exec(ctx, provider, task.TaskName, subtask.TaskName, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
+		logger.Debug("[execSubtask] subtask=%s exec failed: %v, retry=%d, isNonRetryable=%v", subtaskID, err, subtask.Retry, errors.Is(err, ErrNonRetryable))
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
 			if err = t.SubtaskDao.SetRetry(ctx, subtaskID, subtask.Retry-1); err != nil {
 				logger.Error("[execSubtask] subtask %s setRetry failed. err: %v", subtaskID, err)
 			}
+			// 通知 leader 重新调度，加快 retry 子任务的处理速度
+			t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
 			return
 		}
 
 		_output.Err = err.Error()
-		state = TaskFailed
+		state = string(TaskFailed)
 	} else {
 		bytes, _ := tools.ToByte(output)
 		_output.Output = string(bytes)
-		state = TaskSucceeded
+		state = string(TaskSucceeded)
 	}
+
+	logger.Debug("[execSubtask] subtask=%s finished, state=%s, urgent=%v", subtaskID, state, task.Urgent)
 
 	err = t.SubtaskDao.SetOutputAndState(ctx, subtaskID, tools.ToJson(_output), state)
 	if err != nil {
@@ -506,9 +530,8 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		return
 	}
 
-	if task.Urgent {
-		t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
-	}
+	// 无论是否 urgent，都通知 leader 重新调度，加快非 urgent 任务的处理速度
+	t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
 }
 
 func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subtask) {
@@ -537,8 +560,9 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 		return
 	}
 
-	executor := getRollbackTaskExecutor(task.TaskName, subtask.TaskName)
-	if executor == nil {
+	// 使用 ExecutorProvider 接口（回滚）
+	provider := getRollbackProvider(task.TaskName, subtask.TaskName)
+	if provider == nil {
 		logger.Error("[execSubtaskRollback] subtask %s rollback executor not found", subtaskID)
 		if err = t.SubtaskDao.SetRollbackAndState(ctx, subtaskID, string(RollbackFailed), tools.ToJson(&Output{RollbackErr: fmt.Sprintf("rollback executor for task %s/%s not found", task.TaskName, subtask.TaskName)})); err != nil {
 			logger.Error("[execSubtaskRollback] subtask %s set rollback and state failed. err: %v", subtaskID, err)
@@ -551,13 +575,18 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 		rollback string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
-	output, err := t.exec(ctx, executor, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
+	output, err := t.exec(ctx, provider, task.TaskName, subtask.TaskName, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
+			if err = t.SubtaskDao.SetRollbackAndState(ctx, subtaskID, string(RollbackPending), tools.ToJson(_output)); err != nil {
+				logger.Error("[execSubtaskRollback] subtask %s setRollbackAndState failed. err: %v", subtaskID, err)
+			}
 			if err = t.SubtaskDao.SetRetry(ctx, subtaskID, subtask.Retry-1); err != nil {
 				logger.Error("[execSubtaskRollback] subtask %s setRetry failed. err: %v", subtaskID, err)
 			}
+			// 通知 leader 重新调度，加快 rollback retry 的处理速度
+			t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
 			return
 		}
 
@@ -575,29 +604,40 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 		return
 	}
 
-	if task.Urgent {
-		t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
-	}
+	// 无论是否 urgent，都通知 leader 重新调度，加快非 urgent 任务的处理速度
+	t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
 }
 
-func (t *taskReceiver) exec(ctx context.Context, executor SubTaskExecutor, taskID, preSubtaskID, subtaskID, requestID, input string) (interface{}, error) {
+func (t *taskReceiver) exec(ctx context.Context, provider executor.ExecutorProvider, taskName, subTaskName, taskID, preSubtaskID, subtaskID, requestID, input string) (any, error) {
 	preSubtasks := make(map[string]Output)
 	if preSubtaskID != "" {
 		preSubtaskIDs := strings.Split(preSubtaskID, ",")
 		preSubtaskList, err := t.SubtaskDao.GetByIDs(ctx, preSubtaskIDs)
 		if err != nil {
 			logger.Error("[exec] subtask %s get preSubtasks failed. err: %v", subtaskID, err)
-			return "", err
-		}
-		for _, v := range preSubtaskList {
-			var output Output
-			_ = tools.Unmarshal([]byte(v.Output), &output)
-			preSubtasks[v.TaskName] = output
+		} else {
+			for _, v := range preSubtaskList {
+				var output Output
+				_ = tools.Unmarshal([]byte(v.Output), &output)
+				preSubtasks[v.TaskName] = output
+			}
 		}
 	}
 
+	taskData := &executor.TaskData{
+		RequestId: requestID,
+		TaskId:    taskID,
+		SubTaskId: subtaskID,
+		Input:     input,
+		Subtasks:  convertSubtasksForExecutor(preSubtasks),
+	}
+
+	// 从全局注册表获取处理器
+	preProc := getPreProcessor(taskName, subTaskName)
+	postProc := getPostProcessor(taskName, subTaskName)
+
 	// 添加panic处理机制，捕获panic并返回错误
-	var result interface{}
+	var result any
 	var execErr error
 
 	func() {
@@ -607,8 +647,18 @@ func (t *taskReceiver) exec(ctx context.Context, executor SubTaskExecutor, taskI
 				execErr = fmt.Errorf("panic occurred during execution: %v", r)
 			}
 		}()
-		result, execErr = executor(&TaskData{RequestId: requestID, TaskId: taskID, SubTaskId: subtaskID, Input: input, Subtasks: preSubtasks})
+		// 统一执行流程：preProcessor → provider → postProcessor
+		result, execErr = executeWithProcessors(ctx, provider, preProc, postProc, taskData)
 	}()
 
 	return result, execErr
+}
+
+// convertSubtasksForExecutor 将 map[string]Output 转换为 map[string]any，供 ExecutorProvider 使用
+func convertSubtasksForExecutor(preSubtasks map[string]Output) map[string]any {
+	result := make(map[string]any, len(preSubtasks))
+	for k, v := range preSubtasks {
+		result[k] = v
+	}
+	return result
 }

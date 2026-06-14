@@ -32,7 +32,7 @@ func (t *taskDispatcher) backupTask() {
 
 	// 查询需要备份的任务
 	if err := t.DBClient.GetDB().NewSelect().Table("task").
-		Where("state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]string{TaskFailed, TaskSucceeded}), t.cfg.BackupTaskAge.Seconds()).
+		Where("state IN (?) AND create_time <= DATE_SUB(NOW(), interval ? second)", bun.In([]string{string(TaskFailed), string(TaskSucceeded)}), t.cfg.BackupTaskAge.Seconds()).
 		Order("id").Limit(100).
 		Scan(context.TODO(), &tasks); err != nil {
 		logger.Error("[backupTask] query tasks for backup failed. err: %v", err)

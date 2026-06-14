@@ -194,6 +194,7 @@ func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8, tx ...
 		d.Client.GetTx(tx...).NewUpdate().
 			Table(TableNameOfSubtask).
 			Set("retry = ?", retry).
+			Set("state = ?", "pending").
 			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
 			Where("id = ?", id).
 			Exec(ctx))

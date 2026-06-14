@@ -1,94 +1,215 @@
-/*
- * Copyright 2024 caiflower Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package taskx
 
 import (
 	"errors"
-	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/caiflower/common-tools/taskx/executor"
 )
 
 var (
 	ErrNonRetryable = errors.New("non-retryable error")
 )
 
-type TaskData struct {
-	RequestId string
-	TaskId    string
-	SubTaskId string
-	Input     string
-	Subtasks  map[string]Output
-}
+// _providerRegistry 全局执行器注册表（集群框架要求，receiver 从数据库读取时查找）
+// taskName -> subTaskName -> ExecutorProvider
+var (
+	_providerRegistry = struct {
+		sync.RWMutex
+		providers map[string]map[string]executor.ExecutorProvider
+	}{providers: make(map[string]map[string]executor.ExecutorProvider)}
+)
 
-type TaskExecutor interface {
-	Name() string
-	// FinishedTask
-	// The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
-	// If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
-	// If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
-	FinishedTask(data *TaskData) (err error)
-	FailedTask(data *TaskData) (err error)
-}
-
-// SubTaskExecutor
-// The default value of `retryCount` is 3, and it can be set using the `SetRetry` method.
-// If `err` is not null, each retry will consume one `retryCount` until it is exhausted, after which the task will be marked as failed.
-// If the error is `ErrNonRetryable`, the task will fail immediately without consuming any `retryCount`
-type SubTaskExecutor func(data *TaskData) (output interface{}, err error)
-
-var _em = executorManager{taskExecutor: make(map[string]TaskExecutor), subtaskExecutor: make(map[string]map[string]SubTaskExecutor), rollbackTaskExecutor: make(map[string]SubTaskExecutor)}
-
-type executorManager struct {
-	taskExecutor         map[string]TaskExecutor
-	subtaskExecutor      map[string]map[string]SubTaskExecutor
-	rollbackTaskExecutor map[string]SubTaskExecutor
-}
-
-// RegisterTaskExecutor registerTaskExecutor in cluster
-func RegisterTaskExecutor(taskExecutor TaskExecutor, subTaskExecutor map[string]SubTaskExecutor) {
-	RegisterTaskExecutorWithRollback(taskExecutor, subTaskExecutor, nil)
-}
-
-func RegisterTaskExecutorWithRollback(taskExecutor TaskExecutor, subtaskExecutor map[string]SubTaskExecutor, subtaskRollbackExecutor map[string]SubTaskExecutor) {
-	if _, ok := _em.taskExecutor[taskExecutor.Name()]; ok {
-		panic(fmt.Sprintf("task executor '%s' exist.", taskExecutor.Name()))
+// registerProvider 注册子任务执行器（全局）
+func registerProvider(taskName, subTaskName string, p executor.ExecutorProvider) {
+	_providerRegistry.Lock()
+	defer _providerRegistry.Unlock()
+	if _providerRegistry.providers[taskName] == nil {
+		_providerRegistry.providers[taskName] = make(map[string]executor.ExecutorProvider)
 	}
-	_em.taskExecutor[taskExecutor.Name()] = taskExecutor
-	_em.subtaskExecutor[taskExecutor.Name()] = subtaskExecutor
-	for k, v := range subtaskRollbackExecutor {
-		if _, ok := _em.subtaskExecutor[taskExecutor.Name()][k]; !ok {
-			panic(fmt.Sprintf("subtask executor '%s' not exist.", k))
-		}
-		registerRollbackTaskExecutor(taskExecutor.Name(), k, v)
+	_providerRegistry.providers[taskName][subTaskName] = p
+}
+
+// registerProviders 批量注册执行器（全局）
+func registerProviders(taskName string, providers map[string]executor.ExecutorProvider) {
+	_providerRegistry.Lock()
+	defer _providerRegistry.Unlock()
+	if _providerRegistry.providers[taskName] == nil {
+		_providerRegistry.providers[taskName] = make(map[string]executor.ExecutorProvider)
+	}
+	for name, p := range providers {
+		_providerRegistry.providers[taskName][name] = p
 	}
 }
 
-// registerRollbackTaskExecutor register subtask rollbackExecutor
-func registerRollbackTaskExecutor(taskName, subtaskName string, subTaskExecutor SubTaskExecutor) {
-	_em.rollbackTaskExecutor[taskName+"/"+subtaskName] = subTaskExecutor
+// getProvider 查找子任务执行器（全局）
+func getProvider(taskName, subTaskName string) executor.ExecutorProvider {
+	_providerRegistry.RLock()
+	defer _providerRegistry.RUnlock()
+	if providers, ok := _providerRegistry.providers[taskName]; ok {
+		return providers[subTaskName]
+	}
+	return nil
+}
+
+// registerRollbackProvider 注册回滚执行器（全局）
+var (
+	_rollbackRegistry = struct {
+		sync.RWMutex
+		providers map[string]executor.ExecutorProvider // key: taskName/subTaskName
+	}{providers: make(map[string]executor.ExecutorProvider)}
+)
+
+func registerRollbackProvider(taskName, subTaskName string, p executor.ExecutorProvider) {
+	_rollbackRegistry.Lock()
+	defer _rollbackRegistry.Unlock()
+	_rollbackRegistry.providers[taskName+"/"+subTaskName] = p
+}
+
+func getRollbackProvider(taskName, subTaskName string) executor.ExecutorProvider {
+	_rollbackRegistry.RLock()
+	defer _rollbackRegistry.RUnlock()
+	return _rollbackRegistry.providers[taskName+"/"+subTaskName]
+}
+
+// 全局 TaskExecutor 注册表（集群框架：receiver 从数据库读取时需要）
+var (
+	_taskExecutorRegistry = struct {
+		sync.RWMutex
+		executors map[string]TaskExecutor
+	}{executors: make(map[string]TaskExecutor)}
+)
+
+func registerTaskExecutor(e TaskExecutor) {
+	_taskExecutorRegistry.Lock()
+	defer _taskExecutorRegistry.Unlock()
+	_taskExecutorRegistry.executors[e.Name()] = e
 }
 
 func getTaskExecutor(taskName string) TaskExecutor {
-	return _em.taskExecutor[taskName]
+	_taskExecutorRegistry.RLock()
+	defer _taskExecutorRegistry.RUnlock()
+	return _taskExecutorRegistry.executors[taskName]
 }
 
-func getSubTaskExecutor(taskName, subTaskName string) SubTaskExecutor {
-	return _em.subtaskExecutor[taskName][subTaskName]
+// ClearProviders 清理指定 taskName 的全局执行器注册表
+func ClearProviders(taskName string) {
+	_providerRegistry.Lock()
+	defer _providerRegistry.Unlock()
+	delete(_providerRegistry.providers, taskName)
+
+	_rollbackRegistry.Lock()
+	defer _rollbackRegistry.Unlock()
+	for key := range _rollbackRegistry.providers {
+		if strings.HasPrefix(key, taskName+"/") {
+			delete(_rollbackRegistry.providers, key)
+		}
+	}
+
+	_branchRegistry.Lock()
+	defer _branchRegistry.Unlock()
+	delete(_branchRegistry.branches, taskName)
 }
 
-func getRollbackTaskExecutor(taskName, subtaskName string) SubTaskExecutor {
-	return _em.rollbackTaskExecutor[taskName+"/"+subtaskName]
+// ClearAllProviders 清理所有全局执行器注册表
+func ClearAllProviders() {
+	_providerRegistry.Lock()
+	defer _providerRegistry.Unlock()
+	_providerRegistry.providers = make(map[string]map[string]executor.ExecutorProvider)
+
+	_rollbackRegistry.Lock()
+	defer _rollbackRegistry.Unlock()
+	_rollbackRegistry.providers = make(map[string]executor.ExecutorProvider)
+
+	_branchRegistry.Lock()
+	defer _branchRegistry.Unlock()
+	_branchRegistry.branches = make(map[string]map[string][]*Branch)
+}
+
+// ClearTaskExecutors 清理指定 taskName 的全局 TaskExecutor 注册表
+func ClearTaskExecutors(taskName string) {
+	_taskExecutorRegistry.Lock()
+	defer _taskExecutorRegistry.Unlock()
+	delete(_taskExecutorRegistry.executors, taskName)
+}
+
+// ClearAllTaskExecutors 清理所有全局 TaskExecutor 注册表
+func ClearAllTaskExecutors() {
+	_taskExecutorRegistry.Lock()
+	defer _taskExecutorRegistry.Unlock()
+	_taskExecutorRegistry.executors = make(map[string]TaskExecutor)
+}
+
+// _branchRegistry 全局分支注册表（集群框架：dispatcher 从 DB 重建 Task 时恢复分支信息）
+// taskName -> nodeKey -> []*Branch
+var (
+	_branchRegistry = struct {
+		sync.RWMutex
+		branches map[string]map[string][]*Branch
+	}{branches: make(map[string]map[string][]*Branch)}
+)
+
+func registerBranch(taskName, nodeKey string, branch *Branch) {
+	_branchRegistry.Lock()
+	defer _branchRegistry.Unlock()
+	if _branchRegistry.branches[taskName] == nil {
+		_branchRegistry.branches[taskName] = make(map[string][]*Branch)
+	}
+	_branchRegistry.branches[taskName][nodeKey] = append(_branchRegistry.branches[taskName][nodeKey], branch)
+}
+
+func getRegisteredBranches(taskName string) map[string][]*Branch {
+	_branchRegistry.RLock()
+	defer _branchRegistry.RUnlock()
+	return _branchRegistry.branches[taskName]
+}
+
+// _processorRegistry 全局处理器注册表（集群框架：receiver 从数据库恢复时查找 preProcessor/postProcessor）
+var (
+	_preProcessorRegistry = struct {
+		sync.RWMutex
+		processors map[string]map[string]Processor // taskName -> subTaskName -> Processor
+	}{processors: make(map[string]map[string]Processor)}
+
+	_postProcessorRegistry = struct {
+		sync.RWMutex
+		processors map[string]map[string]Processor // taskName -> subTaskName -> Processor
+	}{processors: make(map[string]map[string]Processor)}
+)
+
+func registerPreProcessor(taskName, subTaskName string, p Processor) {
+	_preProcessorRegistry.Lock()
+	defer _preProcessorRegistry.Unlock()
+	if _preProcessorRegistry.processors[taskName] == nil {
+		_preProcessorRegistry.processors[taskName] = make(map[string]Processor)
+	}
+	_preProcessorRegistry.processors[taskName][subTaskName] = p
+}
+
+func getPreProcessor(taskName, subTaskName string) Processor {
+	_preProcessorRegistry.RLock()
+	defer _preProcessorRegistry.RUnlock()
+	if processors, ok := _preProcessorRegistry.processors[taskName]; ok {
+		return processors[subTaskName]
+	}
+	return nil
+}
+
+func registerPostProcessor(taskName, subTaskName string, p Processor) {
+	_postProcessorRegistry.Lock()
+	defer _postProcessorRegistry.Unlock()
+	if _postProcessorRegistry.processors[taskName] == nil {
+		_postProcessorRegistry.processors[taskName] = make(map[string]Processor)
+	}
+	_postProcessorRegistry.processors[taskName][subTaskName] = p
+}
+
+func getPostProcessor(taskName, subTaskName string) Processor {
+	_postProcessorRegistry.RLock()
+	defer _postProcessorRegistry.RUnlock()
+	if processors, ok := _postProcessorRegistry.processors[taskName]; ok {
+		return processors[subTaskName]
+	}
+	return nil
 }

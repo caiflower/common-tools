@@ -1,7 +1,7 @@
 package taskx
 
 func isFinished(state string) bool {
-	return state == TaskFailed || state == TaskSucceeded
+	return state == string(TaskFailed) || state == string(TaskSucceeded)
 }
 
 func isRollbackFinished(state string) bool {
