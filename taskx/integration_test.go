@@ -35,47 +35,26 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 	task := NewTask("user-workflow")
 
 	// ===== 定义步骤函数 =====
-	step1Fn := func(ctx context.Context, input struct {
-		RequestID string `json:"requestId"`
-	}) (struct {
-		UserID   string `json:"userId"`
-		Username string `json:"username"`
-	}, error) {
+	step1Fn := func(ctx context.Context, input map[string]any) (map[string]any, error) {
 		// 查询用户
-		return struct {
-			UserID   string `json:"userId"`
-			Username string `json:"username"`
-		}{UserID: "u123", Username: "alice"}, nil
+		return map[string]any{"userId": "u123", "username": "alice"}, nil
 	}
 
-	step2Fn := func(ctx context.Context, input struct {
-		UserID string `json:"userId"`
-	}) (struct {
-		OrderIDs []string `json:"orderIds"`
-		Total    float64  `json:"total"`
-	}, error) {
+	step2Fn := func(ctx context.Context, input map[string]any) (map[string]any, error) {
 		// 查询订单
-		return struct {
-			OrderIDs []string `json:"orderIds"`
-			Total    float64  `json:"total"`
-		}{OrderIDs: []string{"o1", "o2"}, Total: 299.9}, nil
+		return map[string]any{"orderIds": []string{"o1", "o2"}, "total": 299.9}, nil
 	}
 
-	step3Fn := func(ctx context.Context, input struct {
-		Username string  `json:"username"`
-		Total    float64 `json:"total"`
-	}) (struct {
-		Message string `json:"message"`
-	}, error) {
-		return struct {
-			Message string `json:"message"`
-		}{Message: fmt.Sprintf("%s 的订单总额: %.2f", input.Username, input.Total)}, nil
+	step3Fn := func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		username, _ := input["username"].(string)
+		total, _ := input["total"].(float64)
+		return map[string]any{"message": fmt.Sprintf("%s 的订单总额: %.2f", username, total)}, nil
 	}
 
 	// ===== 创建子任务（同时绑定执行器） =====
-	step1 := NewSubtask("queryUser").SetExecutor(executor.NewLocalExecutor(step1Fn))
-	step2 := NewSubtask("queryOrders").SetExecutor(executor.NewLocalExecutor(step2Fn))
-	step3 := NewSubtask("sendNotification").SetExecutor(executor.NewLocalExecutor(step3Fn))
+	step1 := NewSubtask("queryUser", executor.NewLocalExecutor(step1Fn))
+	step2 := NewSubtask("queryOrders", executor.NewLocalExecutor(step2Fn))
+	step3 := NewSubtask("sendNotification", executor.NewLocalExecutor(step3Fn))
 
 	_ = task.AddSubtask(step1)
 	_ = task.AddSubtask(step2)
@@ -107,9 +86,7 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 	assert.NotNil(t, provider)
 	assert.Equal(t, executor.ProtocolLocal, provider.Protocol())
 
-	input1 := struct {
-		RequestID string `json:"requestId"`
-	}{RequestID: "req-001"}
+	input1 := map[string]any{"requestId": "req-001"}
 	input1JSON, _ := json.Marshal(input1)
 	result1, err := provider.Execute(context.Background(), &executor.TaskData{
 		RequestId: "req-001",
@@ -120,10 +97,7 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 
 	// step1 完成后更新状态，通知后继
 	_ = task.UpdateSubtaskState(step1.GetID(), NodeSucceeded)
-	step1Output := result1.(struct {
-		UserID   string `json:"userId"`
-		Username string `json:"username"`
-	})
+	step1Output := result1.(map[string]any)
 
 	// step2 现在可执行（step1 完成）；step3 不可执行（等待 step2 完成）
 	next = task.NextSubTasks()
@@ -132,9 +106,7 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 
 	// 执行 step2
 	provider2 := step2.GetExecutor()
-	input2 := struct {
-		UserID string `json:"userId"`
-	}{UserID: step1Output.UserID}
+	input2 := map[string]any{"userId": step1Output["userId"]}
 	input2JSON, _ := json.Marshal(input2)
 	result2, err := provider2.Execute(context.Background(), &executor.TaskData{
 		RequestId: "req-001",
@@ -146,13 +118,11 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 
 	// 执行 step3
 	provider3 := step3.GetExecutor()
-	input3 := struct {
-		Username string  `json:"username"`
-		Total    float64 `json:"total"`
-	}{Username: step1Output.Username, Total: result2.(struct {
-		OrderIDs []string `json:"orderIds"`
-		Total    float64  `json:"total"`
-	}).Total}
+	step2Output := result2.(map[string]any)
+	input3 := map[string]any{
+		"username": step1Output["username"],
+		"total":    step2Output["total"],
+	}
 	input3JSON, _ := json.Marshal(input3)
 	result3, err := provider3.Execute(context.Background(), &executor.TaskData{
 		RequestId: "req-001",
@@ -163,11 +133,9 @@ func TestIT_LocalExecutor_RecommendedWay(t *testing.T) {
 	_ = task.UpdateSubtaskState(step3.GetID(), NodeSucceeded)
 
 	// 验证最终结果
-	finalResult := result3.(struct {
-		Message string `json:"message"`
-	})
-	assert.Contains(t, finalResult.Message, "alice")
-	assert.Contains(t, finalResult.Message, "299.90")
+	finalResult := result3.(map[string]any)
+	assert.Contains(t, finalResult["message"], "alice")
+	assert.Contains(t, finalResult["message"], "299.90")
 
 	// 任务完成
 	assert.True(t, task.IsFinished())
@@ -213,12 +181,12 @@ func TestIT_MixedProtocol_HTTPAndLocal(t *testing.T) {
 		}{IsValid: strings.Contains(input.Email, "@")}, nil
 	}
 
-	step1 := NewSubtask("fetchUser").SetExecutor(executor.NewHTTPExecutor[struct {
+	step1 := NewSubtask("fetchUser", executor.NewHTTPExecutor[struct {
 		UserID string `json:"userId"`
 	}, map[string]any](apiServer.URL+"/user/u456", "GET",
 		executor.WithHTTPTimeout(5*time.Second),
 	))
-	step2 := NewSubtask("validateUser").SetExecutor(executor.NewLocalExecutor(step2Fn))
+	step2 := NewSubtask("validateUser", executor.NewLocalExecutor(step2Fn))
 
 	_ = task.AddSubtask(step1)
 	_ = task.AddSubtask(step2)
@@ -269,10 +237,10 @@ func TestIT_GenericLocalExecutor(t *testing.T) {
 	task := NewTask("legacy-workflow")
 
 	// 使用泛型 LocalExecutor，输入输出类型明确，编译时类型检查
-	step1 := NewSubtask("step1").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input string) (map[string]string, error) {
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input string) (map[string]string, error) {
 		return map[string]string{"result": "step1 done"}, nil
 	}))
-	step2 := NewSubtask("step2").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input string) (map[string]string, error) {
+	step2 := NewSubtask("step2", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
 		return map[string]string{"result": "step2 done"}, nil
 	}))
 
@@ -307,21 +275,21 @@ func TestIT_ControlDataSeparation_WithExecutors(t *testing.T) {
 	// step1: 验证（控制依赖 step3）
 	// step2: 查询（控制依赖 step3，数据传给 step3）
 	// step3: 汇总（等待 step1 和 step2 完成后执行）
-	validate := NewSubtask("validate").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
+	validate := NewSubtask("validate", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
 		OK bool `json:"ok"`
 	}, error) {
 		return struct {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
 	}))
-	query := NewSubtask("query").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
+	query := NewSubtask("query", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
 		Items []string `json:"items"`
 	}, error) {
 		return struct {
 			Items []string `json:"items"`
 		}{Items: []string{"a", "b", "c"}}, nil
 	}))
-	aggregate := NewSubtask("aggregate").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct {
+	aggregate := NewSubtask("aggregate", executor.NewLocalExecutor(func(ctx context.Context, input struct {
 		Items []string `json:"items"`
 	}) (struct {
 		Count int `json:"count"`
@@ -393,33 +361,17 @@ func TestIT_BranchCondition_WithExecutors(t *testing.T) {
 	exec := &MyTaskExecutor{}
 	task := NewTask("branch-workflow")
 
-	start := NewSubtask("start").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
-		Decision string `json:"decision"`
-	}, error) {
-		return struct {
-			Decision string `json:"decision"`
-		}{Decision: "A"}, nil
+	start := NewSubtask("start", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return map[string]any{"decision": "A"}, nil
 	}))
-	branchA := NewSubtask("branchA").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
-		Path string `json:"path"`
-	}, error) {
-		return struct {
-			Path string `json:"path"`
-		}{Path: "A"}, nil
+	branchA := NewSubtask("branchA", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return map[string]any{"path": "A"}, nil
 	}))
-	branchB := NewSubtask("branchB").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
-		Path string `json:"path"`
-	}, error) {
-		return struct {
-			Path string `json:"path"`
-		}{Path: "B"}, nil
+	branchB := NewSubtask("branchB", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return map[string]any{"path": "B"}, nil
 	}))
-	end := NewSubtask("end").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
-		Summary string `json:"summary"`
-	}, error) {
-		return struct {
-			Summary string `json:"summary"`
-		}{Summary: "completed"}, nil
+	end := NewSubtask("end", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return map[string]any{"summary": "completed"}, nil
 	}))
 
 	_ = task.AddSubtask(start)
@@ -461,9 +413,7 @@ func TestIT_BranchCondition_WithExecutors(t *testing.T) {
 
 	pA := branchA.GetExecutor()
 	rA, _ := pA.Execute(context.Background(), &executor.TaskData{Input: "{}"})
-	assert.Equal(t, "A", rA.(struct {
-		Path string `json:"path"`
-	}).Path)
+	assert.Equal(t, "A", rA.(map[string]any)["path"])
 
 	_ = task.UpdateSubtaskState(branchA.GetID(), NodeSucceeded)
 
@@ -480,13 +430,13 @@ func TestIT_SkipPropagation_WithExecutors(t *testing.T) {
 	exec := &MyTaskExecutor{}
 	task := NewTask("skip-workflow")
 
-	step1 := NewSubtask("step1").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	}))
-	step2 := NewSubtask("step2").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
+	step2 := NewSubtask("step2", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	}))
-	step3 := NewSubtask("step3").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
+	step3 := NewSubtask("step3", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct{}, error) {
 		return struct{}{}, nil
 	}))
 
@@ -532,14 +482,14 @@ func TestIT_ExecutorIsolation_BetweenTasks(t *testing.T) {
 	taskA := NewTask("taskA")
 	taskB := NewTask("taskB")
 
-	stepA := NewSubtask("stepA").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
+	stepA := NewSubtask("stepA", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
 		From string `json:"from"`
 	}, error) {
 		return struct {
 			From string `json:"from"`
 		}{From: "taskA"}, nil
 	}))
-	stepB := NewSubtask("stepB").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
+	stepB := NewSubtask("stepB", executor.NewLocalExecutor(func(ctx context.Context, input struct{}) (struct {
 		From string `json:"from"`
 	}, error) {
 		return struct {
@@ -590,14 +540,14 @@ func TestIT_FullDAGWithExecutors(t *testing.T) {
 
 	// 构建一个 5 步的数据处理流水线
 	// fetch -> transform -> filter -> enrich -> save
-	fetch := NewSubtask("fetch").SetPriority(10).SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, _ struct{}) (struct {
+	fetch := NewSubtask("fetch", executor.NewLocalExecutor(func(ctx context.Context, _ struct{}) (struct {
 		RawData []int `json:"rawData"`
 	}, error) {
 		return struct {
 			RawData []int `json:"rawData"`
 		}{RawData: []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}}, nil
-	}))
-	transform := NewSubtask("transform").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct {
+	})).SetPriority(10)
+	transform := NewSubtask("transform", executor.NewLocalExecutor(func(ctx context.Context, input struct {
 		RawData []int `json:"rawData"`
 	}) (struct {
 		Doubled []int `json:"doubled"`
@@ -610,7 +560,7 @@ func TestIT_FullDAGWithExecutors(t *testing.T) {
 			Doubled []int `json:"doubled"`
 		}{Doubled: doubled}, nil
 	}))
-	filter := NewSubtask("filter").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct {
+	filter := NewSubtask("filter", executor.NewLocalExecutor(func(ctx context.Context, input struct {
 		Doubled []int `json:"doubled"`
 	}) (struct {
 		Filtered []int `json:"filtered"`
@@ -625,7 +575,7 @@ func TestIT_FullDAGWithExecutors(t *testing.T) {
 			Filtered []int `json:"filtered"`
 		}{Filtered: filtered}, nil
 	}))
-	enrich := NewSubtask("enrich").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct {
+	enrich := NewSubtask("enrich", executor.NewLocalExecutor(func(ctx context.Context, input struct {
 		Filtered []int `json:"filtered"`
 	}) (struct {
 		Enriched []string `json:"enriched"`
@@ -638,7 +588,7 @@ func TestIT_FullDAGWithExecutors(t *testing.T) {
 			Enriched []string `json:"enriched"`
 		}{Enriched: enriched}, nil
 	}))
-	save := NewSubtask("save").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input struct {
+	save := NewSubtask("save", executor.NewLocalExecutor(func(ctx context.Context, input struct {
 		Enriched []string `json:"enriched"`
 	}) (struct {
 		SavedCount int `json:"savedCount"`
@@ -749,11 +699,9 @@ func TestIT_PreProcessor_ValidateInput(t *testing.T) {
 		return data, nil // 校验通过，返回原始数据
 	}
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			return map[string]string{"result": input["value"]}, nil
-		})).
-		SetPreProcessor(validatePreProcessor)
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return map[string]string{"result": input["value"]}, nil
+	})).SetPreProcessor(validatePreProcessor)
 
 	_ = task.AddSubtask(step1)
 	_, err := task.Compile()
@@ -801,14 +749,12 @@ func TestIT_PreProcessor_ModifyInput(t *testing.T) {
 		}, nil
 	}
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			return map[string]string{
-				"original": input["value"],
-				"injected": input["injected"],
-			}, nil
-		})).
-		SetPreProcessor(injectPreProcessor)
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return map[string]string{
+			"original": input["value"],
+			"injected": input["injected"],
+		}, nil
+	})).SetPreProcessor(injectPreProcessor)
 
 	_ = task.AddSubtask(step1)
 	_, err := task.Compile()
@@ -837,11 +783,9 @@ func TestIT_PostProcessor_TransformOutput(t *testing.T) {
 		}, nil
 	}
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			return map[string]string{"result": input["value"]}, nil
-		})).
-		SetPostProcessor(wrapPostProcessor)
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return map[string]string{"result": input["value"]}, nil
+	})).SetPostProcessor(wrapPostProcessor)
 
 	_ = task.AddSubtask(step1)
 	_, err := task.Compile()
@@ -875,11 +819,9 @@ func TestIT_PostProcessor_ValidateOutput(t *testing.T) {
 		return data, nil
 	}
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			return map[string]string{"result": "done"}, nil // 没有 status 字段
-		})).
-		SetPostProcessor(validatePostProcessor)
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return map[string]string{"result": "done"}, nil // 没有 status 字段
+	})).SetPostProcessor(validatePostProcessor)
 
 	_ = task.AddSubtask(step1)
 	_, err := task.Compile()
@@ -900,12 +842,11 @@ func TestIT_PreAndPostProcessor_Chain(t *testing.T) {
 
 	var preCalled, postCalled bool
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			// 验证前置处理器已执行
-			assert.True(t, preCalled, "preProcessor should have been called before executor")
-			return map[string]string{"result": input["value"] + "-processed"}, nil
-		})).
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		// 验证前置处理器已执行
+		assert.True(t, preCalled, "preProcessor should have been called before executor")
+		return map[string]string{"result": input["value"] + "-processed"}, nil
+	})).
 		SetPreProcessor(func(ctx interface{}, data any) (any, error) {
 			preCalled = true
 			return data, nil
@@ -918,10 +859,9 @@ func TestIT_PreAndPostProcessor_Chain(t *testing.T) {
 			return output, nil
 		})
 
-	step2 := NewSubtask("step2").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			return map[string]string{"final": input["value"]}, nil
-		}))
+	step2 := NewSubtask("step2", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return map[string]string{"final": input["value"]}, nil
+	}))
 
 	_ = task.AddSubtask(step1)
 	_ = task.AddSubtask(step2)
@@ -949,14 +889,12 @@ func TestIT_PreProcessor_ErrorStopsExecution(t *testing.T) {
 
 	var executorCalled bool
 
-	step1 := NewSubtask("step1").
-		SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
-			executorCalled = true
-			return map[string]string{"result": "should not reach"}, nil
-		})).
-		SetPreProcessor(func(ctx interface{}, data any) (any, error) {
-			return nil, fmt.Errorf("validation failed")
-		})
+	step1 := NewSubtask("step1", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		executorCalled = true
+		return map[string]string{"result": "should not reach"}, nil
+	})).SetPreProcessor(func(ctx interface{}, data any) (any, error) {
+		return nil, fmt.Errorf("validation failed")
+	})
 
 	_ = task.AddSubtask(step1)
 	_, err := task.Compile()
@@ -974,7 +912,7 @@ func TestIT_PreProcessor_ErrorStopsExecution(t *testing.T) {
 
 // TestIT_SubtaskExecute_NoProvider 测试无执行器时 Execute 返回错误
 func TestIT_SubtaskExecute_NoProvider(t *testing.T) {
-	step1 := NewSubtask("step1")
+	step1 := NewSubtask("step1", nil)
 	_, err := step1.Execute(context.Background(), &executor.TaskData{
 		Input: `{"value": "hello"}`,
 	})
@@ -989,10 +927,10 @@ func TestIT_Branch_SelectPathB(t *testing.T) {
 	exec := &MyTaskExecutor{}
 	task := NewTask("branch-select-B")
 
-	start := NewSubtask("start").SetExecutor(executor.NewLocalExecutor(echoInput))
-	pathA := NewSubtask("pathA").SetExecutor(executor.NewLocalExecutor(echoInput))
-	pathB := NewSubtask("pathB").SetExecutor(executor.NewLocalExecutor(echoInput))
-	end := NewSubtask("end").SetExecutor(executor.NewLocalExecutor(echoInput))
+	start := NewSubtask("start", executor.NewLocalExecutor(echoInput))
+	pathA := NewSubtask("pathA", executor.NewLocalExecutor(echoInput))
+	pathB := NewSubtask("pathB", executor.NewLocalExecutor(echoInput))
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput))
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1045,12 +983,12 @@ func TestIT_Branch_WithDataFlow(t *testing.T) {
 	task := NewTask("branch-data-flow")
 
 	// start 输出包含 decision 字段
-	start := NewSubtask("start").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+	start := NewSubtask("start", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
 		return map[string]string{"decision": "B", "value": "from_start"}, nil
 	}))
-	pathA := NewSubtask("pathA").SetExecutor(executor.NewLocalExecutor(echoInput))
-	pathB := NewSubtask("pathB").SetExecutor(executor.NewLocalExecutor(echoInput))
-	end := NewSubtask("end").SetExecutor(executor.NewLocalExecutor(echoInput))
+	pathA := NewSubtask("pathA", executor.NewLocalExecutor(echoInput))
+	pathB := NewSubtask("pathB", executor.NewLocalExecutor(echoInput))
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput))
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1106,11 +1044,11 @@ func TestIT_Branch_WithDataFlow(t *testing.T) {
 func TestIT_Branch_SkipAutoPropagation(t *testing.T) {
 	task := NewTask("branch-skip-propagation")
 
-	start := NewSubtask("start")
-	pathA := NewSubtask("pathA")
-	pathB := NewSubtask("pathB")
-	pathC := NewSubtask("pathC")
-	end := NewSubtask("end")
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	pathC := NewSubtask("pathC", noopExec)
+	end := NewSubtask("end", noopExec)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1163,11 +1101,11 @@ func TestIT_Branch_SkipAutoPropagation(t *testing.T) {
 func TestIT_Branch_AnyPredecessorConverge(t *testing.T) {
 	task := NewTask("branch-any-converge")
 
-	start := NewSubtask("start")
-	pathA := NewSubtask("pathA")
-	pathB := NewSubtask("pathB")
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
 	// end 使用 AnyPredecessor：任一前驱完成即触发
-	end := NewSubtask("end").SetTriggerMode(AnyPredecessor)
+	end := NewSubtask("end", noopExec).SetTriggerMode(AnyPredecessor)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1202,12 +1140,12 @@ func TestIT_Branch_AnyPredecessorConverge(t *testing.T) {
 func TestIT_Branch_Nested(t *testing.T) {
 	task := NewTask("nested-branch")
 
-	start := NewSubtask("start")
-	outerA := NewSubtask("outerA")
-	outerB := NewSubtask("outerB")
-	innerA1 := NewSubtask("innerA1")
-	innerA2 := NewSubtask("innerA2")
-	end := NewSubtask("end")
+	start := NewSubtask("start", noopExec)
+	outerA := NewSubtask("outerA", noopExec)
+	outerB := NewSubtask("outerB", noopExec)
+	innerA1 := NewSubtask("innerA1", noopExec)
+	innerA2 := NewSubtask("innerA2", noopExec)
+	end := NewSubtask("end", noopExec)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(outerA)
@@ -1274,10 +1212,10 @@ func TestIT_Branch_Nested(t *testing.T) {
 func TestIT_Branch_ConditionError(t *testing.T) {
 	task := NewTask("branch-condition-error")
 
-	start := NewSubtask("start")
-	pathA := NewSubtask("pathA")
-	pathB := NewSubtask("pathB")
-	end := NewSubtask("end")
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	end := NewSubtask("end", noopExec)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1317,8 +1255,8 @@ func TestIT_Branch_ConditionError(t *testing.T) {
 func TestIT_Branch_InvalidEndNode(t *testing.T) {
 	task := NewTask("branch-invalid-end")
 
-	start := NewSubtask("start")
-	pathA := NewSubtask("pathA")
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -1345,11 +1283,11 @@ func TestIT_Branch_WithExecutorsAndDataFlow(t *testing.T) {
 	task := NewTask("branch-full-flow")
 
 	// start 输出 decision
-	start := NewSubtask("start").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+	start := NewSubtask("start", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
 		return map[string]string{"decision": "fast", "payload": "important_data"}, nil
 	}))
 	// fastPath 处理
-	fastPath := NewSubtask("fastPath").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+	fastPath := NewSubtask("fastPath", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
 		result := make(map[string]string)
 		for k, v := range input {
 			result[k] = "fast_" + v
@@ -1357,7 +1295,7 @@ func TestIT_Branch_WithExecutorsAndDataFlow(t *testing.T) {
 		return result, nil
 	}))
 	// slowPath 处理
-	slowPath := NewSubtask("slowPath").SetExecutor(executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+	slowPath := NewSubtask("slowPath", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
 		result := make(map[string]string)
 		for k, v := range input {
 			result[k] = "slow_" + v
@@ -1365,7 +1303,7 @@ func TestIT_Branch_WithExecutorsAndDataFlow(t *testing.T) {
 		return result, nil
 	}))
 	// end 汇总
-	end := NewSubtask("end").SetExecutor(executor.NewLocalExecutor(echoInput))
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput))
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(fastPath)

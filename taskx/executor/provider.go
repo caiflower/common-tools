@@ -1,6 +1,9 @@
 package executor
 
-import "context"
+import (
+	"context"
+	"reflect"
+)
 
 // ExecutorProvider 执行器提供者接口（最小接口，仅2个方法）
 // 各实现使用泛型替代 interface{} 以提供编译时类型安全
@@ -37,4 +40,12 @@ func (d *TaskData) UnmarshalInput(target any) error {
 		return nil
 	}
 	return unmarshalJSON([]byte(d.Input), target)
+}
+
+// TypedProvider 可选接口，提供输入输出类型信息用于编译时校验
+// ExecutorProvider 实现此接口后，DAG 编译时会自动校验数据边的类型兼容性
+type TypedProvider interface {
+	ExecutorProvider
+	InputType() reflect.Type
+	OutputType() reflect.Type
 }

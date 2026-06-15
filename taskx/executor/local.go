@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"reflect"
 )
 
 // LocalExecutor 本地函数执行器，泛型参数 I/O 提供编译时类型安全
@@ -33,3 +34,15 @@ func (e *LocalExecutor[I, O]) Execute(ctx context.Context, data *TaskData) (any,
 
 // Protocol 返回协议类型
 func (e *LocalExecutor[I, O]) Protocol() ExecutorProtocol { return ProtocolLocal }
+
+// InputType 返回输入类型（实现 TypedProvider 接口）
+func (e *LocalExecutor[I, O]) InputType() reflect.Type {
+	var i I
+	return reflect.TypeOf(i)
+}
+
+// OutputType 返回输出类型（实现 TypedProvider 接口）
+func (e *LocalExecutor[I, O]) OutputType() reflect.Type {
+	var o O
+	return reflect.TypeOf(o)
+}

@@ -95,7 +95,7 @@ type Subtask struct {
 }
 
 // NewSubtask 创建新的 Subtask（运行时类型推断）
-func NewSubtask(name string) *Subtask {
+func NewSubtask(name string, provider executor.ExecutorProvider) *Subtask {
 	return &Subtask{
 		subtask: model.Subtask{
 			ID:            tools.GenerateId("st"),
@@ -106,6 +106,7 @@ func NewSubtask(name string) *Subtask {
 			Rollback:      string(RollbackPending),
 		},
 		triggerMode: AllPredecessor,
+		provider:    provider,
 	}
 }
 
@@ -240,12 +241,6 @@ func (s *Subtask) SetInput(content interface{}) *Subtask {
 		return s
 	}
 	s.subtask.Input = string(_tmp)
-	return s
-}
-
-// SetExecutor 设置执行器（创建时绑定，无需通过 name 关联）
-func (s *Subtask) SetExecutor(p executor.ExecutorProvider) *Subtask {
-	s.provider = p
 	return s
 }
 
@@ -405,6 +400,14 @@ func (t *Task) AddSubtask(subtask *Subtask) error {
 	if subtask.provider != nil {
 		t.em.registerProvider(t.task.TaskName, subtask.GetName(), subtask.provider)
 		registerProvider(t.task.TaskName, subtask.GetName(), subtask.provider)
+		// 提取类型信息到 DAG 节点，用于编译时类型校验
+		if tp, ok := subtask.provider.(executor.TypedProvider); ok {
+			node := t.dag.GetNode(subtask.GetID())
+			if node != nil {
+				node.inputType = tp.InputType()
+				node.outputType = tp.OutputType()
+			}
+		}
 	}
 	if subtask.rollbackProvider != nil {
 		t.em.registerRollbackProvider(t.task.TaskName, subtask.GetName(), subtask.rollbackProvider)
@@ -748,10 +751,10 @@ func (n *NoOpCallback) OnBranchSelected(ctx interface{}, fromNode string, select
 // TaskExecutor 任务执行器接口
 type TaskExecutor interface {
 	Name() string
-	// FinishedTask 任务完成时的回调
-	FinishedTask(data *TaskData) error
-	// FailedTask 任务失败时的回调
-	FailedTask(data *TaskData) error
+	//// FinishedTask 任务完成时的回调
+	//FinishedTask(data *TaskData) error
+	//// FailedTask 任务失败时的回调
+	//FailedTask(data *TaskData) error
 }
 
 // executorManager 执行器管理器（实例级）

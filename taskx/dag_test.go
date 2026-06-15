@@ -28,6 +28,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// noopExec 用于不需要实际执行的 DAG 结构测试
+var noopExec = executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+	return input, nil
+})
+
 // ===== dagGraph 单元测试 =====
 
 func TestDAGGraph_AddNode(t *testing.T) {
@@ -302,9 +307,9 @@ func TestCompile_InvalidBranchEndNode(t *testing.T) {
 func TestTask_ControlDataEdgeSeparation(t *testing.T) {
 	task := NewTask("control-data-test")
 
-	a := NewSubtask("a").SetInput("data-a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec).SetInput("data-a")
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -334,8 +339,8 @@ func TestTask_ControlDataEdgeSeparation(t *testing.T) {
 func TestTask_AddEdge(t *testing.T) {
 	task := NewTask("add-edge-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -363,10 +368,10 @@ func TestTask_AddEdge(t *testing.T) {
 func TestTask_Branch(t *testing.T) {
 	task := NewTask("branch-test")
 
-	start := NewSubtask("start")
-	pathA := NewSubtask("pathA")
-	pathB := NewSubtask("pathB")
-	end := NewSubtask("end")
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	end := NewSubtask("end", noopExec)
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -416,9 +421,9 @@ func TestTask_Branch(t *testing.T) {
 func TestTask_SkipPropagation(t *testing.T) {
 	task := NewTask("skip-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -449,9 +454,9 @@ func TestTask_SkipPropagation(t *testing.T) {
 func TestTask_SkipDoesNotBlockConverge(t *testing.T) {
 	task := NewTask("skip-converge-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -478,8 +483,8 @@ func TestTask_SkipDoesNotBlockConverge(t *testing.T) {
 func TestTask_FieldMapping(t *testing.T) {
 	task := NewTask("field-mapping-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -514,9 +519,9 @@ func TestTask_RollbackStrategyAll(t *testing.T) {
 	task := NewTask("rollback-all-test")
 	task.SetRollbackStrategy(StrategyRollbackAll)
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -542,9 +547,9 @@ func TestTask_RollbackStrategyFailed(t *testing.T) {
 	task := NewTask("rollback-failed-test")
 	task.SetRollbackStrategy(StrategyRollbackFailed)
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -573,9 +578,9 @@ func TestTask_RollbackStrategyCustom(t *testing.T) {
 		return []string{"b"} // 只回滚 b
 	})
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -602,7 +607,7 @@ func TestSubtask_PrePostProcessor(t *testing.T) {
 	preCalled := false
 	postCalled := false
 
-	a := NewSubtask("a")
+	a := NewSubtask("a", noopExec)
 	a.SetPreProcessor(func(ctx interface{}, data any) (any, error) {
 		preCalled = true
 		return data, nil
@@ -672,9 +677,9 @@ func (tc *testCallback) OnBranchSelected(ctx interface{}, fromNode string, selec
 func TestTask_PriorityScheduling(t *testing.T) {
 	task := NewTask("priority-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b").SetPriority(10)
-	c := NewSubtask("c").SetPriority(5)
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec).SetPriority(10)
+	c := NewSubtask("c", noopExec).SetPriority(5)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -702,9 +707,9 @@ func TestTask_PriorityScheduling(t *testing.T) {
 func TestTask_AnyPredecessorTrigger(t *testing.T) {
 	task := NewTask("any-trigger-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c").SetTriggerMode(AnyPredecessor) // 任一前驱完成即触发
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec).SetTriggerMode(AnyPredecessor) // 任一前驱完成即触发
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -726,9 +731,9 @@ func TestTask_AnyPredecessorTrigger(t *testing.T) {
 func TestTask_AllPredecessorTrigger(t *testing.T) {
 	task := NewTask("all-trigger-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c").SetTriggerMode(AllPredecessor) // 所有前驱完成才触发
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec).SetTriggerMode(AllPredecessor) // 所有前驱完成才触发
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -756,8 +761,8 @@ func TestTask_AllPredecessorTrigger(t *testing.T) {
 func TestTask_GraphDOT(t *testing.T) {
 	task := NewTask("dot-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -774,8 +779,8 @@ func TestTask_GraphDOT(t *testing.T) {
 func TestTask_GraphMermaid(t *testing.T) {
 	task := NewTask("mermaid-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -793,10 +798,10 @@ func TestTask_GraphMermaid(t *testing.T) {
 func TestTask_FullExecution(t *testing.T) {
 	task := NewTask("full-exec-test")
 
-	step1 := NewSubtask("step1").SetInput("input-data")
-	step2 := NewSubtask("step2")
-	step3 := NewSubtask("step3")
-	step4 := NewSubtask("step4")
+	step1 := NewSubtask("step1", noopExec).SetInput("input-data")
+	step2 := NewSubtask("step2", noopExec)
+	step3 := NewSubtask("step3", noopExec)
+	step4 := NewSubtask("step4", noopExec)
 
 	_ = task.AddSubtask(step1)
 	_ = task.AddSubtask(step2)
@@ -852,9 +857,9 @@ func TestTask_FullExecution(t *testing.T) {
 func TestTask_FullExecutionWithFailure(t *testing.T) {
 	task := NewTask("failure-test")
 
-	a := NewSubtask("a")
-	b := NewSubtask("b")
-	c := NewSubtask("c")
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
 
 	_ = task.AddSubtask(a)
 	_ = task.AddSubtask(b)
@@ -911,7 +916,7 @@ func TestTask_ExecutorIsolation(t *testing.T) {
 // ===== Subtask 配置测试 =====
 
 func TestSubtask_Configuration(t *testing.T) {
-	s := NewSubtask("test")
+	s := NewSubtask("test", noopExec)
 
 	s.SetTriggerMode(AnyPredecessor)
 	assert.Equal(t, AnyPredecessor, s.triggerMode)
@@ -945,9 +950,9 @@ func indexOf(slice []string, item string) int {
 func TestTask_OldAPICompatibility(t *testing.T) {
 	// 使用旧方式创建 Task 和 Subtask
 	task := NewTask("compat-test").SetInput("test")
-	stp1 := NewSubtask("stp1").SetInput("stp1")
-	stp2 := NewSubtask("stp2").SetInput("stp2")
-	stp3 := NewSubtask("stp3").SetInput("stp3")
+	stp1 := NewSubtask("stp1", noopExec).SetInput("stp1")
+	stp2 := NewSubtask("stp2", noopExec).SetInput("stp2")
+	stp3 := NewSubtask("stp3", noopExec).SetInput("stp3")
 
 	_ = task.AddSubtask(stp1)
 	_ = task.AddSubtask(stp2)
@@ -982,4 +987,138 @@ func TestTask_OldAPICompatibility(t *testing.T) {
 	// 没有更多可执行节点
 	next = task.NextSubTasks()
 	assert.Equal(t, 0, len(next))
+}
+
+// ===== 类型兼容性校验测试 =====
+
+func TestCompile_TypeMismatch(t *testing.T) {
+	task := NewTask("type-mismatch-test")
+
+	// stepOne 输出 map[string]any，stepTwo 输入 string，类型不兼容
+	one := NewSubtask("one", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+	two := NewSubtask("two", executor.NewLocalExecutor(func(ctx context.Context, input string) (string, error) {
+		return input, nil
+	}))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddEdge(one, two)
+
+	_, err := task.Compile()
+	assert.NotNil(t, err, "should detect type mismatch")
+	assert.Contains(t, err.Error(), "type mismatch")
+}
+
+func TestCompile_TypeMatch(t *testing.T) {
+	task := NewTask("type-match-test")
+
+	// stepOne 输出 map[string]any，stepTwo 输入 map[string]any，类型兼容
+	one := NewSubtask("one", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+	two := NewSubtask("two", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddEdge(one, two)
+
+	_, err := task.Compile()
+	assert.Nil(t, err, "same type should pass validation")
+}
+
+func TestCompile_MapStringAnyAcceptsMapStringX(t *testing.T) {
+	task := NewTask("map-any-accepts-test")
+
+	// stepOne 输出 map[string]string，stepTwo 输入 map[string]any
+	// map[string]any 作为输入应接受 map[string]string 输出
+	one := NewSubtask("one", executor.NewLocalExecutor(func(ctx context.Context, input map[string]string) (map[string]string, error) {
+		return input, nil
+	}))
+	two := NewSubtask("two", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddEdge(one, two)
+
+	_, err := task.Compile()
+	assert.Nil(t, err, "map[string]any input should accept map[string]string output")
+}
+
+func TestCompile_ControlEdgeSkipsTypeCheck(t *testing.T) {
+	task := NewTask("control-edge-skip-test")
+
+	// 控制边不传数据，不校验类型
+	one := NewSubtask("one", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+	two := NewSubtask("two", executor.NewLocalExecutor(func(ctx context.Context, input string) (string, error) {
+		return input, nil
+	}))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddControlEdge(one, two)
+
+	_, err := task.Compile()
+	assert.Nil(t, err, "control edge should skip type validation")
+}
+
+func TestCompile_NonTypedProviderSkipsTypeCheck(t *testing.T) {
+	task := NewTask("non-typed-provider-skip-test")
+
+	// 使用不实现 TypedProvider 的自定义执行器，类型信息缺失，跳过校验
+	one := NewSubtask("one", &nonTypedExec{})
+	two := NewSubtask("two", &nonTypedExec{})
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddEdge(one, two)
+
+	_, err := task.Compile()
+	assert.Nil(t, err, "non-TypedProvider should skip type validation")
+}
+
+// nonTypedExec 不实现 TypedProvider 的自定义执行器
+type nonTypedExec struct{}
+
+func (e *nonTypedExec) Execute(ctx context.Context, data *executor.TaskData) (any, error) {
+	return nil, nil
+}
+
+func (e *nonTypedExec) Protocol() executor.ExecutorProtocol {
+	return "non-typed"
+}
+
+func TestCompile_AssignableTypes(t *testing.T) {
+	task := NewTask("assignable-types-test")
+
+	type base struct{ Name string }
+	type extended struct{ Name string }
+
+	// 相同结构的不同类型定义在 Go 中不可赋值，这里测试可赋值场景
+	one := NewSubtask("one", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+	two := NewSubtask("two", executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	}))
+	three := NewSubtask("three", executor.NewLocalExecutor(func(ctx context.Context, input string) (string, error) {
+		return input, nil
+	}))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddEdge(one, two)   // map[string]any -> map[string]any, OK
+	_ = task.AddEdge(two, three) // map[string]any -> string, mismatch
+
+	_, err := task.Compile()
+	assert.NotNil(t, err, "should detect type mismatch on edge two -> three")
+	assert.Contains(t, err.Error(), "type mismatch")
 }

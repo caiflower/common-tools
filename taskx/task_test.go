@@ -29,11 +29,11 @@ import (
 
 func TestTask(t *testing.T) {
 	myTask := NewTask("testTask").SetInput("test")
-	stp1 := NewSubtask("stp1").SetInput("stp1")
-	stp2 := NewSubtask("stp2").SetInput("stp2")
-	stp3 := NewSubtask("stp3").SetInput("stp3")
-	stp4 := NewSubtask("stp4").SetInput("stp4")
-	stp5 := NewSubtask("stp5").SetInput("stp5")
+	stp1 := NewSubtask("stp1", noopExec).SetInput("stp1")
+	stp2 := NewSubtask("stp2", noopExec).SetInput("stp2")
+	stp3 := NewSubtask("stp3", noopExec).SetInput("stp3")
+	stp4 := NewSubtask("stp4", noopExec).SetInput("stp4")
+	stp5 := NewSubtask("stp5", noopExec).SetInput("stp5")
 	_ = myTask.AddSubtask(stp1)
 	_ = myTask.AddSubtask(stp2)
 	_ = myTask.AddSubtask(stp3)
@@ -103,11 +103,11 @@ func (s *simpleTaskExecutor) FailedTask(data *TaskData) error   { return nil }
 func TestTask_ConvertAndRestore(t *testing.T) {
 	// 创建复杂 DAG: one -> four, two -> four, three -> five, four -> five
 	myTask := NewTask("restoreTask").SetUrgent()
-	one := NewSubtask("one").SetInput("data-one")
-	two := NewSubtask("two").SetInput("data-two")
-	three := NewSubtask("three").SetInput("data-three")
-	four := NewSubtask("four").SetInput("data-four")
-	five := NewSubtask("five").SetInput("data-five")
+	one := NewSubtask("one", noopExec).SetInput("data-one")
+	two := NewSubtask("two", noopExec).SetInput("data-two")
+	three := NewSubtask("three", noopExec).SetInput("data-three")
+	four := NewSubtask("four", noopExec).SetInput("data-four")
+	five := NewSubtask("five", noopExec).SetInput("data-five")
 
 	_ = myTask.AddSubtask(one)
 	_ = myTask.AddSubtask(two)
@@ -237,9 +237,9 @@ func TestTask_ProviderExecution(t *testing.T) {
 
 	// 创建 DAG: echo1, echo2 -> concat
 	myTask := NewTask("providerExec")
-	echo1 := NewSubtask("echo1").SetInput(map[string]string{"value": "hello"}).SetExecutor(localEcho)
-	echo2 := NewSubtask("echo2").SetInput(map[string]string{"value": "world"}).SetExecutor(localEcho)
-	concat := NewSubtask("concat").SetExecutor(localConcat)
+	echo1 := NewSubtask("echo1", localEcho).SetInput(map[string]string{"value": "hello"})
+	echo2 := NewSubtask("echo2", localEcho).SetInput(map[string]string{"value": "world"})
+	concat := NewSubtask("concat", localConcat)
 
 	_ = myTask.AddSubtask(echo1)
 	_ = myTask.AddSubtask(echo2)

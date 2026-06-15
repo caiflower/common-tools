@@ -18,6 +18,7 @@ package taskx
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -64,6 +65,11 @@ func (g *dagGraph) Compile() (*compiledDAG, error) {
 
 	// 校验分支目标节点
 	if err := validateBranches(g); err != nil {
+		return nil, err
+	}
+
+	// 校验数据边类型兼容性
+	if err := validateTypeCompatibility(g); err != nil {
 		return nil, err
 	}
 
@@ -164,6 +170,56 @@ func validateBranches(g *dagGraph) error {
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// validateTypeCompatibility 校验数据边的类型兼容性
+// 对于包含数据流的边（DataEdge 或 ControlAndDataEdge），检查源节点的输出类型是否可赋值给目标节点的输入类型
+// 如果任一端类型信息缺失（非 TypedProvider），则跳过该校验
+func validateTypeCompatibility(g *dagGraph) error {
+	for _, edge := range g.edges {
+		// 只校验包含数据流的边
+		if edge.edgeType == ControlEdge {
+			continue
+		}
+
+		srcNode := g.nodes[edge.from]
+		dstNode := g.nodes[edge.to]
+		if srcNode == nil || dstNode == nil {
+			continue
+		}
+
+		srcOutputType := srcNode.outputType
+		dstInputType := dstNode.inputType
+
+		// 类型信息缺失则跳过（非 TypedProvider 的执行器）
+		if srcOutputType == nil || dstInputType == nil {
+			continue
+		}
+
+		// 类型完全匹配
+		if srcOutputType == dstInputType {
+			continue
+		}
+
+		// 源输出可赋值给目标输入
+		if srcOutputType.AssignableTo(dstInputType) {
+			continue
+		}
+
+		// 特殊处理：map[string]any 作为输入类型时，接受任何 map[string]X 输出
+		// 因为 map[string]any 是最宽泛的 map 类型，可以容纳任意值
+		if dstInputType.Kind() == reflect.Map && srcOutputType.Kind() == reflect.Map {
+			dstKeyType := dstInputType.Key()
+			srcKeyType := srcOutputType.Key()
+			if dstKeyType == srcKeyType && dstInputType.Elem().Kind() == reflect.Interface {
+				continue
+			}
+		}
+
+		return fmt.Errorf("type mismatch on edge %s -> %s: source output type %s is not compatible with destination input type %s",
+			edge.from, edge.to, srcOutputType.String(), dstInputType.String())
 	}
 	return nil
 }

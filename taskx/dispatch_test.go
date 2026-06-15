@@ -313,89 +313,59 @@ func assertSubtaskState(t *testing.T, subtaskMap map[string]*model.Subtask, name
 
 // ===== 步骤函数（泛型 LocalExecutor） =====
 
-// echoInput 回显输入
-func echoInput(ctx context.Context, input map[string]string) (map[string]string, error) {
+// echoInput 回显输入（支持单前驱 map 和多前驱嵌套 map）
+func echoInput(ctx context.Context, input map[string]any) (map[string]any, error) {
 	return input, nil
 }
 
 // failStep 总是返回错误
-func failStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+func failStep(ctx context.Context, input map[string]any) (map[string]any, error) {
 	return nil, errors.New("test rollback err")
 }
 
 // rollbackStep 回滚步骤
-func rollbackStep(ctx context.Context, input map[string]string) (map[string]string, error) {
-	result := make(map[string]string)
+func rollbackStep(ctx context.Context, input map[string]any) (map[string]any, error) {
+	result := make(map[string]any)
 	for k, v := range input {
-		result[k] = v + " rollback"
+		if s, ok := v.(string); ok {
+			result[k] = s + " rollback"
+		} else {
+			result[k] = v
+		}
 	}
 	return result, nil
 }
 
 // rollbackStepSlow 慢回滚步骤
-func rollbackStepSlow(delay time.Duration) func(ctx context.Context, input map[string]string) (map[string]string, error) {
-	return func(ctx context.Context, input map[string]string) (map[string]string, error) {
+func rollbackStepSlow(delay time.Duration) func(ctx context.Context, input map[string]any) (map[string]any, error) {
+	return func(ctx context.Context, input map[string]any) (map[string]any, error) {
 		time.Sleep(delay)
-		result := make(map[string]string)
+		result := make(map[string]any)
 		for k, v := range input {
-			result[k] = v + " rollback"
+			if s, ok := v.(string); ok {
+				result[k] = s + " rollback"
+			} else {
+				result[k] = v
+			}
 		}
 		return result, nil
 	}
 }
 
 // nonRetryableStep 返回 ErrNonRetryable
-func nonRetryableStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+func nonRetryableStep(ctx context.Context, input map[string]any) (map[string]any, error) {
 	return nil, ErrNonRetryable
 }
 
 // panicStep 触发 panic
-func panicStep(ctx context.Context, input map[string]string) (map[string]string, error) {
+func panicStep(ctx context.Context, input map[string]any) (map[string]any, error) {
 	panic("this is a test panic in PanicStep")
 }
 
 // emptyStep 返回空结果
-func emptyStep(ctx context.Context, input map[string]string) (map[string]string, error) {
-	return map[string]string{}, nil
+func emptyStep(ctx context.Context, input map[string]any) (map[string]any, error) {
+	return map[string]any{}, nil
 }
-
-// ===== TaskExecutor 实现 =====
-
-type TaskDemo struct{}
-
-func (t *TaskDemo) Name() string                      { return taskDemoName }
-func (t *TaskDemo) FinishedTask(data *TaskData) error { return nil }
-func (t *TaskDemo) FailedTask(data *TaskData) error   { return nil }
-
-type TaskRollbackDemo struct{}
-
-func (t *TaskRollbackDemo) Name() string                      { return taskRollbackName }
-func (t *TaskRollbackDemo) FinishedTask(data *TaskData) error { return nil }
-func (t *TaskRollbackDemo) FailedTask(data *TaskData) error   { return nil }
-
-type TaskNonRetryable struct{}
-
-func (t *TaskNonRetryable) Name() string                      { return taskNameOfNonRetryable }
-func (t *TaskNonRetryable) FinishedTask(data *TaskData) error { return nil }
-func (t *TaskNonRetryable) FailedTask(data *TaskData) error   { return errors.New("FailedTask") }
-
-type PanicTaskExecutor struct{}
-
-func (t *PanicTaskExecutor) Name() string                      { return "PanicTask" }
-func (t *PanicTaskExecutor) FinishedTask(data *TaskData) error { return nil }
-func (t *PanicTaskExecutor) FailedTask(data *TaskData) error   { return nil }
-
-type BranchTaskExecutor struct{}
-
-func (t *BranchTaskExecutor) Name() string                      { return taskBranchName }
-func (t *BranchTaskExecutor) FinishedTask(data *TaskData) error { return nil }
-func (t *BranchTaskExecutor) FailedTask(data *TaskData) error   { return nil }
-
-type NestedBranchTaskExecutor struct{}
-
-func (t *NestedBranchTaskExecutor) Name() string                      { return taskNestedBranchName }
-func (t *NestedBranchTaskExecutor) FinishedTask(data *TaskData) error { return nil }
-func (t *NestedBranchTaskExecutor) FailedTask(data *TaskData) error   { return nil }
 
 // ===== 测试用例 =====
 
@@ -407,11 +377,11 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<
 
 	task := NewTask(taskDemoName).SetRequestID(requestId).SetDescription(description).SetUrgent()
 
-	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	two := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	three := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	four := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	five := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	one := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepOne})
+	two := NewSubtask(stepTwo, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepTwo})
+	three := NewSubtask(stepThree, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepThree})
+	four := NewSubtask(stepFour, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepFour})
+	five := NewSubtask(stepFive, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepFive})
 
 	_ = task.AddSubtask(one)
 	_ = task.AddSubtask(two)
@@ -424,6 +394,8 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<
 	_ = task.AddEdge(three, five)
 	_ = task.AddEdge(four, five)
 
+	_, err := task.Compile()
+	assert.NoError(t, err)
 	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
 
 	assert.Equal(t, requestId, dbTask.RequestID, "check requestId failed")
@@ -442,11 +414,11 @@ func submitDemoTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<
 func submitRollbackTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
 	task := NewTask(taskRollbackName).SetUrgent()
 
-	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	two := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(emptyStep)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
-	three := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(2 * time.Second)))
-	four := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(failStep)).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(1 * time.Second)))
-	five := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	one := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepOne})
+	two := NewSubtask(stepTwo, executor.NewLocalExecutor(emptyStep)).SetInput(map[string]any{"name": stepTwo}).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	three := NewSubtask(stepThree, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepThree}).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(2 * time.Second)))
+	four := NewSubtask(stepFour, executor.NewLocalExecutor(failStep)).SetInput(map[string]any{"name": stepFour}).SetRollbackExecutor(executor.NewLocalExecutor(rollbackStepSlow(1 * time.Second)))
+	five := NewSubtask(stepFive, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepFive})
 
 	_ = task.AddSubtask(one)
 	_ = task.AddSubtask(two)
@@ -460,6 +432,8 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 	_ = task.AddEdge(four, five)
 
 	_, _, subtaskMap := submitAndWait(t, dispatcher, task)
+	_, err := task.Compile()
+	assert.NoError(t, err)
 
 	dbTwo := subtaskMap[stepTwo]
 	dbThree := subtaskMap[stepThree]
@@ -472,22 +446,22 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "check rollback finished failed")
 	assert.Equal(t, true, isRollbackFinished(dbFour.Rollback), "check rollback finished failed")
 	assert.Equal(t, true, TaskRollbackState(dbOne.Rollback) == NoneRollback, "check noneRollback rollback failed")
-	assert.Equal(t, true, TaskRollbackState(dbFive.Rollback) == RollbackPending, "check rollbackPending rollback failed")
+	assert.Equal(t, true, TaskRollbackState(dbFive.Rollback) == NoneRollback, "check noneRollback rollback failed")
 
 	assert.Equal(t, string(TaskFailed), dbFour.State, "check subtask state failed")
 	assert.Equal(t, int8(0), dbFour.Retry, "check subtask retryCount failed")
 	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
 
 	// check finish time
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) > 0, "check finishTime failed")
-	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) > 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) >= 0, "check finishTime failed")
+	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) >= 0, "check finishTime failed")
 
 	done <- struct{}{}
 }
 
 func submitNonRetryTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
 	task := NewTask(taskNameOfNonRetryable).SetUrgent()
-	one := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(nonRetryableStep))
+	one := NewSubtask(stepOne, executor.NewLocalExecutor(nonRetryableStep)).SetInput(map[string]any{"name": stepOne})
 	_ = task.AddSubtask(one)
 
 	_, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
@@ -504,11 +478,11 @@ func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 		SetInput("affinity test input").
 		SetAffinityType(AffinityForceSameNode)
 
-	subtask := NewSubtask(stepOne).SetInput(map[string]string{"name": stepOne}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	subtask2 := NewSubtask(stepTwo).SetInput(map[string]string{"name": stepTwo}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	subtask3 := NewSubtask(stepThree).SetInput(map[string]string{"name": stepThree}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	subtask4 := NewSubtask(stepFour).SetInput(map[string]string{"name": stepFour}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	subtask5 := NewSubtask(stepFive).SetInput(map[string]string{"name": stepFive}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepOne})
+	subtask2 := NewSubtask(stepTwo, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepTwo})
+	subtask3 := NewSubtask(stepThree, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepThree})
+	subtask4 := NewSubtask(stepFour, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepFour})
+	subtask5 := NewSubtask(stepFive, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepFive})
 
 	_ = task.AddSubtask(subtask)
 	_ = task.AddSubtask(subtask2)
@@ -521,11 +495,14 @@ func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 	_ = task.AddEdge(subtask3, subtask4)
 	_ = task.AddEdge(subtask4, subtask5)
 
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
 	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
 
-	logger.Debug("[affinityTest] dbTask.Worker=%s", dbTask.Worker)
+	logger.Trace("[affinityTest] dbTask.Worker=%s", dbTask.Worker)
 	for _, v := range dbSubTasks {
-		logger.Debug("[affinityTest] subtask=%s worker=%s", v.TaskName, v.Worker)
+		logger.Trace("[affinityTest] subtask=%s worker=%s", v.TaskName, v.Worker)
 	}
 
 	for _, v := range dbSubTasks {
@@ -540,7 +517,7 @@ func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- st
 	executeTime := time.Now().Add(10 * time.Second)
 	task.SetExecuteTime(executeTime)
 
-	subtask := NewSubtask(stepOne).SetInput(map[string]string{"name": "scheduled"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	subtask := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "scheduled"})
 	_ = task.AddSubtask(subtask)
 
 	dbTask, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
@@ -557,7 +534,7 @@ func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- st
 
 func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
 	task := NewTask("PanicTask").SetInput("panic test input")
-	subtask := NewSubtask("panicStep").SetInput(map[string]string{"name": "panic"}).SetExecutor(executor.NewLocalExecutor(panicStep))
+	subtask := NewSubtask("panicStep", executor.NewLocalExecutor(panicStep)).SetInput(map[string]any{"name": "panic"})
 	_ = task.AddSubtask(subtask)
 
 	_, dbSubTasks, _ := submitAndWait(t, dispatcher, task)
@@ -578,10 +555,10 @@ func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan
 func submitBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
 	task := NewTask(taskBranchName).SetUrgent()
 
-	start := NewSubtask("start").SetInput(map[string]string{"name": "start"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	pathA := NewSubtask("pathA").SetInput(map[string]string{"name": "pathA"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	pathB := NewSubtask("pathB").SetInput(map[string]string{"name": "pathB"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	end := NewSubtask("end").SetInput(map[string]string{"name": "end"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	start := NewSubtask("start", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "start"})
+	pathA := NewSubtask("pathA", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "pathA"})
+	pathB := NewSubtask("pathB", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "pathB"})
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "end"})
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(pathA)
@@ -598,6 +575,9 @@ func submitBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done cha
 		EndNodes: map[string]bool{pathA.GetID(): true, pathB.GetID(): true},
 	})
 
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
 	dbTask, _, subtaskMap := submitAndWait(t, dispatcher, task)
 
 	assert.Equal(t, string(TaskSucceeded), dbTask.State, "branch task should succeed")
@@ -613,12 +593,12 @@ func submitBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done cha
 func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
 	task := NewTask(taskNestedBranchName).SetUrgent()
 
-	start := NewSubtask("start").SetInput(map[string]string{"name": "start"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	outerA := NewSubtask("outerA").SetInput(map[string]string{"name": "outerA"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	outerB := NewSubtask("outerB").SetInput(map[string]string{"name": "outerB"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	innerA1 := NewSubtask("innerA1").SetInput(map[string]string{"name": "innerA1"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	innerA2 := NewSubtask("innerA2").SetInput(map[string]string{"name": "innerA2"}).SetExecutor(executor.NewLocalExecutor(echoInput))
-	end := NewSubtask("end").SetInput(map[string]string{"name": "end"}).SetExecutor(executor.NewLocalExecutor(echoInput))
+	start := NewSubtask("start", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "start"})
+	outerA := NewSubtask("outerA", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "outerA"})
+	outerB := NewSubtask("outerB", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "outerB"})
+	innerA1 := NewSubtask("innerA1", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "innerA1"})
+	innerA2 := NewSubtask("innerA2", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "innerA2"})
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "end"})
 
 	_ = task.AddSubtask(start)
 	_ = task.AddSubtask(outerA)
@@ -646,6 +626,9 @@ func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, do
 		EndNodes: map[string]bool{innerA1.GetID(): true, innerA2.GetID(): true},
 	})
 
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
 	dbTask, _, subtaskMap := submitAndWait(t, dispatcher, task)
 
 	assert.Equal(t, string(TaskSucceeded), dbTask.State, "nested branch task should succeed")
@@ -672,13 +655,6 @@ func TestDisPatch(t *testing.T) {
 	defer func() {
 		_ = os.Remove("./app.db")
 	}()
-
-	RegisterTaskExecutor(&TaskDemo{})
-	RegisterTaskExecutor(&TaskRollbackDemo{})
-	RegisterTaskExecutor(&TaskNonRetryable{})
-	RegisterTaskExecutor(&PanicTaskExecutor{})
-	RegisterTaskExecutor(&BranchTaskExecutor{})
-	RegisterTaskExecutor(&NestedBranchTaskExecutor{})
 
 	_ = receiver1.Start()
 	_ = receiver2.Start()

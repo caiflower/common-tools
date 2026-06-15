@@ -782,3 +782,59 @@ func TestGRPCExecutor_JsonCodec(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 42, restored.Value)
 }
+
+// ===== TypedProvider 接口测试 =====
+
+func TestLocalExecutor_ImplementsTypedProvider(t *testing.T) {
+	exec := NewLocalExecutor(func(ctx context.Context, input testInput) (testOutput, error) {
+		return testOutput{Greeting: "Hello, " + input.Name}, nil
+	})
+
+	// 验证 LocalExecutor 实现了 TypedProvider 接口
+	var _ TypedProvider = exec
+
+	assert.Equal(t, "executor.testInput", exec.InputType().String())
+	assert.Equal(t, "executor.testOutput", exec.OutputType().String())
+}
+
+func TestLocalExecutor_TypedProviderMapTypes(t *testing.T) {
+	exec := NewLocalExecutor(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+		return input, nil
+	})
+
+	var _ TypedProvider = exec
+
+	assert.Equal(t, "map[string]interface {}", exec.InputType().String())
+	assert.Equal(t, "map[string]interface {}", exec.OutputType().String())
+}
+
+func TestLocalExecutor_TypedProviderStringTypes(t *testing.T) {
+	exec := NewLocalExecutor(func(ctx context.Context, input string) (string, error) {
+		return input, nil
+	})
+
+	var _ TypedProvider = exec
+
+	assert.Equal(t, "string", exec.InputType().String())
+	assert.Equal(t, "string", exec.OutputType().String())
+}
+
+func TestTypedProvider_InterfaceAssertion(t *testing.T) {
+	// LocalExecutor 可以通过接口断言获取类型信息
+	var provider ExecutorProvider = NewLocalExecutor(func(ctx context.Context, input testInput) (testOutput, error) {
+		return testOutput{}, nil
+	})
+
+	tp, ok := provider.(TypedProvider)
+	assert.True(t, ok, "LocalExecutor should implement TypedProvider")
+	assert.NotNil(t, tp.InputType())
+	assert.NotNil(t, tp.OutputType())
+}
+
+func TestTypedProvider_CustomExecutorNotImplemented(t *testing.T) {
+	// 自定义执行器不实现 TypedProvider，断言应失败
+	var provider ExecutorProvider = &customExecutor{customValue: "test"}
+
+	_, ok := provider.(TypedProvider)
+	assert.False(t, ok, "customExecutor should not implement TypedProvider")
+}

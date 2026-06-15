@@ -113,7 +113,7 @@ func (t *taskReceiver) Start() error {
 	t.taskQueue = make(chan *model.Task, t.taskQueueSize)
 	t.subtaskRollbackQueue = make(chan *SubtaskBag, t.subtaskRollbackQueueSize)
 
-	t.startTaskThreads()
+	//t.startTaskThreads()
 	t.startSubtaskThreads()
 	t.startRollbackTaskThreads()
 	t.running.Store(true)
@@ -180,16 +180,16 @@ func (t *taskReceiver) handleSubtask(ctx context.Context, subtaskIds []string, r
 		subtaskID := subtask.ID
 
 		if subtask.Worker != t.Cluster.GetMyName() {
-			logger.Info("[handleSubtask] subtask %s is not my job, assigned to %s", subtaskID, subtask.Worker)
+			logger.Trace("[handleSubtask] subtask %s is not my job, assigned to %s", subtaskID, subtask.Worker)
 			continue
 		}
 
 		if rollback && isRollbackFinished(subtask.Rollback) {
-			logger.Info("[handleSubtask] subtask %s already rollback", subtaskID)
+			logger.Trace("[handleSubtask] subtask %s already rollback", subtaskID)
 			continue
 		}
 		if !rollback && isFinished(subtask.State) {
-			logger.Info("[handleSubtask] subtask %s is finished", subtaskID)
+			logger.Trace("[handleSubtask] subtask %s is finished", subtaskID)
 			continue
 		}
 
@@ -245,19 +245,19 @@ func (t *taskReceiver) deliverTask(ctx context.Context, taskIds []string) error 
 		taskID := task.ID
 
 		if task.Worker != t.Cluster.GetMyName() {
-			logger.Info("[deliverTask] task %s is not my job, assigned to %s", taskID, task.Worker)
+			logger.Trace("[deliverTask] task %s is not my job, assigned to %s", taskID, task.Worker)
 			continue
 		}
 		if isFinished(task.State) {
-			logger.Info("[deliverTask] task %s is finished", taskID)
+			logger.Trace("[deliverTask] task %s is finished", taskID)
 			continue
 		}
 		if t.running.Load() == nil || !t.running.Load().(bool) {
-			logger.Warn("[deliverTask] receiver is closed")
+			logger.Trace("[deliverTask] receiver is closed")
 			return errors.New("task receiver is closed")
 		}
 		if !t.taskInflight.InsertString(taskID) {
-			logger.Info("[deliverTask] task %s is inflight", taskID)
+			logger.Trace("[deliverTask] task %s is inflight", taskID)
 			continue
 		}
 
@@ -281,26 +281,26 @@ func (t *taskReceiver) deliverSubtaskRollback(ctx context.Context, subtaskIds []
 	return t.handleSubtask(ctx, subtaskIds, true)
 }
 
-func (t *taskReceiver) startTaskThreads() {
-	runThread := func(i int) {
-		defer t.wg.Done()
-		logger.Trace("[taskWorker] %d start", i)
-		for {
-			select {
-			case <-t.stopChan:
-				logger.Trace("[taskWorker] %d exited (stop signal)", i)
-				return
-			case v := <-t.taskQueue:
-				t.execTask(v)
-			}
-		}
-	}
-
-	t.wg.Add(t.taskWorker)
-	for i := 1; i <= t.taskWorker; i++ {
-		go runThread(i)
-	}
-}
+//func (t *taskReceiver) startTaskThreads() {
+//	runThread := func(i int) {
+//		defer t.wg.Done()
+//		logger.Trace("[taskWorker] %d start", i)
+//		for {
+//			select {
+//			case <-t.stopChan:
+//				logger.Trace("[taskWorker] %d exited (stop signal)", i)
+//				return
+//			case v := <-t.taskQueue:
+//				t.execTask(v)
+//			}
+//		}
+//	}
+//
+//	t.wg.Add(t.taskWorker)
+//	for i := 1; i <= t.taskWorker; i++ {
+//		go runThread(i)
+//	}
+//}
 
 func (t *taskReceiver) startSubtaskThreads() {
 	runThread := func(i int) {
@@ -345,124 +345,124 @@ func (t *taskReceiver) startRollbackTaskThreads() {
 	}
 }
 
-func (t *taskReceiver) execTask(task *model.Task) {
-	defer t.taskInflight.DeleteString(task.ID)
-
-	golocalv1.PutTraceID(task.RequestID)
-	defer golocalv1.Clean()
-	ctx := golocalv1.GetContext()
-	taskID := task.ID
-
-	executor := getTaskExecutor(task.TaskName)
-	if executor == nil {
-		logger.Error("[execTask] task %s executor not found", taskID)
-		err := t.TaskDao.SetOutputAndState(ctx, taskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s not found", task.TaskName)}), string(TaskFailed))
-		if err != nil {
-			logger.Error("[execTask] task %s set output and state failed. err: %v", taskID, err)
-		}
-		return
-	}
-
-	// check task state again
-	_task, err := t.TaskDao.GetByID(ctx, taskID)
-	if err != nil {
-		logger.Error("[execTask] get task %s failed. err: %v", taskID, err)
-		return
-	}
-	if _task == nil ||
-		_task.Worker != t.Cluster.GetMyName() ||
-		isFinished(_task.State) ||
-		time.Now().Before(_task.LastRunTime.Time().Add(time.Duration(_task.RetryInterval)*time.Second)) {
-		logger.Info("[execTask] task %s not satisfy exec condition", taskID)
-		return
-	}
-
-	subtaskMap := make(map[string]Output)
-	subtasks, err := t.SubtaskDao.GetByTaskID(ctx, taskID)
-	if err != nil {
-		logger.Error("[execTask] get subtasks for task %s failed. err: %v", taskID, err)
-		return
-	}
-
-	// 检查是否所有子任务都已完成（成功、失败或跳过）
-	// 防止任务在子任务全部完成前被过早标记为终态
-	allDone := true
-	failed := false
-	for _, subtask := range subtasks {
-		if subtask.State == string(TaskFailed) {
-			failed = true
-		}
-		if subtask.State != string(TaskSucceeded) && subtask.State != string(TaskFailed) && subtask.State != string(TaskSkipped) {
-			allDone = false
-		}
-		var output Output
-		_ = tools.Unmarshal([]byte(subtask.Output), &output)
-		subtaskMap[subtask.TaskName] = output
-	}
-
-	// 如果还有未完成的子任务（pending/running），不应执行 FinishedTask/FailedTask 回调
-	// 任务终态由 dispatcher 的 analysisTask 在所有子任务完成后设置
-	if !allDone {
-		logger.Debug("[execTask] task %s has unfinished subtasks (allDone=false), skip callback", taskID)
-		return
-	}
-
-	var (
-		state  string
-		output string
-	)
-
-	if !failed {
-		taskErr := executor.FinishedTask(&TaskData{
-			RequestId: task.RequestID,
-			TaskId:    task.ID,
-			Input:     task.Input,
-			Subtasks:  subtaskMap,
-		})
-		if taskErr != nil {
-			if task.Retry > 0 && !errors.Is(taskErr, ErrNonRetryable) {
-				if dErr := t.TaskDao.SetRetry(ctx, taskID, task.Retry-1); dErr != nil {
-					logger.Error("[execTask] task %s setRetry failed. err: %v", taskID, dErr)
-				}
-				return
-			}
-
-			output = tools.ToJson(&Output{Err: taskErr.Error()})
-			state = string(TaskFailed)
-		} else {
-			state = string(TaskSucceeded)
-		}
-	} else {
-		taskErr := executor.FailedTask(&TaskData{
-			RequestId: task.RequestID,
-			TaskId:    task.ID,
-			Input:     task.Input,
-			Subtasks:  subtaskMap,
-		})
-		if taskErr != nil {
-			if task.Retry > 0 && !errors.Is(taskErr, ErrNonRetryable) {
-				if dErr := t.TaskDao.SetRetry(ctx, taskID, task.Retry-1); dErr != nil {
-					logger.Error("[execTask] task %s setRetry failed. err: %v", taskID, dErr)
-				}
-				return
-			}
-
-			output = tools.ToJson(&Output{Err: taskErr.Error()})
-		}
-		state = string(TaskFailed)
-	}
-
-	err = t.TaskDao.SetOutputAndState(ctx, taskID, output, state)
-	if err != nil {
-		logger.Error("[execTask] task %s set output and state failed. err: %v", taskID, err)
-		return
-	}
-}
+//func (t *taskReceiver) execTask(task *model.Task) {
+//	defer t.taskInflight.DeleteString(task.ID)
+//
+//	golocalv1.PutTraceID(task.RequestID)
+//	defer golocalv1.Clean()
+//	ctx := golocalv1.GetContext()
+//	taskID := task.ID
+//
+//	executor := getTaskExecutor(task.TaskName)
+//	if executor == nil {
+//		logger.Error("[execTask] task %s executor not found", taskID)
+//		err := t.TaskDao.SetOutputAndState(ctx, taskID, tools.ToJson(&Output{Err: fmt.Sprintf("executor for task %s not found", task.TaskName)}), string(TaskFailed))
+//		if err != nil {
+//			logger.Error("[execTask] task %s set output and state failed. err: %v", taskID, err)
+//		}
+//		return
+//	}
+//
+//	// check task state again
+//	_task, err := t.TaskDao.GetByID(ctx, taskID)
+//	if err != nil {
+//		logger.Error("[execTask] get task %s failed. err: %v", taskID, err)
+//		return
+//	}
+//	if _task == nil ||
+//		_task.Worker != t.Cluster.GetMyName() ||
+//		isFinished(_task.State) ||
+//		time.Now().Before(_task.LastRunTime.Time().Add(time.Duration(_task.RetryInterval)*time.Second)) {
+//		logger.Info("[execTask] task %s not satisfy exec condition", taskID)
+//		return
+//	}
+//
+//	subtaskMap := make(map[string]Output)
+//	subtasks, err := t.SubtaskDao.GetByTaskID(ctx, taskID)
+//	if err != nil {
+//		logger.Error("[execTask] get subtasks for task %s failed. err: %v", taskID, err)
+//		return
+//	}
+//
+//	// 检查是否所有子任务都已完成（成功、失败或跳过）
+//	// 防止任务在子任务全部完成前被过早标记为终态
+//	allDone := true
+//	failed := false
+//	for _, subtask := range subtasks {
+//		if subtask.State == string(TaskFailed) {
+//			failed = true
+//		}
+//		if subtask.State != string(TaskSucceeded) && subtask.State != string(TaskFailed) && subtask.State != string(TaskSkipped) {
+//			allDone = false
+//		}
+//		var output Output
+//		_ = tools.Unmarshal([]byte(subtask.Output), &output)
+//		subtaskMap[subtask.TaskName] = output
+//	}
+//
+//	// 如果还有未完成的子任务（pending/running），不应执行 FinishedTask/FailedTask 回调
+//	// 任务终态由 dispatcher 的 analysisTask 在所有子任务完成后设置
+//	if !allDone {
+//		logger.Trace("[execTask] task %s has unfinished subtasks (allDone=false), skip callback", taskID)
+//		return
+//	}
+//
+//	var (
+//		state  string
+//		output string
+//	)
+//
+//	if !failed {
+//		taskErr := executor.FinishedTask(&TaskData{
+//			RequestId: task.RequestID,
+//			TaskId:    task.ID,
+//			Input:     task.Input,
+//			Subtasks:  subtaskMap,
+//		})
+//		if taskErr != nil {
+//			if task.Retry > 0 && !errors.Is(taskErr, ErrNonRetryable) {
+//				if dErr := t.TaskDao.SetRetry(ctx, taskID, task.Retry-1); dErr != nil {
+//					logger.Error("[execTask] task %s setRetry failed. err: %v", taskID, dErr)
+//				}
+//				return
+//			}
+//
+//			output = tools.ToJson(&Output{Err: taskErr.Error()})
+//			state = string(TaskFailed)
+//		} else {
+//			state = string(TaskSucceeded)
+//		}
+//	} else {
+//		taskErr := executor.FailedTask(&TaskData{
+//			RequestId: task.RequestID,
+//			TaskId:    task.ID,
+//			Input:     task.Input,
+//			Subtasks:  subtaskMap,
+//		})
+//		if taskErr != nil {
+//			if task.Retry > 0 && !errors.Is(taskErr, ErrNonRetryable) {
+//				if dErr := t.TaskDao.SetRetry(ctx, taskID, task.Retry-1); dErr != nil {
+//					logger.Error("[execTask] task %s setRetry failed. err: %v", taskID, dErr)
+//				}
+//				return
+//			}
+//
+//			output = tools.ToJson(&Output{Err: taskErr.Error()})
+//		}
+//		state = string(TaskFailed)
+//	}
+//
+//	err = t.TaskDao.SetOutputAndState(ctx, taskID, output, state)
+//	if err != nil {
+//		logger.Error("[execTask] task %s set output and state failed. err: %v", taskID, err)
+//		return
+//	}
+//}
 
 func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	defer t.subtaskInflight.DeleteString(subtask.ID)
 
-	logger.Debug("[execSubtask] start subtask=%s task=%s urgent=%v worker=%s myName=%s", subtask.ID, task.ID, task.Urgent, subtask.Worker, t.Cluster.GetMyName())
+	logger.Trace("[execSubtask] start subtask=%s task=%s urgent=%v worker=%s myName=%s", subtask.ID, task.ID, task.Urgent, subtask.Worker, t.Cluster.GetMyName())
 
 	golocalv1.PutTraceID(task.RequestID)
 	defer golocalv1.Clean()
@@ -504,7 +504,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	output, err := t.exec(ctx, provider, task.TaskName, subtask.TaskName, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
-		logger.Debug("[execSubtask] subtask=%s exec failed: %v, retry=%d, isNonRetryable=%v", subtaskID, err, subtask.Retry, errors.Is(err, ErrNonRetryable))
+		logger.Trace("[execSubtask] subtask=%s exec failed: %v, retry=%d, isNonRetryable=%v", subtaskID, err, subtask.Retry, errors.Is(err, ErrNonRetryable))
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
 			if err = t.SubtaskDao.SetRetry(ctx, subtaskID, subtask.Retry-1); err != nil {
 				logger.Error("[execSubtask] subtask %s setRetry failed. err: %v", subtaskID, err)
@@ -522,7 +522,7 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		state = string(TaskSucceeded)
 	}
 
-	logger.Debug("[execSubtask] subtask=%s finished, state=%s, urgent=%v", subtaskID, state, task.Urgent)
+	logger.Trace("[execSubtask] subtask=%s finished, state=%s, urgent=%v", subtaskID, state, task.Urgent)
 
 	err = t.SubtaskDao.SetOutputAndState(ctx, subtaskID, tools.ToJson(_output), state)
 	if err != nil {
@@ -624,11 +624,37 @@ func (t *taskReceiver) exec(ctx context.Context, provider executor.ExecutorProvi
 		}
 	}
 
+	// 替换策略：如果节点有前驱，用前驱的输出替换 Input
+	actualInput := input
+	if len(preSubtasks) > 0 {
+		if len(preSubtasks) == 1 {
+			// 单前驱：直接使用前驱输出作为输入
+			for _, v := range preSubtasks {
+				actualInput = v.Output
+				break
+			}
+		} else {
+			// 多前驱：将所有前驱输出合并为 JSON map（key 为前驱 TaskName）
+			merged := make(map[string]any, len(preSubtasks))
+			for k, v := range preSubtasks {
+				var parsed any
+				if err := tools.Unmarshal([]byte(v.Output), &parsed); err != nil {
+					merged[k] = v.Output
+				} else {
+					merged[k] = parsed
+				}
+			}
+			if bytes, err := tools.ToByte(merged); err == nil {
+				actualInput = string(bytes)
+			}
+		}
+	}
+
 	taskData := &executor.TaskData{
 		RequestId: requestID,
 		TaskId:    taskID,
 		SubTaskId: subtaskID,
-		Input:     input,
+		Input:     actualInput,
 		Subtasks:  convertSubtasksForExecutor(preSubtasks),
 	}
 
