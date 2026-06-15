@@ -35,15 +35,16 @@ import (
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/caiflower/common-tools/taskx/executor"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"
 )
 
 const (
-	taskDemoName           = "taskDemo"
-	taskRollbackName       = "taskRollbackDemo"
-	taskNameOfNonRetryable = "NonRetryable"
-	taskBranchName         = "branchDemo"
-	taskNestedBranchName   = "nestedBranchDemo"
+	taskDemoName           = "taskDemo_flow"
+	taskRollbackName       = "taskRollback_flow"
+	taskNameOfNonRetryable = "taskNonRetryable_flow"
+	taskBranchName         = "taskBranch_flow"
+	taskNestedBranchName   = "taskNestedBranch_flow"
 
 	stepOne   = "stepOne"
 	stepTwo   = "stepTwo"
@@ -177,6 +178,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	config := dbv1.Config{
 		Dialect: "sqlite",
 		Url:     "file:./app.db?cache=shared&_fk=1&mode=rwc&journal_mode=WAL",
+		//Debug:   true,
 	}
 
 	l := logger.Config{
@@ -191,7 +193,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	}
 
 	if config.Dialect == "sqlite" {
-		file, _ := os.Open("./dao/table-sqlite.sql")
+		file, _ := os.Open("./dao/sql/table-sqlite.sql")
 		sql, _ := io.ReadAll(file)
 		_, err = client.DB.ExecContext(context.TODO(), string(sql))
 		_ = file.Close()
@@ -204,6 +206,8 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	taskBakDao := dao.NewTaskBakDAOWithClient(client)
 	subtaskDao := dao.NewSubtaskDAOWithClient(client)
 	subtaskBakDao := dao.NewSubtaskBakDAOWithClient(client)
+	taskEdgeDao := dao.NewTaskEdgeDAOWithClient(client)
+
 	cfg := &Config{
 		RemoteCallTimeout: time.Second * 3,
 	}
@@ -231,12 +235,14 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 			TaskBakDao:             taskBakDao,
 			SubtaskDao:             subtaskDao,
 			SubtaskBakDao:          subtaskBakDao,
+			TaskEdgeDao:            taskEdgeDao,
 			DBClient:               client,
 			cfg:                    cfg,
 			TaskReceiver:           r,
 			allocateWorkerInflight: inflight.NewInFlight(),
 			delayQueue:             basic.NewDelayQueue(),
 			randSource:             rand.New(rand.NewSource(time.Now().UnixNano())),
+			taskCache:              gocache.New(30*time.Second, 60*time.Second),
 		}
 	}
 
@@ -533,7 +539,7 @@ func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- st
 }
 
 func submitPanicTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
-	task := NewTask("PanicTask").SetInput("panic test input")
+	task := NewTask("taskPanic_flow").SetInput("panic test input")
 	subtask := NewSubtask("panicStep", executor.NewLocalExecutor(panicStep)).SetInput(map[string]any{"name": "panic"})
 	_ = task.AddSubtask(subtask)
 
@@ -644,6 +650,62 @@ func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, do
 
 // ===== 主测试入口 =====
 
+func submitEdgeTypeDataFlowTask(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	// 测试 Input 预计算：只有 DataEdge / ControlAndDataEdge 传数据，ControlEdge 不传
+	// stepA 用唯一输入 {"from":"fromA"}，其他用 {"from":"initial"}，方便区分数据来源
+	task := NewTask("taskEdgeDataFlow_flow").SetUrgent()
+
+	stepA := NewSubtask("stepA", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"from": "fromA"})
+	stepB := NewSubtask("stepB", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"from": "initial"})
+	stepC := NewSubtask("stepC", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"from": "initial"})
+	stepD := NewSubtask("stepD", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"from": "initial"})
+	stepE := NewSubtask("stepE", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"from": "initial"})
+
+	_ = task.AddSubtask(stepA)
+	_ = task.AddSubtask(stepB)
+	_ = task.AddSubtask(stepC)
+	_ = task.AddSubtask(stepD)
+	_ = task.AddSubtask(stepE)
+
+	// stepA -> stepB (control-only): B 不接收 A 的数据
+	_ = task.AddControlEdge(stepA, stepB)
+	// stepA -> stepC (data-only): C 接收 A 的数据
+	_ = task.AddDataEdge(stepA, stepC)
+	// stepA -> stepD (control+data): D 接收 A 的数据
+	_ = task.AddEdge(stepA, stepD)
+	// stepA -> stepE (default AddEdge = control+data): E 接收 A 的数据
+	_ = task.AddEdge(stepA, stepE)
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	_, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	dbA := subtaskMap["stepA"]
+	dbB := subtaskMap["stepB"]
+	dbC := subtaskMap["stepC"]
+	dbD := subtaskMap["stepD"]
+	dbE := subtaskMap["stepE"]
+
+	// 所有子任务应执行完成
+	assert.Equal(t, true, isFinished(dbA.State), "stepA should be finished")
+	assert.Equal(t, true, isFinished(dbB.State), "stepB should be finished")
+	assert.Equal(t, true, isFinished(dbC.State), "stepC should be finished")
+	assert.Equal(t, true, isFinished(dbD.State), "stepD should be finished")
+	assert.Equal(t, true, isFinished(dbE.State), "stepE should be finished")
+
+	// stepB 只有 ControlEdge -> Input 应保持原值（不从 stepA 传数据）
+	assert.Equal(t, `{"from":"initial"}`, dbB.Input, "stepB should keep original input (not from stepA)")
+	// stepC 有 DataEdge -> Input 应为 stepA 的输出
+	assert.Equal(t, `{"from":"fromA"}`, dbC.Input, "stepC should receive stepA's output")
+	// stepD 有 ControlAndDataEdge -> Input 应为 stepA 的输出
+	assert.Equal(t, `{"from":"fromA"}`, dbD.Input, "stepD should receive stepA's output")
+	// stepE 有 ControlAndDataEdge(default AddEdge) -> Input 应为 stepA 的输出
+	assert.Equal(t, `{"from":"fromA"}`, dbE.Input, "stepE should receive stepA's output")
+
+	done <- struct{}{}
+}
+
 func TestDisPatch(t *testing.T) {
 	cluster1, cluster2, cluster3 := commonCluster()
 	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3, err := commonTaskx(cluster1, cluster2, cluster3)
@@ -683,7 +745,7 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 8
+	size := 9
 	done := make(chan struct{}, size)
 
 	go submitDemoTaskAndCheck(t, dispatcher1, done)
@@ -694,6 +756,7 @@ func TestDisPatch(t *testing.T) {
 	go submitAffinityTaskAndCheck(t, dispatcher1, done)
 	go submitBranchTaskAndCheck(t, dispatcher1, done)
 	go submitNestedBranchTaskAndCheck(t, dispatcher1, done)
+	go submitEdgeTypeDataFlowTask(t, dispatcher1, done)
 
 	for i := 0; i < size; i++ {
 		<-done

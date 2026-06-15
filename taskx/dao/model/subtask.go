@@ -10,19 +10,22 @@ import (
 // Subtask generate from table subtask
 type Subtask struct {
 	bun.BaseModel `bun:"table:subtask"`
-	ID            string     `bun:"id,pk,notnull" json:"id"`             // 子任务ID
-	TaskID        string     `bun:"task_id" json:"taskID"`               // 所属任务ID
-	PreSubtaskID  string     `bun:"pre_subtask_id" json:"preSubtaskID"`  // 前置子任务ID列表
-	TaskName      string     `bun:"task_name" json:"taskName"`           // 子任务名称
-	Input         string     `bun:"input" json:"input"`                  // 子任务输入参数
-	Output        string     `bun:"output" json:"output"`                // 子任务输出结果
-	State         string     `bun:"state" json:"state"`                  // 子任务状态
-	Worker        string     `bun:"worker" json:"worker"`                // 执行子任务的工作节点
-	Retry         int8       `bun:"retry" json:"retry"`                  // 剩余重试次数
-	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"` // 重试间隔(秒)
-	Rollback      string     `bun:"rollback" json:"rollback"`            // 回滚策略
-	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
-	Status        int8       `bun:"status" json:"status"`                // 子任务状态(0:禁用, 1:启用)
+	ID            string     `bun:"id,pk,notnull" json:"id"`                 // 子任务ID
+	TaskID        string     `bun:"task_id" json:"taskID"`                   // 所属任务ID
+	PreSubtaskID  string     `bun:"pre_subtask_id" json:"preSubtaskID"`      // 前置子任务ID列表
+	TaskName      string     `bun:"task_name" json:"taskName"`               // 子任务名称
+	TriggerMode   string     `bun:"trigger_mode,notnull" json:"triggerMode"` // 触发模式(all_predecessor, any_predecessor)
+	Priority      int        `bun:"priority,notnull" json:"priority"`        // 优先级
+	Timeout       int        `bun:"timeout,notnull" json:"timeout"`          // 超时时间(秒)
+	Input         string     `bun:"input" json:"input"`                      // 子任务输入参数
+	Output        string     `bun:"output" json:"output"`                    // 子任务输出结果
+	State         string     `bun:"state" json:"state"`                      // 子任务状态
+	Worker        string     `bun:"worker" json:"worker"`                    // 执行子任务的工作节点
+	Retry         int8       `bun:"retry" json:"retry"`                      // 剩余重试次数
+	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"`     // 重试间隔(秒)
+	Rollback      string     `bun:"rollback" json:"rollback"`                // 回滚策略
+	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`        // 最后执行时间
+	Status        int8       `bun:"status" json:"status"`                    // 子任务状态(0:禁用, 1:启用)
 }
 
 type SubtaskFilter struct {
@@ -35,6 +38,9 @@ type SubtaskFilter struct {
 	TaskID        []string     `json:"taskID,omitempty"`
 	PreSubtaskID  []string     `json:"preSubtaskID,omitempty"`
 	TaskName      []string     `json:"taskName,omitempty"`
+	TriggerMode   []string     `json:"triggerMode,omitempty"`
+	Priority      []int        `json:"priority,omitempty"`
+	Timeout       []int        `json:"timeout,omitempty"`
 	Input         []string     `json:"input,omitempty"`
 	Output        []string     `json:"output,omitempty"`
 	State         []string     `json:"state,omitempty"`
@@ -44,7 +50,7 @@ type SubtaskFilter struct {
 	Rollback      []string     `json:"rollback,omitempty"`
 	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
 	LastRunTimeOp string       `json:"lastRunTimeOp,omitempty"`
-	Status        []int8       `json:"status,omitempty"`
+	Status        []int        `json:"status,omitempty"`
 }
 
 func (f *SubtaskFilter) GetPage() (offset int, limit int, disable bool) {
@@ -79,6 +85,21 @@ func (f *SubtaskFilter) WithPreSubtaskID(v ...string) *SubtaskFilter {
 
 func (f *SubtaskFilter) WithTaskName(v ...string) *SubtaskFilter {
 	f.TaskName = v
+	return f
+}
+
+func (f *SubtaskFilter) WithTriggerMode(v ...string) *SubtaskFilter {
+	f.TriggerMode = v
+	return f
+}
+
+func (f *SubtaskFilter) WithPriority(v ...int) *SubtaskFilter {
+	f.Priority = v
+	return f
+}
+
+func (f *SubtaskFilter) WithTimeout(v ...int) *SubtaskFilter {
+	f.Timeout = v
 	return f
 }
 
@@ -123,12 +144,12 @@ func (f *SubtaskFilter) WithLastRunTimeOp(op string, v basic.Time) *SubtaskFilte
 	return f
 }
 
-func (f *SubtaskFilter) WithLastRunTime(v ...basic.Time) *SubtaskFilter {
-	f.LastRunTime = v
+func (f *SubtaskFilter) WithLastRunTime(start, end basic.Time) *SubtaskFilter {
+	f.LastRunTime = []basic.Time{start, end}
 	return f
 }
 
-func (f *SubtaskFilter) WithStatus(v ...int8) *SubtaskFilter {
+func (f *SubtaskFilter) WithStatus(v ...int) *SubtaskFilter {
 	f.Status = v
 	return f
 }
@@ -162,77 +183,98 @@ func (f *SubtaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 		if len(f.ID) == 1 {
 			q.Where("id = ?", f.ID[0])
 		} else {
-			q.Where("id IN (?)", bun.In(f.ID))
+			q.Where("id IN (?)", bun.List(f.ID))
 		}
 	}
 	if len(f.TaskID) > 0 {
 		if len(f.TaskID) == 1 {
 			q.Where("task_id = ?", f.TaskID[0])
 		} else {
-			q.Where("task_id IN (?)", bun.In(f.TaskID))
+			q.Where("task_id IN (?)", bun.List(f.TaskID))
 		}
 	}
 	if len(f.PreSubtaskID) > 0 {
 		if len(f.PreSubtaskID) == 1 {
 			q.Where("pre_subtask_id = ?", f.PreSubtaskID[0])
 		} else {
-			q.Where("pre_subtask_id IN (?)", bun.In(f.PreSubtaskID))
+			q.Where("pre_subtask_id IN (?)", bun.List(f.PreSubtaskID))
 		}
 	}
 	if len(f.TaskName) > 0 {
 		if len(f.TaskName) == 1 {
 			q.Where("task_name = ?", f.TaskName[0])
 		} else {
-			q.Where("task_name IN (?)", bun.In(f.TaskName))
+			q.Where("task_name IN (?)", bun.List(f.TaskName))
+		}
+	}
+	if len(f.TriggerMode) > 0 {
+		if len(f.TriggerMode) == 1 {
+			q.Where("trigger_mode = ?", f.TriggerMode[0])
+		} else {
+			q.Where("trigger_mode IN (?)", bun.List(f.TriggerMode))
+		}
+	}
+	if len(f.Priority) > 0 {
+		if len(f.Priority) == 1 {
+			q.Where("priority = ?", f.Priority[0])
+		} else {
+			q.Where("priority IN (?)", bun.List(f.Priority))
+		}
+	}
+	if len(f.Timeout) > 0 {
+		if len(f.Timeout) == 1 {
+			q.Where("timeout = ?", f.Timeout[0])
+		} else {
+			q.Where("timeout IN (?)", bun.List(f.Timeout))
 		}
 	}
 	if len(f.Input) > 0 {
 		if len(f.Input) == 1 {
 			q.Where("input = ?", f.Input[0])
 		} else {
-			q.Where("input IN (?)", bun.In(f.Input))
+			q.Where("input IN (?)", bun.List(f.Input))
 		}
 	}
 	if len(f.Output) > 0 {
 		if len(f.Output) == 1 {
 			q.Where("output = ?", f.Output[0])
 		} else {
-			q.Where("output IN (?)", bun.In(f.Output))
+			q.Where("output IN (?)", bun.List(f.Output))
 		}
 	}
 	if len(f.State) > 0 {
 		if len(f.State) == 1 {
 			q.Where("state = ?", f.State[0])
 		} else {
-			q.Where("state IN (?)", bun.In(f.State))
+			q.Where("state IN (?)", bun.List(f.State))
 		}
 	}
 	if len(f.Worker) > 0 {
 		if len(f.Worker) == 1 {
 			q.Where("worker = ?", f.Worker[0])
 		} else {
-			q.Where("worker IN (?)", bun.In(f.Worker))
+			q.Where("worker IN (?)", bun.List(f.Worker))
 		}
 	}
 	if len(f.Retry) > 0 {
 		if len(f.Retry) == 1 {
 			q.Where("retry = ?", f.Retry[0])
 		} else {
-			q.Where("retry IN (?)", bun.In(f.Retry))
+			q.Where("retry IN (?)", bun.List(f.Retry))
 		}
 	}
 	if len(f.RetryInterval) > 0 {
 		if len(f.RetryInterval) == 1 {
 			q.Where("retry_interval = ?", f.RetryInterval[0])
 		} else {
-			q.Where("retry_interval IN (?)", bun.In(f.RetryInterval))
+			q.Where("retry_interval IN (?)", bun.List(f.RetryInterval))
 		}
 	}
 	if len(f.Rollback) > 0 {
 		if len(f.Rollback) == 1 {
 			q.Where("rollback = ?", f.Rollback[0])
 		} else {
-			q.Where("rollback IN (?)", bun.In(f.Rollback))
+			q.Where("rollback IN (?)", bun.List(f.Rollback))
 		}
 	}
 	if len(f.LastRunTime) > 0 {
@@ -246,7 +288,7 @@ func (f *SubtaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 		if len(f.Status) == 1 {
 			q.Where("status = ?", f.Status[0])
 		} else {
-			q.Where("status IN (?)", bun.In(f.Status))
+			q.Where("status IN (?)", bun.List(f.Status))
 		}
 	}
 	if len(f.Orders) > 0 {

@@ -9,24 +9,25 @@ import (
 
 // Task generate from table task
 type Task struct {
-	bun.BaseModel `bun:"table:task"`
-	ID            string     `bun:"id,pk,notnull" json:"id"`             // 任务ID
-	RequestID     string     `bun:"request_id" json:"requestID"`         // 请求ID
-	TaskName      string     `bun:"task_name" json:"taskName"`           // 任务名称
-	Input         string     `bun:"input" json:"input"`                  // 任务输入参数
-	Output        string     `bun:"output" json:"output"`                // 任务输出结果
-	Worker        string     `bun:"worker" json:"worker"`                // 执行任务的工作节点
-	Retry         int8       `bun:"retry" json:"retry"`                  // 剩余重试次数
-	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"` // 重试间隔(秒)
-	Urgent        bool       `bun:"urgent" json:"urgent"`                // 是否紧急任务(0:否, 1:是)
-	State         string     `bun:"state" json:"state"`                  // 任务状态
-	Description   string     `bun:"description" json:"description"`      // 任务描述
-	CreateTime    basic.Time `bun:"create_time" json:"createTime"`       // 创建时间
-	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
-	ExecuteTime   basic.Time `bun:"execute_time" json:"executeTime"`     // 定时执行时间
-	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
-	AffinityType  string     `bun:"affinity_type" json:"affinityType"`   // 亲和性类型(SameNode, ForceSameNode, Random)
-	PrimaryWorker string     `bun:"primary_worker" json:"primaryWorker"` // 主要执行节点
+	bun.BaseModel    `bun:"table:task"`
+	ID               string     `bun:"id,pk,notnull" json:"id"`                           // 任务ID
+	RequestID        string     `bun:"request_id" json:"requestID"`                       // 请求ID
+	TaskName         string     `bun:"task_name" json:"taskName"`                         // 任务名称
+	Input            string     `bun:"input" json:"input"`                                // 任务输入参数
+	Output           string     `bun:"output" json:"output"`                              // 任务输出结果
+	Worker           string     `bun:"worker" json:"worker"`                              // 执行任务的工作节点
+	Retry            int8       `bun:"retry" json:"retry"`                                // 剩余重试次数
+	RetryInterval    int32      `bun:"retry_interval" json:"retryInterval"`               // 重试间隔(秒)
+	Urgent           bool       `bun:"urgent" json:"urgent"`                              // 是否紧急任务(0:否, 1:是)
+	State            string     `bun:"state" json:"state"`                                // 任务状态
+	Description      string     `bun:"description" json:"description"`                    // 任务描述
+	CreateTime       basic.Time `bun:"create_time" json:"createTime"`                     // 创建时间
+	LastRunTime      basic.Time `bun:"last_run_time" json:"lastRunTime"`                  // 最后执行时间
+	ExecuteTime      basic.Time `bun:"execute_time" json:"executeTime"`                   // 定时执行时间
+	Status           int8       `bun:"status" json:"status"`                              // 任务状态(0:禁用, 1:启用)
+	AffinityType     string     `bun:"affinity_type" json:"affinityType"`                 // 亲和性类型(SameNode, ForceSameNode, Random)
+	PrimaryWorker    string     `bun:"primary_worker" json:"primaryWorker"`               // 主要执行节点
+	RollbackStrategy string     `bun:"rollback_strategy,notnull" json:"rollbackStrategy"` // 回滚策略(rollback_all, rollback_failed, rollback_custom)
 }
 
 type TaskFilter struct {
@@ -35,26 +36,27 @@ type TaskFilter struct {
 	DisablePage bool     `json:"disablePage"`
 	Orders      []string `json:"orders,omitempty"`
 
-	ID            []string     `json:"id,omitempty"`
-	RequestID     []string     `json:"requestID,omitempty"`
-	TaskName      []string     `json:"taskName,omitempty"`
-	Input         []string     `json:"input,omitempty"`
-	Output        []string     `json:"output,omitempty"`
-	Worker        []string     `json:"worker,omitempty"`
-	Retry         []int8       `json:"retry,omitempty"`
-	RetryInterval []int32      `json:"retryInterval,omitempty"`
-	Urgent        []bool       `json:"urgent,omitempty"`
-	State         []string     `json:"state,omitempty"`
-	Description   []string     `json:"description,omitempty"`
-	CreateTime    []basic.Time `json:"createTime,omitempty"`
-	CreateTimeOp  string       `json:"createTimeOp,omitempty"`
-	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
-	LastRunTimeOp string       `json:"lastRunTimeOp,omitempty"`
-	ExecuteTime   []basic.Time `json:"executeTime,omitempty"`
-	ExecuteTimeOp string       `json:"executeTimeOp,omitempty"`
-	Status        []int8       `json:"status,omitempty"`
-	AffinityType  []string     `json:"affinityType,omitempty"`
-	PrimaryWorker []string     `json:"primaryWorker,omitempty"`
+	ID               []string     `json:"id,omitempty"`
+	RequestID        []string     `json:"requestID,omitempty"`
+	TaskName         []string     `json:"taskName,omitempty"`
+	Input            []string     `json:"input,omitempty"`
+	Output           []string     `json:"output,omitempty"`
+	Worker           []string     `json:"worker,omitempty"`
+	Retry            []int8       `json:"retry,omitempty"`
+	RetryInterval    []int32      `json:"retryInterval,omitempty"`
+	Urgent           []bool       `json:"urgent,omitempty"`
+	State            []string     `json:"state,omitempty"`
+	Description      []string     `json:"description,omitempty"`
+	CreateTime       []basic.Time `json:"createTime,omitempty"`
+	CreateTimeOp     string       `json:"createTimeOp,omitempty"`
+	LastRunTime      []basic.Time `json:"lastRunTime,omitempty"`
+	LastRunTimeOp    string       `json:"lastRunTimeOp,omitempty"`
+	ExecuteTime      []basic.Time `json:"executeTime,omitempty"`
+	ExecuteTimeOp    string       `json:"executeTimeOp,omitempty"`
+	Status           []int        `json:"status,omitempty"`
+	AffinityType     []string     `json:"affinityType,omitempty"`
+	PrimaryWorker    []string     `json:"primaryWorker,omitempty"`
+	RollbackStrategy []string     `json:"rollbackStrategy,omitempty"`
 }
 
 func (f *TaskFilter) GetPage() (offset int, limit int, disable bool) {
@@ -133,8 +135,8 @@ func (f *TaskFilter) WithCreateTimeOp(op string, v basic.Time) *TaskFilter {
 	return f
 }
 
-func (f *TaskFilter) WithCreateTime(v ...basic.Time) *TaskFilter {
-	f.CreateTime = v
+func (f *TaskFilter) WithCreateTime(start, end basic.Time) *TaskFilter {
+	f.CreateTime = []basic.Time{start, end}
 	return f
 }
 
@@ -144,8 +146,8 @@ func (f *TaskFilter) WithLastRunTimeOp(op string, v basic.Time) *TaskFilter {
 	return f
 }
 
-func (f *TaskFilter) WithLastRunTime(v ...basic.Time) *TaskFilter {
-	f.LastRunTime = v
+func (f *TaskFilter) WithLastRunTime(start, end basic.Time) *TaskFilter {
+	f.LastRunTime = []basic.Time{start, end}
 	return f
 }
 
@@ -155,12 +157,12 @@ func (f *TaskFilter) WithExecuteTimeOp(op string, v basic.Time) *TaskFilter {
 	return f
 }
 
-func (f *TaskFilter) WithExecuteTime(v ...basic.Time) *TaskFilter {
-	f.ExecuteTime = v
+func (f *TaskFilter) WithExecuteTime(start, end basic.Time) *TaskFilter {
+	f.ExecuteTime = []basic.Time{start, end}
 	return f
 }
 
-func (f *TaskFilter) WithStatus(v ...int8) *TaskFilter {
+func (f *TaskFilter) WithStatus(v ...int) *TaskFilter {
 	f.Status = v
 	return f
 }
@@ -172,6 +174,11 @@ func (f *TaskFilter) WithAffinityType(v ...string) *TaskFilter {
 
 func (f *TaskFilter) WithPrimaryWorker(v ...string) *TaskFilter {
 	f.PrimaryWorker = v
+	return f
+}
+
+func (f *TaskFilter) WithRollbackStrategy(v ...string) *TaskFilter {
+	f.RollbackStrategy = v
 	return f
 }
 
@@ -204,77 +211,77 @@ func (f *TaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 		if len(f.ID) == 1 {
 			q.Where("id = ?", f.ID[0])
 		} else {
-			q.Where("id IN (?)", bun.In(f.ID))
+			q.Where("id IN (?)", bun.List(f.ID))
 		}
 	}
 	if len(f.RequestID) > 0 {
 		if len(f.RequestID) == 1 {
 			q.Where("request_id = ?", f.RequestID[0])
 		} else {
-			q.Where("request_id IN (?)", bun.In(f.RequestID))
+			q.Where("request_id IN (?)", bun.List(f.RequestID))
 		}
 	}
 	if len(f.TaskName) > 0 {
 		if len(f.TaskName) == 1 {
 			q.Where("task_name = ?", f.TaskName[0])
 		} else {
-			q.Where("task_name IN (?)", bun.In(f.TaskName))
+			q.Where("task_name IN (?)", bun.List(f.TaskName))
 		}
 	}
 	if len(f.Input) > 0 {
 		if len(f.Input) == 1 {
 			q.Where("input = ?", f.Input[0])
 		} else {
-			q.Where("input IN (?)", bun.In(f.Input))
+			q.Where("input IN (?)", bun.List(f.Input))
 		}
 	}
 	if len(f.Output) > 0 {
 		if len(f.Output) == 1 {
 			q.Where("output = ?", f.Output[0])
 		} else {
-			q.Where("output IN (?)", bun.In(f.Output))
+			q.Where("output IN (?)", bun.List(f.Output))
 		}
 	}
 	if len(f.Worker) > 0 {
 		if len(f.Worker) == 1 {
 			q.Where("worker = ?", f.Worker[0])
 		} else {
-			q.Where("worker IN (?)", bun.In(f.Worker))
+			q.Where("worker IN (?)", bun.List(f.Worker))
 		}
 	}
 	if len(f.Retry) > 0 {
 		if len(f.Retry) == 1 {
 			q.Where("retry = ?", f.Retry[0])
 		} else {
-			q.Where("retry IN (?)", bun.In(f.Retry))
+			q.Where("retry IN (?)", bun.List(f.Retry))
 		}
 	}
 	if len(f.RetryInterval) > 0 {
 		if len(f.RetryInterval) == 1 {
 			q.Where("retry_interval = ?", f.RetryInterval[0])
 		} else {
-			q.Where("retry_interval IN (?)", bun.In(f.RetryInterval))
+			q.Where("retry_interval IN (?)", bun.List(f.RetryInterval))
 		}
 	}
 	if len(f.Urgent) > 0 {
 		if len(f.Urgent) == 1 {
 			q.Where("urgent = ?", f.Urgent[0])
 		} else {
-			q.Where("urgent IN (?)", bun.In(f.Urgent))
+			q.Where("urgent IN (?)", bun.List(f.Urgent))
 		}
 	}
 	if len(f.State) > 0 {
 		if len(f.State) == 1 {
 			q.Where("state = ?", f.State[0])
 		} else {
-			q.Where("state IN (?)", bun.In(f.State))
+			q.Where("state IN (?)", bun.List(f.State))
 		}
 	}
 	if len(f.Description) > 0 {
 		if len(f.Description) == 1 {
 			q.Where("description = ?", f.Description[0])
 		} else {
-			q.Where("description IN (?)", bun.In(f.Description))
+			q.Where("description IN (?)", bun.List(f.Description))
 		}
 	}
 	if len(f.CreateTime) > 0 {
@@ -302,21 +309,28 @@ func (f *TaskFilter) Filter(db bun.IDB) *bun.SelectQuery {
 		if len(f.Status) == 1 {
 			q.Where("status = ?", f.Status[0])
 		} else {
-			q.Where("status IN (?)", bun.In(f.Status))
+			q.Where("status IN (?)", bun.List(f.Status))
 		}
 	}
 	if len(f.AffinityType) > 0 {
 		if len(f.AffinityType) == 1 {
 			q.Where("affinity_type = ?", f.AffinityType[0])
 		} else {
-			q.Where("affinity_type IN (?)", bun.In(f.AffinityType))
+			q.Where("affinity_type IN (?)", bun.List(f.AffinityType))
 		}
 	}
 	if len(f.PrimaryWorker) > 0 {
 		if len(f.PrimaryWorker) == 1 {
 			q.Where("primary_worker = ?", f.PrimaryWorker[0])
 		} else {
-			q.Where("primary_worker IN (?)", bun.In(f.PrimaryWorker))
+			q.Where("primary_worker IN (?)", bun.List(f.PrimaryWorker))
+		}
+	}
+	if len(f.RollbackStrategy) > 0 {
+		if len(f.RollbackStrategy) == 1 {
+			q.Where("rollback_strategy = ?", f.RollbackStrategy[0])
+		} else {
+			q.Where("rollback_strategy IN (?)", bun.List(f.RollbackStrategy))
 		}
 	}
 	if len(f.Orders) > 0 {

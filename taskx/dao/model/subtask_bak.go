@@ -14,6 +14,9 @@ type SubtaskBak struct {
 	TaskID        string     `bun:"task_id" json:"taskID"`               // 所属任务ID
 	PreSubtaskID  string     `bun:"pre_subtask_id" json:"preSubtaskID"`  // 前置子任务ID列表
 	TaskName      string     `bun:"task_name" json:"taskName"`           // 子任务名称
+	TriggerMode   string     `bun:"trigger_mode" json:"triggerMode"`     // 触发模式
+	Priority      int        `bun:"priority" json:"priority"`            // 优先级
+	Timeout       int        `bun:"timeout" json:"timeout"`              // 超时时间(秒)           // 子任务名称
 	Input         string     `bun:"input" json:"input"`                  // 子任务输入参数
 	Output        string     `bun:"output" json:"output"`                // 子任务输出结果
 	State         string     `bun:"state" json:"state"`                  // 子任务状态

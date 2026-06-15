@@ -38,24 +38,25 @@ import (
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/caiflower/common-tools/taskx/proto"
+	gocache "github.com/patrickmn/go-cache"
 	"github.com/uptrace/bun"
 )
 
-var SingletonTaskDispatcher = &taskDispatcher{
-	allocateWorkerInflight: inflight.NewInFlight(),
-}
+var SingletonTaskDispatcher = &taskDispatcher{}
 
 var initOnce sync.Once
 
 type taskDispatcher struct {
 	cluster.DefaultCaller
-	Cluster                cluster.ICluster  `autowired:""`
-	TaskDao                dao.TaskDAO       `autowired:""`
-	TaskBakDao             dao.TaskBakDAO    `autowired:""`
-	SubtaskDao             dao.SubtaskDAO    `autowired:""`
-	SubtaskBakDao          dao.SubtaskBakDAO `autowired:""`
-	DBClient               dbv1.DB           `autowired:""`
-	TaskReceiver           *taskReceiver     `autowired:""`
+	Cluster       cluster.ICluster  `autowired:""`
+	TaskDao       dao.TaskDAO       `autowired:""`
+	TaskBakDao    dao.TaskBakDAO    `autowired:""`
+	SubtaskDao    dao.SubtaskDAO    `autowired:""`
+	SubtaskBakDao dao.SubtaskBakDAO `autowired:""`
+	TaskEdgeDao   dao.TaskEdgeDAO   `autowired:""`
+	DBClient      dbv1.DB           `autowired:""`
+	TaskReceiver  *taskReceiver     `autowired:""`
+
 	cfg                    *Config
 	running                atomic.Value
 	runningL               atomic.Value
@@ -63,9 +64,9 @@ type taskDispatcher struct {
 	inQueueTasks           sync.Map
 	delayQueue             *basic.DelayQueue
 	leaderStopChan         chan struct{}
-	lastMasterCallTime     atomic.Value // 上次 MasterCall 时间，用于节流
-	taskCache              sync.Map     // taskID -> *cachedTask，缓存编译后的 DAG
-	randSource             *rand.Rand   // 局部随机数生成器，避免全局锁
+	lastMasterCallTime     atomic.Value   // 上次 MasterCall 时间，用于节流
+	taskCache              *gocache.Cache // taskID -> *Task，缓存编译后的 DAG，自动过期清理
+	randSource             *rand.Rand     // 局部随机数生成器，避免全局锁
 }
 
 type Config struct {
@@ -84,13 +85,7 @@ type affinity struct {
 	Worker string
 }
 
-// cachedTask 缓存编译后的 Task，避免每次调度都重建 DAG
-type cachedTask struct {
-	task      *Task
-	createdAt time.Time
-}
-
-const taskCacheTTL = 30 * time.Second
+// taskCache 缓存编译后的 Task，避免每次调度都重建 DAG，30s 自动过期
 
 // masterCallMinInterval MasterCall 最小调用间隔，避免频繁查询 DB
 const masterCallMinInterval = 5 * time.Second
@@ -104,10 +99,14 @@ func InitTaskDispatcher(cfg *Config) {
 		_tr.subtaskQueueSize = cfg.SubtaskQueueSize
 		_tr.taskQueueSize = cfg.TaskQueueSize
 		_tr.subtaskRollbackQueueSize = cfg.SubtaskRollbackQueueSize
+		_tr.cfg = cfg
+		_tr.subtaskInflight = inflight.NewInFlight()
+		_tr.taskInflight = inflight.NewInFlight()
 		SingletonTaskDispatcher.cfg = cfg
 		SingletonTaskDispatcher.delayQueue = basic.NewDelayQueue()
 		SingletonTaskDispatcher.randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
-		_tr.cfg = cfg
+		SingletonTaskDispatcher.allocateWorkerInflight = inflight.NewInFlight()
+		SingletonTaskDispatcher.taskCache = gocache.New(30*time.Second, 60*time.Second)
 		bean.AddBean(dao.NewTaskDAO())
 		bean.AddBean(dao.NewSubtaskBakDAO())
 		bean.AddBean(SingletonTaskDispatcher)
@@ -191,10 +190,7 @@ func (t *taskDispatcher) OnStoppedLeading() {
 		t.leaderStopChan = nil
 	}
 	// 清理任务缓存
-	t.taskCache.Range(func(key, _ interface{}) bool {
-		t.taskCache.Delete(key)
-		return true
-	})
+	t.taskCache.Flush()
 }
 
 func SubmitTask(ctx context.Context, task *Task) error {
@@ -203,7 +199,7 @@ func SubmitTask(ctx context.Context, task *Task) error {
 
 func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
-	taskBean, subtaskBeans := task.convert2Bean()
+	taskBean, subtaskBeans, edgeBeans := task.convert2Bean()
 
 	if TaskAffinityType(taskBean.AffinityType) != AffinityRandom && taskBean.PrimaryWorker == "" {
 		nodeName := t.selectNodeByAffinity(AffinityRandom, "", "")
@@ -230,6 +226,13 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 		return err
 	})
 
+	if len(edgeBeans) > 0 {
+		tx.Add(func(tx *bun.Tx) error {
+			_, err := t.TaskEdgeDao.BatchInsert(ctx, edgeBeans, tx)
+			return err
+		})
+	}
+
 	if err := tx.Submit(); err != nil {
 		return err
 	}
@@ -248,7 +251,7 @@ func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 }
 
 func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *bun.Tx) error {
-	taskBean, subtaskBeans := task.convert2Bean()
+	taskBean, subtaskBeans, edgeBeans := task.convert2Bean()
 
 	// if not rollback executor, set rollback to NoneRollback（与 SubmitTask 保持一致）
 	for i, subtask := range subtaskBeans {
@@ -264,6 +267,13 @@ func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *b
 	_, err = t.SubtaskDao.BatchInsert(ctx, subtaskBeans, tx)
 	if err != nil {
 		return err
+	}
+
+	if len(edgeBeans) > 0 {
+		_, err = t.TaskEdgeDao.BatchInsert(ctx, edgeBeans, tx)
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
@@ -952,8 +962,8 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 			Worker: task.getPrimaryWorker(),
 		}
 
-		finished, retry, running, rollback := t.analysisTask(ctx, task, task.subtaskMap)
-		logger.Trace("[handleTaskImmediately] task=%s state=%s finished=%v retry=%v running=%d rollback=%d", task.GetID(), dbTask.State, finished, retry, len(running), len(rollback))
+		finished, retry, runnings, rollbacks := t.analysisTask(ctx, task, task.subtaskMap)
+		logger.Trace("[handleTaskImmediately] task=%s state=%s finished=%v retry=%v running=%d rollback=%d", task.GetID(), dbTask.State, finished, retry, len(runnings), len(rollbacks))
 		if retry {
 			continue
 		}
@@ -963,10 +973,12 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 			runningTasks = append(runningTasks, dbTask)
 		}
 
-		if len(running) > 0 {
-			runningSubtasks = append(runningSubtasks, running...)
-		} else if len(rollback) > 0 {
-			rollbackSubtasks = append(rollbackSubtasks, rollback...)
+		if len(runnings) > 0 {
+			// 预计算 Input：从数据前驱的输出合并写入 DB，避免 worker 侧额外查询
+			t.computeInput(ctx, task, runnings)
+			runningSubtasks = append(runningSubtasks, runnings...)
+		} else if len(rollbacks) > 0 {
+			rollbackSubtasks = append(rollbackSubtasks, rollbacks...)
 		}
 	}
 
@@ -977,33 +989,80 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 	}
 }
 
+func (t *taskDispatcher) computeInput(ctx context.Context, task *Task, runnings []*model.Subtask) {
+	for i := range runnings {
+		subTaskBean := runnings[i]
+		dataPreds := task.dag.dataPred[subTaskBean.ID]
+		if len(dataPreds) > 0 {
+			preSubtasks := make(map[string]string)
+			for _, predID := range dataPreds {
+				if s, ok := task.subtaskMap[predID]; ok {
+					// s.subtask.Output 是 Output 结构体的 JSON，需要提取内部的 Output 字段
+					var output Output
+					if err := tools.Unmarshal([]byte(s.subtask.Output), &output); err == nil {
+						preSubtasks[s.GetName()] = output.Output
+					} else {
+						logger.Warn("[computeInput] failed to unmarshal output for %s: %v", predID, err)
+					}
+				}
+			}
+			if len(preSubtasks) > 0 {
+				var computedInput string
+				if len(preSubtasks) == 1 {
+					for _, v := range preSubtasks {
+						computedInput = v
+						break
+					}
+				} else {
+					merged := make(map[string]any, len(preSubtasks))
+					for k, v := range preSubtasks {
+						var parsed any
+						if err := tools.Unmarshal([]byte(v), &parsed); err != nil {
+							merged[k] = v
+						} else {
+							merged[k] = parsed
+						}
+					}
+					if bytes, err := tools.ToByte(merged); err == nil {
+						computedInput = string(bytes)
+					}
+				}
+				if computedInput != "" && computedInput != subTaskBean.Input {
+					if err := t.SubtaskDao.SetInput(ctx, subTaskBean.ID, computedInput); err != nil {
+						logger.Error("[handleTaskImmediately] failed to set input for subtask %s: %v", subTaskBean.ID, err)
+					} else {
+						subTaskBean.Input = computedInput
+					}
+				}
+			}
+		}
+	}
+}
+
 // getOrInitTask 获取或初始化 Task（带缓存），避免每次调度都重建 DAG
 func (t *taskDispatcher) getOrInitTask(ctx context.Context, dbTask *model.Task, subtasks []model.Subtask) *Task {
 	// 检查缓存
-	if cached, ok := t.taskCache.Load(dbTask.ID); ok {
-		ct := cached.(*cachedTask)
-		// 缓存未过期，用 DB 中的最新状态刷新子任务状态
-		if time.Since(ct.createdAt) < taskCacheTTL {
-			t.refreshSubtaskStates(ct.task, subtasks)
-			return ct.task
-		}
-		// 缓存过期，删除
-		t.taskCache.Delete(dbTask.ID)
+	if cached, ok := t.taskCache.Get(dbTask.ID); ok {
+		ct := cached.(*Task)
+		t.refreshSubtaskStates(ct, subtasks)
+		return ct
 	}
 
+	// 加载边信息
+	edges, err := t.TaskEdgeDao.GetByTaskID(ctx, dbTask.ID)
+	if err != nil {
+		logger.Warn("[getOrInitTask] task %s load edges failed: %v, fallback to pre_subtask_id inference", dbTask.ID, err)
+	}
 	// 缓存未命中，重建 Task
 	task := &Task{}
-	task, err := task.initByBean(dbTask, subtasks)
+	task, err = task.initByBean(dbTask, subtasks, edges)
 	if err != nil {
 		logger.Error("[getOrInitTask] task %s initByBean failed. err: %v", dbTask.ID, err)
 		return nil
 	}
 
-	// 写入缓存
-	t.taskCache.Store(dbTask.ID, &cachedTask{
-		task:      task,
-		createdAt: time.Now(),
-	})
+	// 写入缓存（go-cache 自动 30s 过期清理）
+	t.taskCache.SetDefault(dbTask.ID, task)
 
 	return task
 }

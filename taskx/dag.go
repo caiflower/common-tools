@@ -180,7 +180,7 @@ type Branch struct {
 	// endNodes 合法的分支目标节点集合
 	EndNodes map[string]bool
 	// noDataFlow 是否跳过数据流
-	NoDataFlow bool
+	//NoDataFlow bool
 }
 
 // NewBranch 创建条件分支
@@ -309,11 +309,15 @@ func (g *dagGraph) AddEdge(from, to string, edgeType EdgeType, mappings ...*Fiel
 
 	// 更新邻接表
 	switch edgeType {
-	case ControlEdge, ControlAndDataEdge:
+	case ControlEdge:
 		g.controlAdj[from] = append(g.controlAdj[from], to)
 		g.controlPred[to] = append(g.controlPred[to], from)
-		fallthrough
 	case DataEdge:
+		g.dataAdj[from] = append(g.dataAdj[from], to)
+		g.dataPred[to] = append(g.dataPred[to], from)
+	case ControlAndDataEdge:
+		g.controlAdj[from] = append(g.controlAdj[from], to)
+		g.controlPred[to] = append(g.controlPred[to], from)
 		g.dataAdj[from] = append(g.dataAdj[from], to)
 		g.dataPred[to] = append(g.dataPred[to], from)
 	}

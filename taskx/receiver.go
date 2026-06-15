@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,10 +41,7 @@ const (
 	deliverSubtaskRollback = "github.caiflower.common.taskx.deliverSubtaskRollback"
 )
 
-var _tr = &taskReceiver{
-	subtaskInflight: inflight.NewInFlight(),
-	taskInflight:    inflight.NewInFlight(),
-}
+var _tr = &taskReceiver{}
 
 type SubtaskBag struct {
 	subtask *model.Subtask
@@ -459,6 +455,7 @@ func (t *taskReceiver) startRollbackTaskThreads() {
 //	}
 //}
 
+// getDataPreSubtaskIDs 获取数据前驱 ID 列表（过滤掉 control-only 边，只传数据）
 func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 	defer t.subtaskInflight.DeleteString(subtask.ID)
 
@@ -501,7 +498,14 @@ func (t *taskReceiver) execSubtask(task *model.Task, subtask *model.Subtask) {
 		state   string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
-	output, err := t.exec(ctx, provider, task.TaskName, subtask.TaskName, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
+	// 应用子任务超时（从 subtask.timeout 读取）
+	execCtx := ctx
+	if subtask.Timeout > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, time.Duration(subtask.Timeout)*time.Second)
+		defer cancel()
+	}
+	output, err := t.exec(execCtx, provider, task.TaskName, subtask.TaskName, taskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
 		logger.Trace("[execSubtask] subtask=%s exec failed: %v, retry=%d, isNonRetryable=%v", subtaskID, err, subtask.Retry, errors.Is(err, ErrNonRetryable))
@@ -575,7 +579,14 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 		rollback string
 	)
 	_ = tools.Unmarshal([]byte(subtask.Output), _output)
-	output, err := t.exec(ctx, provider, task.TaskName, subtask.TaskName, taskID, subtask.PreSubtaskID, subtaskID, task.RequestID, subtask.Input)
+	// 应用子任务超时（从 subtask.timeout 读取）
+	execCtx := ctx
+	if subtask.Timeout > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(ctx, time.Duration(subtask.Timeout)*time.Second)
+		defer cancel()
+	}
+	output, err := t.exec(execCtx, provider, task.TaskName, subtask.TaskName, taskID, subtaskID, task.RequestID, subtask.Input)
 
 	if err != nil {
 		if subtask.Retry > 0 && !errors.Is(err, ErrNonRetryable) {
@@ -608,54 +619,15 @@ func (t *taskReceiver) execSubtaskRollback(task *model.Task, subtask *model.Subt
 	t.TaskDispatcher.notifyLeaderHandleTaskImmediately(ctx, taskID)
 }
 
-func (t *taskReceiver) exec(ctx context.Context, provider executor.ExecutorProvider, taskName, subTaskName, taskID, preSubtaskID, subtaskID, requestID, input string) (any, error) {
-	preSubtasks := make(map[string]Output)
-	if preSubtaskID != "" {
-		preSubtaskIDs := strings.Split(preSubtaskID, ",")
-		preSubtaskList, err := t.SubtaskDao.GetByIDs(ctx, preSubtaskIDs)
-		if err != nil {
-			logger.Error("[exec] subtask %s get preSubtasks failed. err: %v", subtaskID, err)
-		} else {
-			for _, v := range preSubtaskList {
-				var output Output
-				_ = tools.Unmarshal([]byte(v.Output), &output)
-				preSubtasks[v.TaskName] = output
-			}
-		}
-	}
-
-	// 替换策略：如果节点有前驱，用前驱的输出替换 Input
+func (t *taskReceiver) exec(ctx context.Context, provider executor.ExecutorProvider, taskName, subTaskName, taskID, subtaskID, requestID, input string) (any, error) {
+	// Input 已由 master 在调度时从数据前驱预计算写入 DB，直接使用
 	actualInput := input
-	if len(preSubtasks) > 0 {
-		if len(preSubtasks) == 1 {
-			// 单前驱：直接使用前驱输出作为输入
-			for _, v := range preSubtasks {
-				actualInput = v.Output
-				break
-			}
-		} else {
-			// 多前驱：将所有前驱输出合并为 JSON map（key 为前驱 TaskName）
-			merged := make(map[string]any, len(preSubtasks))
-			for k, v := range preSubtasks {
-				var parsed any
-				if err := tools.Unmarshal([]byte(v.Output), &parsed); err != nil {
-					merged[k] = v.Output
-				} else {
-					merged[k] = parsed
-				}
-			}
-			if bytes, err := tools.ToByte(merged); err == nil {
-				actualInput = string(bytes)
-			}
-		}
-	}
 
 	taskData := &executor.TaskData{
 		RequestId: requestID,
 		TaskId:    taskID,
 		SubTaskId: subtaskID,
 		Input:     actualInput,
-		Subtasks:  convertSubtasksForExecutor(preSubtasks),
 	}
 
 	// 从全局注册表获取处理器
@@ -678,13 +650,4 @@ func (t *taskReceiver) exec(ctx context.Context, provider executor.ExecutorProvi
 	}()
 
 	return result, execErr
-}
-
-// convertSubtasksForExecutor 将 map[string]Output 转换为 map[string]any，供 ExecutorProvider 使用
-func convertSubtasksForExecutor(preSubtasks map[string]Output) map[string]any {
-	result := make(map[string]any, len(preSubtasks))
-	for k, v := range preSubtasks {
-		result[k] = v
-	}
-	return result
 }

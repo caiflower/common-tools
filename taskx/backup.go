@@ -51,21 +51,24 @@ func (t *taskDispatcher) backupTask() {
 	taskBaks := make([]taskmodel.TaskBak, len(tasks))
 	for i, task := range tasks {
 		taskBaks[i] = taskmodel.TaskBak{
-			ID:            task.ID,
-			RequestID:     task.RequestID,
-			TaskName:      task.TaskName,
-			Input:         task.Input,
-			Output:        task.Output,
-			Worker:        task.Worker,
-			Retry:         task.Retry,
-			RetryInterval: task.RetryInterval,
-			Urgent:        task.Urgent,
-			State:         task.State,
-			Description:   task.Description,
-			CreateTime:    task.CreateTime,
-			LastRunTime:   task.LastRunTime,
-			ExecuteTime:   task.ExecuteTime,
-			Status:        task.Status,
+			ID:               task.ID,
+			RequestID:        task.RequestID,
+			TaskName:         task.TaskName,
+			Input:            task.Input,
+			Output:           task.Output,
+			Worker:           task.Worker,
+			Retry:            task.Retry,
+			RetryInterval:    task.RetryInterval,
+			Urgent:           task.Urgent,
+			State:            task.State,
+			Description:      task.Description,
+			CreateTime:       task.CreateTime,
+			LastRunTime:      task.LastRunTime,
+			ExecuteTime:      task.ExecuteTime,
+			Status:           task.Status,
+			AffinityType:     task.AffinityType,
+			PrimaryWorker:    task.PrimaryWorker,
+			RollbackStrategy: task.RollbackStrategy,
 		}
 	}
 
@@ -131,6 +134,18 @@ func (t *taskDispatcher) backupTask() {
 		}
 		rowsAffected, _ := result.RowsAffected()
 		logger.Info("[backupTask] deleted %d subtasks for tasks: %v", rowsAffected, taskIds)
+		return nil
+	})
+
+	// 删除任务对应的边数据
+	tx.Add(func(tx *bun.Tx) error {
+		result, err := tx.NewDelete().Table("task_edge").Where("task_id IN (?)", bun.In(taskIds)).Exec(context.Background())
+		if err != nil {
+			logger.Error("[backupTask] delete task_edges during backup failed. err: %v", err)
+			return err
+		}
+		rowsAffected, _ := result.RowsAffected()
+		logger.Trace("[backupTask] deleted %d task_edges for tasks: %v", rowsAffected, taskIds)
 		return nil
 	})
 

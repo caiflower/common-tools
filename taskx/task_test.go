@@ -130,9 +130,9 @@ func TestTask_ConvertAndRestore(t *testing.T) {
 	fiveID := five.GetID()
 
 	// Step 1: convert2Bean -> initByBean（第一次：所有 subtask 都是 pending）
-	taskBean, subtaskBeans := myTask.convert2Bean()
+	taskBean, subtaskBeans, _ := myTask.convert2Bean()
 	restoredTask := &Task{em: &executorManager{}}
-	_, err = restoredTask.initByBean(taskBean, subtaskBeans)
+	_, err = restoredTask.initByBean(taskBean, subtaskBeans, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, 5, restoredTask.Size())
 
@@ -175,7 +175,7 @@ func TestTask_ConvertAndRestore(t *testing.T) {
 	}
 
 	restoredTask2 := &Task{em: &executorManager{}}
-	_, err = restoredTask2.initByBean(taskBean, updatedBeans)
+	_, err = restoredTask2.initByBean(taskBean, updatedBeans, nil)
 	assert.NoError(t, err)
 
 	// 验证 four 现在是可执行的（one 和 two 都完成了）
@@ -195,7 +195,7 @@ func TestTask_ConvertAndRestore(t *testing.T) {
 	}
 
 	restoredTask3 := &Task{em: &executorManager{}}
-	_, err = restoredTask3.initByBean(taskBean, updatedBeans2)
+	_, err = restoredTask3.initByBean(taskBean, updatedBeans2, nil)
 	assert.NoError(t, err)
 
 	next = restoredTask3.NextSubTasks()
@@ -214,7 +214,7 @@ func TestTask_ConvertAndRestore(t *testing.T) {
 	}
 
 	restoredTask4 := &Task{em: &executorManager{}}
-	_, err = restoredTask4.initByBean(taskBean, updatedBeans3)
+	_, err = restoredTask4.initByBean(taskBean, updatedBeans3, nil)
 	assert.NoError(t, err)
 
 	next = restoredTask4.NextSubTasks()
@@ -223,6 +223,119 @@ func TestTask_ConvertAndRestore(t *testing.T) {
 }
 
 // TestTask_ProviderExecution 测试 Task + ExecutorProvider 的完整执行流程
+
+func TestTask_EdgeTypeInputPrecompute(t *testing.T) {
+	// 测试三种边类型在 convert2Bean → initByBean → 模拟 computeInput 全链路中的行为
+	task := NewTask("edge-input-test")
+
+	a := NewSubtask("a", noopExec).SetInput(`{"from":"a"}`)
+	b := NewSubtask("b", noopExec).SetInput(`{"from":"b"}`)
+	c := NewSubtask("c", noopExec).SetInput(`{"from":"c"}`)
+	d := NewSubtask("d", noopExec).SetInput(`{"from":"d"}`)
+
+	_ = task.AddSubtask(a)
+	_ = task.AddSubtask(b)
+	_ = task.AddSubtask(c)
+	_ = task.AddSubtask(d)
+	_ = task.AddControlEdge(a, b) // control-only
+	_ = task.AddDataEdge(a, c)    // data-only
+	_ = task.AddEdge(a, d)        // control+data
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	// 模拟 A 执行完成，输出经过 Output 结构序列化
+	aOutput := map[string]any{"result": "from-a"}
+	aOutputJSON := tools.ToJson(&Output{Output: tools.ToJson(aOutput)})
+	task.subtaskMap[a.GetID()].subtask.Output = aOutputJSON
+	task.subtaskMap[a.GetID()].subtask.State = string(TaskSucceeded)
+
+	// convert2Bean → initByBean 模拟 DB 重建
+	taskBean, subtaskBeans, edgeBeans := task.convert2Bean()
+
+	// 验证 edgeBeans 中的边类型
+	edgeTypeMap := make(map[string]string)
+	for _, e := range edgeBeans {
+		key := e.FromSubtaskID + "->" + e.ToSubtaskID
+		edgeTypeMap[key] = e.EdgeType
+	}
+
+	// 找到从 a 出发的边（通过 subtaskName 查找 ID）
+	var aID, bID, cID, dID string
+	for _, s := range subtaskBeans {
+		switch s.TaskName {
+		case "a":
+			aID = s.ID
+		case "b":
+			bID = s.ID
+		case "c":
+			cID = s.ID
+		case "d":
+			dID = s.ID
+		}
+	}
+
+	assert.Equal(t, "control", edgeTypeMap[aID+"->"+bID], "a->b should be control")
+	assert.Equal(t, "data", edgeTypeMap[aID+"->"+cID], "a->c should be data")
+	assert.Equal(t, "control+data", edgeTypeMap[aID+"->"+dID], "a->d should be control+data")
+
+	// initByBean 重建 Task（传 edges 走精确恢复路径）
+	restoredTask := &Task{em: &executorManager{}}
+	restoredTask, err = restoredTask.initByBean(taskBean, subtaskBeans, edgeBeans)
+	assert.NoError(t, err)
+
+	// 验证重建后的邻接表
+	assert.Len(t, restoredTask.dag.controlPred[bID], 1, "B should have 1 control pred")
+	assert.Len(t, restoredTask.dag.dataPred[bID], 0, "B should have 0 data pred")
+	assert.Len(t, restoredTask.dag.controlPred[cID], 0, "C should have 0 control pred")
+	assert.Len(t, restoredTask.dag.dataPred[cID], 1, "C should have 1 data pred")
+	assert.Len(t, restoredTask.dag.dataPred[dID], 1, "D should have 1 data pred")
+
+	// 模拟 dispatcher 的 computeInput 逻辑
+	runnings := []*model.Subtask{
+		&subtaskBeans[0], // 用任意 bean 占位，实际用 restoredTask.subtaskMap
+	}
+	_ = runnings
+
+	// 用 restoredTask 的 subtaskMap 模拟 computeInput
+	for name, id := range map[string]string{"b": bID, "c": cID, "d": dID} {
+		dataPreds := restoredTask.dag.dataPred[id]
+		subtask := restoredTask.subtaskMap[id]
+		if len(dataPreds) > 0 {
+			var computedInput string
+			preOutputs := make(map[string]string)
+			for _, predID := range dataPreds {
+				if s, ok := restoredTask.subtaskMap[predID]; ok {
+					var output Output
+					if err := tools.Unmarshal([]byte(s.subtask.Output), &output); err == nil {
+						preOutputs[s.GetName()] = output.Output
+					}
+				}
+			}
+			if len(preOutputs) == 1 {
+				for _, v := range preOutputs {
+					computedInput = v
+					break
+				}
+			}
+			if computedInput != "" {
+				subtask.subtask.Input = computedInput
+			}
+		}
+		switch name {
+		case "b":
+			// B 只有 ControlEdge → Input 保持原值
+			assert.Equal(t, `{"from":"b"}`, subtask.subtask.Input, "B should keep original input")
+		case "c":
+			// C 有 DataEdge → Input 应为 A 的输出（经 Output 结构解包后）
+			assert.Equal(t, `{"result":"from-a"}`, subtask.subtask.Input, "C should receive A's output")
+		case "d":
+			// D 有 ControlAndDataEdge → Input 应为 A 的输出
+			assert.Equal(t, `{"result":"from-a"}`, subtask.subtask.Input, "D should receive A's output")
+		}
+	}
+}
+
 func TestTask_ProviderExecution(t *testing.T) {
 	// 定义本地执行器（使用泛型）
 	echoFn := func(ctx context.Context, input map[string]string) (map[string]string, error) {

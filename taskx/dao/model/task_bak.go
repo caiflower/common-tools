@@ -9,24 +9,25 @@ import (
 
 // TaskBak generate from table task_bak
 type TaskBak struct {
-	bun.BaseModel `bun:"table:task_bak"`
-	ID            string     `bun:"id,pk,notnull" json:"id"`             // 任务ID
-	RequestID     string     `bun:"request_id" json:"requestID"`         // 请求ID
-	TaskName      string     `bun:"task_name" json:"taskName"`           // 任务名称
-	Input         string     `bun:"input" json:"input"`                  // 任务输入参数
-	Output        string     `bun:"output" json:"output"`                // 任务输出结果
-	Worker        string     `bun:"worker" json:"worker"`                // 执行任务的工作节点
-	Retry         int8       `bun:"retry" json:"retry"`                  // 剩余重试次数
-	RetryInterval int32      `bun:"retry_interval" json:"retryInterval"` // 重试间隔(秒)
-	Urgent        bool       `bun:"urgent" json:"urgent"`                // 是否紧急任务(0:否, 1:是)
-	State         string     `bun:"state" json:"state"`                  // 任务状态
-	Description   string     `bun:"description" json:"description"`      // 任务描述
-	CreateTime    basic.Time `bun:"create_time" json:"createTime"`       // 创建时间
-	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
-	ExecuteTime   basic.Time `bun:"execute_time" json:"executeTime"`     // 定时执行时间
-	Status        int8       `bun:"status" json:"status"`                // 任务状态(0:禁用, 1:启用)
-	AffinityType  string     `bun:"affinity_type" json:"affinityType"`   // 亲和性类型(SameNode, ForceSameNode, Random)
-	PrimaryWorker string     `bun:"primary_worker" json:"primaryWorker"` // 主要执行节点
+	bun.BaseModel    `bun:"table:task_bak"`
+	ID               string     `bun:"id,pk,notnull" json:"id"`                   // 任务ID
+	RequestID        string     `bun:"request_id" json:"requestID"`               // 请求ID
+	TaskName         string     `bun:"task_name" json:"taskName"`                 // 任务名称
+	Input            string     `bun:"input" json:"input"`                        // 任务输入参数
+	Output           string     `bun:"output" json:"output"`                      // 任务输出结果
+	Worker           string     `bun:"worker" json:"worker"`                      // 执行任务的工作节点
+	Retry            int8       `bun:"retry" json:"retry"`                        // 剩余重试次数
+	RetryInterval    int32      `bun:"retry_interval" json:"retryInterval"`       // 重试间隔(秒)
+	Urgent           bool       `bun:"urgent" json:"urgent"`                      // 是否紧急任务(0:否, 1:是)
+	State            string     `bun:"state" json:"state"`                        // 任务状态
+	Description      string     `bun:"description" json:"description"`            // 任务描述
+	CreateTime       basic.Time `bun:"create_time" json:"createTime"`             // 创建时间
+	LastRunTime      basic.Time `bun:"last_run_time" json:"lastRunTime"`          // 最后执行时间
+	ExecuteTime      basic.Time `bun:"execute_time" json:"executeTime"`           // 定时执行时间
+	Status           int8       `bun:"status" json:"status"`                      // 任务状态(0:禁用, 1:启用)
+	AffinityType     string     `bun:"affinity_type" json:"affinityType"`         // 亲和性类型(SameNode, ForceSameNode, Random)
+	PrimaryWorker    string     `bun:"primary_worker" json:"primaryWorker"`       // 主要执行节点
+	RollbackStrategy string     `bun:"rollback_strategy" json:"rollbackStrategy"` // 回滚策略 // 主要执行节点
 }
 
 type TaskBakFilter struct {
@@ -35,26 +36,27 @@ type TaskBakFilter struct {
 	DisablePage bool     `json:"disablePage"`
 	Orders      []string `json:"orders,omitempty"`
 
-	ID            []string     `json:"id,omitempty"`
-	RequestID     []string     `json:"requestID,omitempty"`
-	TaskName      []string     `json:"taskName,omitempty"`
-	Input         []string     `json:"input,omitempty"`
-	Output        []string     `json:"output,omitempty"`
-	Worker        []string     `json:"worker,omitempty"`
-	Retry         []int8       `json:"retry,omitempty"`
-	RetryInterval []int32      `json:"retryInterval,omitempty"`
-	Urgent        []bool       `json:"urgent,omitempty"`
-	State         []string     `json:"state,omitempty"`
-	Description   []string     `json:"description,omitempty"`
-	CreateTime    []basic.Time `json:"createTime,omitempty"`
-	CreateTimeOp  string       `json:"createTimeOp,omitempty"`
-	LastRunTime   []basic.Time `json:"lastRunTime,omitempty"`
-	LastRunTimeOp string       `json:"lastRunTimeOp,omitempty"`
-	ExecuteTime   []basic.Time `json:"executeTime,omitempty"`
-	ExecuteTimeOp string       `json:"executeTimeOp,omitempty"`
-	Status        []int8       `json:"status,omitempty"`
-	AffinityType  []string     `json:"affinityType,omitempty"`
-	PrimaryWorker []string     `json:"primaryWorker,omitempty"`
+	ID               []string     `json:"id,omitempty"`
+	RequestID        []string     `json:"requestID,omitempty"`
+	TaskName         []string     `json:"taskName,omitempty"`
+	Input            []string     `json:"input,omitempty"`
+	Output           []string     `json:"output,omitempty"`
+	Worker           []string     `json:"worker,omitempty"`
+	Retry            []int8       `json:"retry,omitempty"`
+	RetryInterval    []int32      `json:"retryInterval,omitempty"`
+	Urgent           []bool       `json:"urgent,omitempty"`
+	State            []string     `json:"state,omitempty"`
+	Description      []string     `json:"description,omitempty"`
+	CreateTime       []basic.Time `json:"createTime,omitempty"`
+	CreateTimeOp     string       `json:"createTimeOp,omitempty"`
+	LastRunTime      []basic.Time `json:"lastRunTime,omitempty"`
+	LastRunTimeOp    string       `json:"lastRunTimeOp,omitempty"`
+	ExecuteTime      []basic.Time `json:"executeTime,omitempty"`
+	ExecuteTimeOp    string       `json:"executeTimeOp,omitempty"`
+	Status           []int8       `json:"status,omitempty"`
+	AffinityType     []string     `json:"affinityType,omitempty"`
+	PrimaryWorker    []string     `json:"primaryWorker,omitempty"`
+	RollbackStrategy []string     `json:"rollbackStrategy,omitempty"`
 }
 
 func (f *TaskBakFilter) GetPage() (offset int, limit int, disable bool) {

@@ -53,3 +53,23 @@ const DefaultRetryCount int8 = 3
 
 // DefaultRetryInterval 默认重试间隔（秒）
 const DefaultRetryInterval int32 = 0
+
+// TriggerMode 触发模式（DB 持久化用）
+const (
+	TriggerModeAllPredecessor = "all_predecessor"
+	TriggerModeAnyPredecessor = "any_predecessor"
+)
+
+// EdgeType 边类型（DB 持久化用）
+const (
+	EdgeTypeControl        = "control"
+	EdgeTypeData           = "data"
+	EdgeTypeControlAndData = "control+data"
+)
+
+// RollbackStrategy 回滚策略（DB 持久化用）
+const (
+	RollbackStrategyAll    = "rollback_all"
+	RollbackStrategyFailed = "rollback_failed"
+	RollbackStrategyCustom = "rollback_custom"
+)

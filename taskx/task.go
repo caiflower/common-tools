@@ -395,6 +395,10 @@ func (t *Task) AddSubtask(subtask *Subtask) error {
 	if err != nil {
 		return err
 	}
+	// 同步 Subtask 的配置到 dagNode
+	if node := t.dag.GetNode(subtask.GetID()); node != nil {
+		node.priority = subtask.priority
+	}
 	t.subtaskMap[subtask.GetID()] = subtask
 	// 自动注册执行器（Subtask 上直接绑定的 provider）
 	if subtask.provider != nil {
@@ -869,9 +873,10 @@ type TaskData struct {
 	Subtasks    map[string]Output
 }
 
-// convert2Bean 将 Task 转换为数据库模型
-func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
+// convert2Bean 将 Task 转换为数据库模型（含边缘数据和边信息）
+func (t *Task) convert2Bean() (*model.Task, []model.Subtask, []model.TaskEdge) {
 	task := t.task
+	task.RollbackStrategy = t.rollbackStrategy.toDBString()
 	task.Status = 1
 
 	// 构建反向映射：nodeKey -> [前驱nodeKey列表]
@@ -879,7 +884,8 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 	for nodeKey := range t.subtaskMap {
 		predecessors[nodeKey] = make(map[string]struct{})
 	}
-	// 从控制边收集前驱（from -> to, 所以 to 的前驱包含 from）
+	// 从控制边收集前驱（from -> to, 所以 to 的前驱包含 from。用于 PreSubtaskID 兼容旧数据）
+	// 注意：exec 阶段会通过 task_edge 表过滤控制前驱，不会传数据
 	for from, successors := range t.dag.controlAdj {
 		for _, to := range successors {
 			predecessors[to][from] = struct{}{}
@@ -895,6 +901,9 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 	for _, subtask := range t.subtaskMap {
 		bean := *subtask.getModel()
 		bean.TaskID = task.ID
+		bean.TriggerMode = subtask.triggerMode.toDBString()
+		bean.Priority = subtask.priority
+		bean.Timeout = int(subtask.timeout.Seconds())
 		if preds := predecessors[subtask.GetID()]; len(preds) > 0 {
 			ids := make([]string, 0, len(preds))
 			for k := range preds {
@@ -905,18 +914,41 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask) {
 		bean.Status = 1
 		subtaskBeans = append(subtaskBeans, bean)
 	}
-	return &task, subtaskBeans
+
+	// 构建边表
+	edgeBeans := make([]model.TaskEdge, 0, len(t.dag.edges))
+	for _, edge := range t.dag.edges {
+		var mappingsJSON string
+		if len(edge.mappings) > 0 {
+			mappingsJSON = tools.ToJson(edge.mappings)
+		}
+		edgeBeans = append(edgeBeans, model.TaskEdge{
+			ID:            tools.GenerateId("te"),
+			TaskID:        task.ID,
+			FromSubtaskID: edge.from,
+			ToSubtaskID:   edge.to,
+			EdgeType:      edge.edgeType.toDBString(),
+			FieldMappings: mappingsJSON,
+		})
+	}
+
+	return &task, subtaskBeans, edgeBeans
 }
 
 // initByBean 从数据库模型初始化 Task
 //
-// 注意：由于 model.Subtask 是代码生成的，无法新增字段，因此以下信息无法持久化到数据库：
-//   - 边类型（ControlEdge/DataEdge/ControlAndDataEdge）：恢复时统一使用 ControlAndDataEdge，
-//     如需精确控制边类型，请在恢复后手动调用 AddControlEdge/AddDataEdge 重建
-//   - triggerMode（AllPredecessor/AnyPredecessor）：恢复时默认使用 AllPredecessor，
-//     如需修改，请在恢复后调用 Subtask.SetTriggerMode 设置
-func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask) (*Task, error) {
+// 说明：以下信息已从 task_edge 表（边类型/字段映射）和 subtask 表（triggerMode/priority/timeout）持久化恢复：
+//   - 边类型（ControlEdge/DataEdge/ControlAndDataEdge）从 task_edge.edge_type 恢复
+//   - triggerMode（AllPredecessor/AnyPredecessor）从 subtask.trigger_mode 恢复
+//   - priority 从 subtask.priority 恢复
+//   - timeout 从 subtask.timeout 恢复
+//   - rollbackStrategy 从 task.rollback_strategy 恢复
+//   - fieldMappings 从 task_edge.field_mappings JSON 恢复
+//
+// 无条件节点（Branch.Condition）和执行器（ExecutorProvider）为代码层概念，通过全局注册表恢复。
+func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask, edges []model.TaskEdge) (*Task, error) {
 	t.task = *taskBean
+	t.rollbackStrategy = rollbackStrategyFromDBString(taskBean.RollbackStrategy)
 	t.subtaskMap = make(map[string]*Subtask)
 
 	// 初始化 executorManager 并从全局注册表恢复执行器
@@ -929,6 +961,10 @@ func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask) (*
 		subtask := &Subtask{
 			subtask: subtaskBeans[i],
 		}
+		// 从 DB 恢复 triggerMode、priority、timeout
+		subtask.triggerMode = triggerModeFromDBString(subtaskBeans[i].TriggerMode)
+		subtask.priority = subtaskBeans[i].Priority
+		subtask.timeout = time.Duration(subtaskBeans[i].Timeout) * time.Second
 		t.subtaskMap[subtask.GetID()] = subtask
 
 		// 从全局注册表恢复 provider 和 rollbackProvider
@@ -955,18 +991,36 @@ func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask) (*
 		if err := t.dag.AddNode(subtask.GetID(), subtask.triggerMode); err != nil {
 			return nil, err
 		}
+		// 从 Subtask 恢复 dagNode 的 priority、timeout、preProcessor、postProcessor
+		if node := t.dag.GetNode(subtask.GetID()); node != nil {
+			node.priority = subtask.priority
+			node.timeout = subtask.timeout
+			node.preProcessor = subtask.preProcessor
+			node.postProcessor = subtask.postProcessor
+		}
 	}
-	// 重建边（从前驱ID推断）
-	// 注意：由于数据库未持久化边类型信息，恢复时统一使用 ControlAndDataEdge
-	for _, subtask := range t.subtaskMap {
-		preIDs := subtask.getPreSubtaskID()
-		if len(preIDs) > 0 {
-			for _, preID := range preIDs {
-				if preID == "" {
-					continue
-				}
-				if _, exists := t.subtaskMap[preID]; exists {
-					_ = t.dag.AddEdge(preID, subtask.GetID(), ControlAndDataEdge)
+	// 重建边（优先从 task_edge 表恢复精确类型，回退到 pre_subtask_id 推断）
+	if len(edges) > 0 {
+		for _, edge := range edges {
+			edgeType := edgeTypeFromDBString(edge.EdgeType)
+			var mappings []*FieldMapping
+			if edge.FieldMappings != "" {
+				_ = tools.Unmarshal([]byte(edge.FieldMappings), &mappings)
+			}
+			_ = t.dag.AddEdge(edge.FromSubtaskID, edge.ToSubtaskID, edgeType, mappings...)
+		}
+	} else {
+		// 无 task_edge 记录时回退到 pre_subtask_id 推断（兼容旧数据）
+		for _, subtask := range t.subtaskMap {
+			preIDs := subtask.getPreSubtaskID()
+			if len(preIDs) > 0 {
+				for _, preID := range preIDs {
+					if preID == "" {
+						continue
+					}
+					if _, exists := t.subtaskMap[preID]; exists {
+						_ = t.dag.AddEdge(preID, subtask.GetID(), ControlAndDataEdge)
+					}
 				}
 			}
 		}
@@ -1015,4 +1069,86 @@ func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask) (*
 // getState 获取任务状态（内部使用）
 func (t *Task) getState() string {
 	return string(t.task.State)
+}
+
+// ===== DB 字符串转换辅助函数 =====
+
+// toDBString 将 EdgeType 转换为 DB 存储的字符串
+func (e EdgeType) toDBString() string {
+	switch e {
+	case ControlEdge:
+		return EdgeTypeControl
+	case DataEdge:
+		return EdgeTypeData
+	case ControlAndDataEdge:
+		return EdgeTypeControlAndData
+	default:
+		return EdgeTypeControlAndData
+	}
+}
+
+// edgeTypeFromDBString 从 DB 字符串恢复 EdgeType
+func edgeTypeFromDBString(s string) EdgeType {
+	switch s {
+	case EdgeTypeControl:
+		return ControlEdge
+	case EdgeTypeData:
+		return DataEdge
+	case EdgeTypeControlAndData:
+		return ControlAndDataEdge
+	default:
+		return ControlAndDataEdge
+	}
+}
+
+// toDBString 将 NodeTriggerMode 转换为 DB 存储的字符串
+func (m NodeTriggerMode) toDBString() string {
+	switch m {
+	case AllPredecessor:
+		return TriggerModeAllPredecessor
+	case AnyPredecessor:
+		return TriggerModeAnyPredecessor
+	default:
+		return TriggerModeAllPredecessor
+	}
+}
+
+// triggerModeFromDBString 从 DB 字符串恢复 NodeTriggerMode
+func triggerModeFromDBString(s string) NodeTriggerMode {
+	switch s {
+	case TriggerModeAllPredecessor:
+		return AllPredecessor
+	case TriggerModeAnyPredecessor:
+		return AnyPredecessor
+	default:
+		return AllPredecessor
+	}
+}
+
+// toDBString 将 RollbackStrategy 转换为 DB 存储的字符串
+func (s RollbackStrategy) toDBString() string {
+	switch s {
+	case StrategyRollbackAll:
+		return RollbackStrategyAll
+	case StrategyRollbackFailed:
+		return RollbackStrategyFailed
+	case StrategyRollbackCustom:
+		return RollbackStrategyCustom
+	default:
+		return RollbackStrategyAll
+	}
+}
+
+// rollbackStrategyFromDBString 从 DB 字符串恢复 RollbackStrategy
+func rollbackStrategyFromDBString(s string) RollbackStrategy {
+	switch s {
+	case RollbackStrategyAll:
+		return StrategyRollbackAll
+	case RollbackStrategyFailed:
+		return StrategyRollbackFailed
+	case RollbackStrategyCustom:
+		return StrategyRollbackCustom
+	default:
+		return StrategyRollbackAll
+	}
 }

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/stretchr/testify/assert"
 )
@@ -334,6 +335,84 @@ func TestTask_ControlDataEdgeSeparation(t *testing.T) {
 	_ = task.UpdateSubtaskState(a.GetID(), NodeSucceeded)
 	next = task.NextSubTasks()
 	assert.Equal(t, 2, len(next)) // b 和 c 都可执行
+}
+
+func TestTask_EdgeTypeDataFlow(t *testing.T) {
+	task := NewTask("edge-data-flow-test")
+
+	a := NewSubtask("a", noopExec).SetInput(`{"from":"a"}`)
+	b := NewSubtask("b", noopExec).SetInput(`{"from":"b"}`)
+	c := NewSubtask("c", noopExec).SetInput(`{"from":"c"}`)
+	d := NewSubtask("d", noopExec).SetInput(`{"from":"d"}`)
+
+	_ = task.AddSubtask(a)
+	_ = task.AddSubtask(b)
+	_ = task.AddSubtask(c)
+	_ = task.AddSubtask(d)
+	// a --control--> b：b 等 a 完成但不应接收 a 的数据
+	_ = task.AddControlEdge(a, b)
+	// a --data--> c：c 应接收 a 的数据
+	_ = task.AddDataEdge(a, c)
+	// a --control+data--> d：d 应接收 a 的数据
+	_ = task.AddEdge(a, d)
+
+	_, err := task.Compile()
+	assert.Nil(t, err)
+
+	// 验证前驱表
+	// B: 有 control 前驱，无 data 前驱
+	assert.Len(t, task.dag.controlPred[b.GetID()], 1)
+	assert.Len(t, task.dag.dataPred[b.GetID()], 0)
+	// C: 无 control 前驱，有 data 前驱
+	assert.Len(t, task.dag.controlPred[c.GetID()], 0)
+	assert.Len(t, task.dag.dataPred[c.GetID()], 1)
+	// D: 有 control 前驱，有 data 前驱
+	assert.Len(t, task.dag.controlPred[d.GetID()], 1)
+	assert.Len(t, task.dag.dataPred[d.GetID()], 1)
+
+	// 模拟 A 完成并产生输出
+	aOutput := `{"result":"from-a"}`
+	task.subtaskMap[a.GetID()].subtask.Output = aOutput
+
+	// 模拟 dispatcher 的 Input 预计算逻辑
+	for _, key := range []string{b.GetID(), c.GetID(), d.GetID()} {
+		subtask := task.subtaskMap[key]
+		dataPreds := task.dag.dataPred[key]
+		if len(dataPreds) > 0 {
+			preOutputs := make(map[string]string)
+			for _, predID := range dataPreds {
+				if s, ok := task.subtaskMap[predID]; ok {
+					preOutputs[s.GetName()] = s.subtask.Output
+				}
+			}
+			if len(preOutputs) == 1 {
+				for _, v := range preOutputs {
+					subtask.subtask.Input = v
+					break
+				}
+			} else {
+				merged := make(map[string]any, len(preOutputs))
+				for k, v := range preOutputs {
+					var parsed any
+					if err := tools.Unmarshal([]byte(v), &parsed); err != nil {
+						merged[k] = v
+					} else {
+						merged[k] = parsed
+					}
+				}
+				if bytes, err := tools.ToByte(merged); err == nil {
+					subtask.subtask.Input = string(bytes)
+				}
+			}
+		}
+	}
+
+	// B 只有 ControlEdge -> Input 保持原值
+	assert.Equal(t, `{"from":"b"}`, task.subtaskMap[b.GetID()].subtask.Input)
+	// C 有 DataEdge -> Input 应为 A 的输出
+	assert.Equal(t, aOutput, task.subtaskMap[c.GetID()].subtask.Input)
+	// D 有 ControlAndDataEdge -> Input 应为 A 的输出
+	assert.Equal(t, aOutput, task.subtaskMap[d.GetID()].subtask.Input)
 }
 
 func TestTask_AddEdge(t *testing.T) {

@@ -25,6 +25,7 @@ type SubtaskDAO interface {
 	SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error
 	SetRollbackAndState(ctx context.Context, id string, rollback string, output string, tx ...*bun.Tx) error
 	SetRetry(ctx context.Context, subtaskID string, retry int8, tx ...*bun.Tx) error
+	SetInput(ctx context.Context, id, input string, tx ...*bun.Tx) error
 }
 
 const TableNameOfSubtask = "subtask"
@@ -187,6 +188,16 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 		return err
 	}
 	return nil
+}
+
+func (d *subtaskDAO) SetInput(ctx context.Context, id, input string, tx ...*bun.Tx) error {
+	_, err := d.Client.GetRowsAffected(
+		d.Client.GetTx(tx...).NewUpdate().
+			Table(TableNameOfSubtask).
+			Set("input = ?", input).
+			Where("id = ?", id).
+			Exec(ctx))
+	return err
 }
 
 func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8, tx ...*bun.Tx) error {
