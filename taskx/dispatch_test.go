@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -55,7 +56,21 @@ const (
 
 // ===== 公共基础设施 =====
 
-func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
+// freePort asks the kernel for a free TCP port and immediately releases it.
+// The tiny race window between release and bind is acceptable for unit tests.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freePort: listen failed: %v", err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func commonCluster(t *testing.T) (cluster1, cluster2, cluster3 *cluster.Cluster) {
+	port1, port2, port3 := freePort(t), freePort(t), freePort(t)
+
 	c1 := cluster.Config{}
 	c2 := cluster.Config{}
 	c3 := cluster.Config{}
@@ -69,7 +84,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -79,7 +94,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -88,7 +103,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c2.Nodes = append(c2.Nodes,
@@ -100,7 +115,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -110,7 +125,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -119,7 +134,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c3.Nodes = append(c3.Nodes,
@@ -131,7 +146,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost1",
-			Port: 8080,
+			Port: port1,
 		},
 		&struct {
 			Name  string
@@ -141,7 +156,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost2",
-			Port: 8081,
+			Port: port2,
 		}, &struct {
 			Name  string
 			Ip    string
@@ -150,7 +165,7 @@ func commonCluster() (cluster1, cluster2, cluster3 *cluster.Cluster) {
 		}{
 			Ip:   "127.0.0.1",
 			Name: "localhost3",
-			Port: 8082,
+			Port: port3,
 		})
 
 	c1.Nodes[0].Local = true
@@ -707,16 +722,16 @@ func submitEdgeTypeDataFlowTask(t *testing.T, dispatcher *taskDispatcher, done c
 }
 
 func TestDisPatch(t *testing.T) {
-	cluster1, cluster2, cluster3 := commonCluster()
+	cluster1, cluster2, cluster3 := commonCluster(t)
 	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3, err := commonTaskx(cluster1, cluster2, cluster3)
 	if err != nil {
 		logger.Info("test TestDisPatch skip. %v", err)
 		return
 	}
 
-	defer func() {
-		_ = os.Remove("./app.db")
-	}()
+	//defer func() {
+	//	_ = os.Remove("./app.db")
+	//}()
 
 	_ = receiver1.Start()
 	_ = receiver2.Start()
