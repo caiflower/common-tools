@@ -19,29 +19,39 @@ type SubtaskDAO interface {
 	DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 	GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error)
-	GetByIDs(ctx context.Context, subtaskIDs []string) ([]model.Subtask, error)
-	SetWorkerAndStateWithOldWorker(ctx context.Context, subtaskID string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error)
-	SetWorkerAndRollbackWithOldWorker(ctx context.Context, subtaskID string, worker, rollback string, oldWorker string, tx ...*bun.Tx) (int64, error)
+	SetWorkerAndStateWithOldWorker(ctx context.Context, id string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error)
+	SetWorkerAndRollbackWithOldWorker(ctx context.Context, id string, worker, rollback string, oldWorker string, tx ...*bun.Tx) (int64, error)
+	GetByIDs(ctx context.Context, ids []string) ([]model.Subtask, error)
 	SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error
-	SetRollbackAndState(ctx context.Context, id string, rollback string, output string, tx ...*bun.Tx) error
-	SetRetry(ctx context.Context, subtaskID string, retry int8, tx ...*bun.Tx) error
+	SetRollbackAndState(ctx context.Context, id, rollback, output string, tx ...*bun.Tx) error
 	SetInput(ctx context.Context, id, input string, tx ...*bun.Tx) error
+	SetRetry(ctx context.Context, id string, retry int8, tx ...*bun.Tx) error
 }
 
-const TableNameOfSubtask = "subtask"
+const DefaultTableNameOfSubtask = "subtask"
 
 type subtaskDAO struct {
-	Client *dbv1.Client `autowired:""`
+	Client    *dbv1.Client `autowired:""`
+	tableName string
 }
 
 // NewSubtaskDAOWithClient new client with db client
 func NewSubtaskDAOWithClient(db *dbv1.Client) SubtaskDAO {
-	return &subtaskDAO{Client: db}
+	return &subtaskDAO{Client: db, tableName: DefaultTableNameOfSubtask}
 }
 
 // NewSubtaskDAO new client
 func NewSubtaskDAO() SubtaskDAO {
-	return &subtaskDAO{}
+	return &subtaskDAO{tableName: DefaultTableNameOfSubtask}
+}
+
+// NewSubtaskDAOWithConfig new client with custom table name. An empty
+// tableName falls back to DefaultTableNameOfSubtask.
+func NewSubtaskDAOWithConfig(db *dbv1.Client, tableName string) SubtaskDAO {
+	if tableName == "" {
+		tableName = DefaultTableNameOfSubtask
+	}
+	return &subtaskDAO{Client: db, tableName: tableName}
 }
 
 // GetClient get the db client
@@ -51,7 +61,10 @@ func (d *subtaskDAO) GetClient() dbv1.DB {
 
 // Insert create a new record
 func (d *subtaskDAO) Insert(ctx context.Context, data *model.Subtask, tx ...*bun.Tx) (int64, error) {
-	return d.Client.Insert(ctx, data, tx...)
+	if len(tx) > 0 && tx[0] != nil {
+		return d.Client.GetRowsAffected(tx[0].NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
+	}
+	return d.Client.GetRowsAffected(d.Client.GetDB().NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
 }
 
 // BatchInsert batch createn
@@ -69,7 +82,7 @@ func (d *subtaskDAO) BatchInsert(ctx context.Context, data []model.Subtask, tx .
 			break
 		}
 		batchList := data[start:end]
-		cnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).Exec(ctx))
+		cnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).ModelTableExpr(d.tableName).Exec(ctx))
 		if err != nil {
 			return count, err
 		}
@@ -88,7 +101,7 @@ func (d *subtaskDAO) QueryPage(ctx context.Context, filter *model.SubtaskFilter)
 
 // DeleteByID physically delete record by primaryKey
 func (d *subtaskDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.DB.NewDelete().Table(TableNameOfSubtask).Where("id = ?", id).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewDelete().Table(d.tableName).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -98,7 +111,7 @@ func (d *subtaskDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (
 // GetByID get by primaryKey, return nil if not found
 func (d *subtaskDAO) GetByID(ctx context.Context, id string) (*model.Subtask, error) {
 	m := new(model.Subtask)
-	err := d.Client.GetSelect(m).Where("id = ?", id).Limit(1).Scan(ctx)
+	err := d.Client.GetDB().NewSelect().Model(m).ModelTableExpr(d.tableName).ColumnExpr("*").Where("status>0").Where("id = ?", id).Limit(1).Scan(ctx)
 	if err != nil {
 		if d.Client.ParseErr(err) == nil {
 			return nil, nil
@@ -110,7 +123,7 @@ func (d *subtaskDAO) GetByID(ctx context.Context, id string) (*model.Subtask, er
 
 // SoftDeleteByID logically delete record by primaryKey (set status=-1)
 func (d *subtaskDAO) SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.DB.NewUpdate().Table(TableNameOfSubtask).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewUpdate().Table(d.tableName).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -119,7 +132,7 @@ func (d *subtaskDAO) SoftDeleteByID(ctx context.Context, id string, tx ...*bun.T
 
 func (d *subtaskDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.Subtask, error) {
 	var subtasks []model.Subtask
-	err := d.Client.GetSelect(&subtasks).Where("task_id = ?", taskID).Scan(ctx, &subtasks)
+	err := d.Client.GetDB().NewSelect().Model(&subtasks).ModelTableExpr(d.tableName).ColumnExpr("*").Where("status>0").Where("task_id = ?", taskID).Scan(ctx, &subtasks)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +142,7 @@ func (d *subtaskDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.Su
 func (d *subtaskDAO) SetWorkerAndStateWithOldWorker(ctx context.Context, id string, worker, state string, oldWorker string, tx ...*bun.Tx) (int64, error) {
 	return d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("worker = ?", worker).
 			Set("state = ?", state).
 			Where("id = ?", id).
@@ -140,7 +153,7 @@ func (d *subtaskDAO) SetWorkerAndStateWithOldWorker(ctx context.Context, id stri
 func (d *subtaskDAO) SetWorkerAndRollbackWithOldWorker(ctx context.Context, id string, worker, rollback string, oldWorker string, tx ...*bun.Tx) (int64, error) {
 	return d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("worker = ?", worker).
 			Set("rollback = ?", rollback).
 			Where("id = ?", id).
@@ -153,7 +166,7 @@ func (d *subtaskDAO) GetByIDs(ctx context.Context, ids []string) ([]model.Subtas
 	if len(ids) == 0 {
 		return subtasks, nil
 	}
-	err := d.Client.GetSelect(&subtasks).Where("id IN (?)", bun.In(ids)).Scan(ctx, &subtasks)
+	err := d.Client.GetDB().NewSelect().Model(&subtasks).ModelTableExpr(d.tableName).ColumnExpr("*").Where("status>0").Where("id IN (?)", bun.In(ids)).Scan(ctx, &subtasks)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +176,7 @@ func (d *subtaskDAO) GetByIDs(ctx context.Context, ids []string) ([]model.Subtas
 func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, state string, tx ...*bun.Tx) error {
 	_, err := d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("output = ?", output).
 			Set("state = ?", state).
 			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
@@ -178,7 +191,7 @@ func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, s
 func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, output string, tx ...*bun.Tx) error {
 	_, err := d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("rollback = ?", rollback).
 			Set("output = ?", output).
 			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).
@@ -193,7 +206,7 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 func (d *subtaskDAO) SetInput(ctx context.Context, id, input string, tx ...*bun.Tx) error {
 	_, err := d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("input = ?", input).
 			Where("id = ?", id).
 			Exec(ctx))
@@ -203,7 +216,7 @@ func (d *subtaskDAO) SetInput(ctx context.Context, id, input string, tx ...*bun.
 func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8, tx ...*bun.Tx) error {
 	_, err := d.Client.GetRowsAffected(
 		d.Client.GetTx(tx...).NewUpdate().
-			Table(TableNameOfSubtask).
+			Table(d.tableName).
 			Set("retry = ?", retry).
 			Set("state = ?", "pending").
 			Set("last_run_time = ?", basic.NewFromTime(time.Now()).DBString()).

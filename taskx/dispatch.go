@@ -78,6 +78,11 @@ type Config struct {
 	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"100"`
 	RemoteCallTimeout        time.Duration `yaml:"remoteCallTimeout" default:"3s"`
 	BackupTaskAge            time.Duration `yaml:"backupTaskAge" default:"168h"`
+	// Tables overrides the physical table names used by the taskx DAO
+	// models. Any field left empty falls back to the default value
+	// (the same name used in the model's bun:"table:..." tag). When nil,
+	// all five tables use their default names.
+	Tables *dao.TableConfig `yaml:"tables" json:"tables"`
 }
 
 type affinity struct {
@@ -107,8 +112,22 @@ func InitTaskDispatcher(cfg *Config) {
 		SingletonTaskDispatcher.randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 		SingletonTaskDispatcher.allocateWorkerInflight = inflight.NewInFlight()
 		SingletonTaskDispatcher.taskCache = gocache.New(30*time.Second, 60*time.Second)
-		bean.AddBean(dao.NewTaskDAO())
-		bean.AddBean(dao.NewSubtaskBakDAO())
+		// Resolve table config (with defaults) and register DAOs. The
+		// autowired DAO fields on _tr / SingletonTaskDispatcher are filled
+		// in here so the dispatcher and receiver share the same configured
+		// DAOs.
+		tables := cfg.Tables
+		if tables == nil {
+			tables = dao.DefaultTableConfig()
+		} else {
+			tables = tables.Normalize()
+			cfg.Tables = tables
+		}
+		bean.AddBean(dao.NewTaskDAOWithConfig(nil, tables.Task))
+		bean.AddBean(dao.NewTaskBakDAOWithConfig(nil, tables.TaskBak))
+		bean.AddBean(dao.NewSubtaskDAOWithConfig(nil, tables.Subtask))
+		bean.AddBean(dao.NewSubtaskBakDAOWithConfig(nil, tables.SubtaskBak))
+		bean.AddBean(dao.NewTaskEdgeDAOWithConfig(nil, tables.TaskEdge))
 		bean.AddBean(SingletonTaskDispatcher)
 		bean.AddBean(_tr)
 	})

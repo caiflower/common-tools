@@ -3,7 +3,7 @@ package dao
 import (
 	"context"
 
-	"github.com/caiflower/common-tools/db/v1"
+	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
@@ -18,18 +18,28 @@ type TaskEdgeDAO interface {
 	DeleteByTaskID(ctx context.Context, taskID string, tx ...*bun.Tx) (int64, error)
 }
 
-const TableNameOfTaskEdge = "task_edge"
+const DefaultTableNameOfTaskEdge = "task_edge"
 
 type taskEdgeDAO struct {
-	Client *dbv1.Client `autowired:""`
+	Client    *dbv1.Client `autowired:""`
+	tableName string
 }
 
 func NewTaskEdgeDAOWithClient(db *dbv1.Client) TaskEdgeDAO {
-	return &taskEdgeDAO{Client: db}
+	return &taskEdgeDAO{Client: db, tableName: DefaultTableNameOfTaskEdge}
 }
 
 func NewTaskEdgeDAO() TaskEdgeDAO {
-	return &taskEdgeDAO{}
+	return &taskEdgeDAO{tableName: DefaultTableNameOfTaskEdge}
+}
+
+// NewTaskEdgeDAOWithConfig new client with custom table name. An empty
+// tableName falls back to DefaultTableNameOfTaskEdge.
+func NewTaskEdgeDAOWithConfig(db *dbv1.Client, tableName string) TaskEdgeDAO {
+	if tableName == "" {
+		tableName = DefaultTableNameOfTaskEdge
+	}
+	return &taskEdgeDAO{Client: db, tableName: tableName}
 }
 
 func (d *taskEdgeDAO) GetClient() dbv1.DB {
@@ -37,7 +47,10 @@ func (d *taskEdgeDAO) GetClient() dbv1.DB {
 }
 
 func (d *taskEdgeDAO) Insert(ctx context.Context, data *model.TaskEdge, tx ...*bun.Tx) (int64, error) {
-	return d.Client.Insert(ctx, data, tx...)
+	if len(tx) > 0 && tx[0] != nil {
+		return d.Client.GetRowsAffected(tx[0].NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
+	}
+	return d.Client.GetRowsAffected(d.Client.GetDB().NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
 }
 
 func (d *taskEdgeDAO) BatchInsert(ctx context.Context, data []model.TaskEdge, tx ...*bun.Tx) (int64, error) {
@@ -54,7 +67,7 @@ func (d *taskEdgeDAO) BatchInsert(ctx context.Context, data []model.TaskEdge, tx
 			break
 		}
 		batchList := data[start:end]
-		cnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).Exec(ctx))
+		cnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).ModelTableExpr(d.tableName).Exec(ctx))
 		if err != nil {
 			return count, err
 		}
@@ -71,7 +84,7 @@ func (d *taskEdgeDAO) QueryPage(ctx context.Context, filter *model.TaskEdgeFilte
 }
 
 func (d *taskEdgeDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.DB.NewDelete().Table(TableNameOfTaskEdge).Where("id = ?", id).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewDelete().Table(d.tableName).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -80,8 +93,8 @@ func (d *taskEdgeDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) 
 
 func (d *taskEdgeDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.TaskEdge, error) {
 	var edges []model.TaskEdge
-	// 注意：GetSelect 会自动拼接 WHERE status>0，但 task_edge 表没有 status 列，所以要直接用 NewSelect
-	err := d.Client.GetDB().NewSelect().Model(&edges).Where("task_id = ?", taskID).Scan(ctx, &edges)
+	// 注意：task_edge 表没有 status 列，不能用 GetSelect（会自动追加 WHERE status>0）
+	err := d.Client.GetDB().NewSelect().Model(&edges).ModelTableExpr(d.tableName).ColumnExpr("*").Where("task_id = ?", taskID).Scan(ctx, &edges)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +102,7 @@ func (d *taskEdgeDAO) GetByTaskID(ctx context.Context, taskID string) ([]model.T
 }
 
 func (d *taskEdgeDAO) DeleteByTaskID(ctx context.Context, taskID string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.GetTx(tx...).NewDelete().Table(TableNameOfTaskEdge).Where("task_id = ?", taskID).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewDelete().Table(d.tableName).Where("task_id = ?", taskID).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}

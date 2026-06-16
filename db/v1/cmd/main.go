@@ -819,7 +819,10 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		daoName := strings.ToLower(t.StructName[:1]) + t.StructName[1:] + "DAO"
 		daoName1 := t.StructName + "DAO"
 		hasStatus := false
-		tableNameConst := "TableNameOf" + t.StructName
+		// DefaultTableNameOfXxx is the table name the DAO is bound to by
+		// default. Generated code always uses d.tableName, which is
+		// initialised to this value in NewXxxDAOWithClient / NewXxxDAO.
+		tableNameConst := "DefaultTableNameOf" + t.StructName
 		for _, c := range t.Columns {
 			if c.ColumnName == "status" {
 				hasStatus = true
@@ -827,20 +830,33 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 		}
 
 		b.WriteString(fmt.Sprintf("const %s = \"%s\"\n\n", tableNameConst, t.TableName))
-		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n}\n\n", daoName))
+		b.WriteString(fmt.Sprintf("type %s struct {\n\tClient *dbv1.Client `autowired:\"\"`\n\ttableName string\n}\n\n", daoName))
 
-		b.WriteString(fmt.Sprintf("func New%sWithClient(db *dbv1.Client) %s {\n\treturn &%s{Client: db}\n}\n\n", daoName1, daoName1, daoName))
+		b.WriteString(fmt.Sprintf("func New%sWithClient(db *dbv1.Client) %s {\n\treturn &%s{Client: db, tableName: %s}\n}\n\n", daoName1, daoName1, daoName, tableNameConst))
 
-		b.WriteString(fmt.Sprintf("func New%s() %s {\n\treturn &%s{}\n}\n\n", daoName1, daoName1, daoName))
+		b.WriteString(fmt.Sprintf("func New%s() %s {\n\treturn &%s{tableName: %s}\n}\n\n", daoName1, daoName1, daoName, tableNameConst))
+
+		// NewXxxDAOWithConfig builds a DAO that targets a custom physical
+		// table. An empty tableName falls back to DefaultTableNameOfXxx.
+		b.WriteString(fmt.Sprintf("func New%sWithConfig(db *dbv1.Client, tableName string) %s {\n", daoName1, daoName1))
+		b.WriteString(fmt.Sprintf("\tif tableName == \"\" {\n\t\ttableName = %s\n\t}\n\treturn &%s{Client: db, tableName: tableName}\n}\n\n", tableNameConst, daoName))
 
 		b.WriteString(fmt.Sprintf("func (d *%s) GetClient() (dbv1.DB) {\n", daoName))
 		b.WriteString("\treturn d.Client\n}\n\n")
 
+		// Insert uses ModelTableExpr so the configured d.tableName is used
+		// instead of the bun:"table:..." tag baked into the model. Note:
+		// QueryBuilder.Table() appends an extra table, so we must use
+		// ModelTableExpr (not Table) on Insert to override the model table
+		// name cleanly.
 		b.WriteString(fmt.Sprintf("func (d *%s) Insert(ctx context.Context, data *model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
-		b.WriteString("\treturn d.Client.Insert(ctx, data, tx...)\n}\n\n")
+		b.WriteString("\tif len(tx) > 0 && tx[0] != nil {\n")
+		b.WriteString("\t\treturn d.Client.GetRowsAffected(tx[0].NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\treturn d.Client.GetRowsAffected(d.Client.GetDB().NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))\n}\n\n")
 
 		b.WriteString(fmt.Sprintf("func (d *%s) BatchInsert(ctx context.Context, data []model.%s, tx ...*bun.Tx) (int64, error) {\n", daoName, t.StructName))
-		b.WriteString("\t\tif len(data) == 0 {\n\t\treturn 0, nil\n\t}\n\n\tpageNumber := 1\n\tbatch := 50\n\tcount := int64(0)\n\tfor {\n\t\tcanSplit, start, end := dbv1.SplitIndex(pageNumber, batch, len(data))\n\t\tif !canSplit {\n\t\t\tbreak\n\t\t}\n\t\tbatchList := data[start:end]\n\t\tcnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).Exec(ctx))\n\t\tif err != nil {\n\t\t\treturn count, err\n\t\t}\n\t\tcount += cnt\n\t\tpageNumber++\n\t}\n\treturn count, nil\n}\n\n")
+		b.WriteString("\t\tif len(data) == 0 {\n\t\treturn 0, nil\n\t}\n\n\tpageNumber := 1\n\tbatch := 50\n\tcount := int64(0)\n\tfor {\n\t\tcanSplit, start, end := dbv1.SplitIndex(pageNumber, batch, len(data))\n\t\tif !canSplit {\n\t\t\tbreak\n\t\t}\n\t\tbatchList := data[start:end]\n\t\tcnt, err := d.Client.GetRowsAffected(d.Client.GetTx(tx...).NewInsert().Model(&batchList).ModelTableExpr(d.tableName).Exec(ctx))\n\t\tif err != nil {\n\t\t\treturn count, err\n\t\t}\n\t\tcount += cnt\n\t\tpageNumber++\n\t}\n\treturn count, nil\n}\n\n")
 
 		b.WriteString(fmt.Sprintf("func (d *%s) QueryPage(ctx context.Context, filter *model.%sFilter) (res []model.%s, cnt int, err error) {\n", daoName, t.StructName, t.StructName))
 		b.WriteString(fmt.Sprintf("\tres = make([]model.%s, 0)\n\tcnt, err = d.Client.QueryPage(ctx, &res, filter)\n\treturn\n}\n\n", t.StructName))
@@ -853,7 +869,7 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 			}
 
 			b.WriteString(fmt.Sprintf("func (d *%s) DeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
-			b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewDelete().Table(%s).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
+			b.WriteString(fmt.Sprintf("\tresult, err := d.Client.GetTx(tx...).NewDelete().Table(d.tableName).Where(\"%s = ?\", id).Exec(ctx)\n", t.PrimaryCol.ColumnName))
 			b.WriteString("\tif err != nil {\n\t\treturn 0, err\n\t}\n")
 			b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 
@@ -861,12 +877,17 @@ func renderDaoBlocks(opts options, tables []tableMeta) string {
 				b.WriteString(fmt.Sprintf("// GetBy%s get by primaryKey, return nil if not found\n", pkName))
 				b.WriteString(fmt.Sprintf("func (d *%s) GetBy%s(ctx context.Context, id %s) (*model.%s, error) {\n", daoName, pkName, pkType, t.StructName))
 				b.WriteString(fmt.Sprintf("\tm := new(model.%s)\n", t.StructName))
-				b.WriteString(fmt.Sprintf("\terr := d.Client.GetSelect(m).Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
+				// ModelTableExpr overrides the FROM table; ColumnExpr("*") is required
+				// so the SELECT clause uses the new table's columns (without it
+				// the column list would be prefixed with the model's original
+				// bun:"table:..." alias). The explicit Where("status>0") mirrors
+				// the previous GetSelect behaviour.
+				b.WriteString(fmt.Sprintf("\terr := d.Client.GetDB().NewSelect().Model(m).ModelTableExpr(d.tableName).Where(\"status>0\").Where(\"%s = ?\", id).Limit(1).Scan(ctx)\n", t.PrimaryCol.ColumnName))
 				b.WriteString("\tif err != nil {\n\t\tif d.Client.ParseErr(err) == nil {\n\t\t\treturn nil, nil\n\t\t}\n\t\treturn nil, err\n\t}\n")
 				b.WriteString("\treturn m, err\n}\n\n")
 
 				b.WriteString(fmt.Sprintf("func (d *%s) SoftDeleteBy%s(ctx context.Context, id %s, tx ...*bun.Tx) (int64, error) {\n", daoName, pkName, pkType))
-				b.WriteString(fmt.Sprintf("\tresult, err := d.Client.DB.NewUpdate().Table(%s).Set(\"status = ?\", -1).Where(\"%s = ?\", id).Exec(ctx)\n", tableNameConst, t.PrimaryCol.ColumnName))
+				b.WriteString(fmt.Sprintf("\tresult, err := d.Client.GetTx(tx...).NewUpdate().Table(d.tableName).Set(\"status = ?\", -1).Where(\"%s = ?\", id).Exec(ctx)\n", t.PrimaryCol.ColumnName))
 				b.WriteString("\tif err != nil {\n\t\treturn 0, err\n\t}\n")
 				b.WriteString("\treturn result.RowsAffected()\n}\n\n")
 			}

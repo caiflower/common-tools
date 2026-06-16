@@ -3,7 +3,7 @@ package dao
 import (
 	"context"
 
-	"github.com/caiflower/common-tools/db/v1"
+	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/uptrace/bun"
 )
@@ -17,20 +17,30 @@ type TaskBakDAO interface {
 	SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error)
 }
 
-const TableNameOfTaskBak = "task_bak"
+const DefaultTableNameOfTaskBak = "task_bak"
 
 type taskBakDAO struct {
-	Client *dbv1.Client `autowired:""`
+	Client    *dbv1.Client `autowired:""`
+	tableName string
 }
 
 // NewTaskBakDAOWithClient new client with db client
 func NewTaskBakDAOWithClient(db *dbv1.Client) TaskBakDAO {
-	return &taskBakDAO{Client: db}
+	return &taskBakDAO{Client: db, tableName: DefaultTableNameOfTaskBak}
 }
 
 // NewTaskBakDAO new client
 func NewTaskBakDAO() TaskBakDAO {
-	return &taskBakDAO{}
+	return &taskBakDAO{tableName: DefaultTableNameOfTaskBak}
+}
+
+// NewTaskBakDAOWithConfig new client with custom table name. An empty
+// tableName falls back to DefaultTableNameOfTaskBak.
+func NewTaskBakDAOWithConfig(db *dbv1.Client, tableName string) TaskBakDAO {
+	if tableName == "" {
+		tableName = DefaultTableNameOfTaskBak
+	}
+	return &taskBakDAO{Client: db, tableName: tableName}
 }
 
 // GetClient get the db client
@@ -40,7 +50,10 @@ func (d *taskBakDAO) GetClient() dbv1.DB {
 
 // Insert create a new record
 func (d *taskBakDAO) Insert(ctx context.Context, data *model.TaskBak, tx ...*bun.Tx) (int64, error) {
-	return d.Client.Insert(ctx, data, tx...)
+	if len(tx) > 0 && tx[0] != nil {
+		return d.Client.GetRowsAffected(tx[0].NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
+	}
+	return d.Client.GetRowsAffected(d.Client.GetDB().NewInsert().Model(data).ModelTableExpr(d.tableName).Exec(ctx))
 }
 
 // QueryPage query by page
@@ -52,7 +65,7 @@ func (d *taskBakDAO) QueryPage(ctx context.Context, filter *model.TaskBakFilter)
 
 // DeleteByID physically delete record by primaryKey
 func (d *taskBakDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.DB.NewDelete().Table(TableNameOfTaskBak).Where("id = ?", id).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewDelete().Table(d.tableName).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -62,7 +75,7 @@ func (d *taskBakDAO) DeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (
 // GetByID get by primaryKey, return nil if not found
 func (d *taskBakDAO) GetByID(ctx context.Context, id string) (*model.TaskBak, error) {
 	m := new(model.TaskBak)
-	err := d.Client.GetSelect(m).Where("id = ?", id).Limit(1).Scan(ctx)
+	err := d.Client.GetDB().NewSelect().Model(m).ModelTableExpr(d.tableName).ColumnExpr("*").Where("status>0").Where("id = ?", id).Limit(1).Scan(ctx)
 	if err != nil {
 		if d.Client.ParseErr(err) == nil {
 			return nil, nil
@@ -74,7 +87,7 @@ func (d *taskBakDAO) GetByID(ctx context.Context, id string) (*model.TaskBak, er
 
 // SoftDeleteByID logically delete record by primaryKey (set status=-1)
 func (d *taskBakDAO) SoftDeleteByID(ctx context.Context, id string, tx ...*bun.Tx) (int64, error) {
-	result, err := d.Client.DB.NewUpdate().Table(TableNameOfTaskBak).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
+	result, err := d.Client.GetTx(tx...).NewUpdate().Table(d.tableName).Set("status = ?", -1).Where("id = ?", id).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
