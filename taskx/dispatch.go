@@ -929,7 +929,7 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 }
 
 func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
-	logger.Info("[handleTaskImmediately] tasks %v, isReady=%v, isLeader=%v", taskIDs, t.Cluster.IsReady(), t.Cluster.IsLeader())
+	logger.Debug("[handleTaskImmediately] tasks %v, isReady=%v, isLeader=%v", taskIDs, t.Cluster.IsReady(), t.Cluster.IsLeader())
 
 	if !t.Cluster.IsReady() {
 		logger.Warn("[handleTaskImmediately] cluster not ready, skip")
@@ -1015,14 +1015,20 @@ func (t *taskDispatcher) computeInput(ctx context.Context, task *Task, runnings 
 		if len(dataPreds) > 0 {
 			preSubtasks := make(map[string]string)
 			for _, predID := range dataPreds {
-				if s, ok := task.subtaskMap[predID]; ok {
-					// s.subtask.Output 是 Output 结构体的 JSON，需要提取内部的 Output 字段
-					var output Output
-					if err := tools.Unmarshal([]byte(s.subtask.Output), &output); err == nil {
-						preSubtasks[s.GetName()] = output.Output
-					} else {
-						logger.Warn("[computeInput] failed to unmarshal output for %s: %v", predID, err)
-					}
+				s, ok := task.subtaskMap[predID]
+				if !ok {
+					continue
+				}
+				// 被跳过的前驱 Output 必然为空，反序列化无意义，跳过即可
+				if s.IsSkipped() {
+					continue
+				}
+				// s.subtask.Output 是 Output 结构体的 JSON，需要提取内部的 Output 字段
+				var output Output
+				if err := tools.Unmarshal([]byte(s.subtask.Output), &output); err == nil {
+					preSubtasks[s.GetName()] = output.Output
+				} else {
+					logger.Warn("[computeInput] failed to unmarshal output for %s: %v", predID, err)
 				}
 			}
 			if len(preSubtasks) > 0 {

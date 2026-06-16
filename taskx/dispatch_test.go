@@ -729,9 +729,9 @@ func TestDisPatch(t *testing.T) {
 		return
 	}
 
-	//defer func() {
-	//	_ = os.Remove("./app.db")
-	//}()
+	defer func() {
+		_ = os.Remove("./app.db")
+	}()
 
 	_ = receiver1.Start()
 	_ = receiver2.Start()

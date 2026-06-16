@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/basic"
+	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/dao/model"
@@ -878,6 +879,12 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask, []model.TaskEdge) {
 	task := t.task
 	task.RollbackStrategy = t.rollbackStrategy.toDBString()
 	task.Status = 1
+	if task.RequestID == "" {
+		task.RequestID = golocalv1.GetTraceID()
+		if task.RequestID == "" {
+			task.RequestID = tools.UUID()
+		}
+	}
 
 	// 构建反向映射：nodeKey -> [前驱nodeKey列表]
 	predecessors := make(map[string]map[string]struct{})
