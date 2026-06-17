@@ -3,7 +3,6 @@ package taskx
 import (
 	"context"
 
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/taskx/proto"
 )
 
@@ -17,10 +16,6 @@ func newTaskXServiceServer(receiver *taskReceiver) *taskXServiceServer {
 }
 
 func (s *taskXServiceServer) DeliverTask(ctx context.Context, req *proto.DeliverRequest) (*proto.DeliverResponse, error) {
-	if req.TraceId != "" {
-		golocalv1.PutTraceID(req.TraceId)
-		defer golocalv1.Clean()
-	}
 	if err := s.receiver.deliverTask(ctx, req.Ids); err != nil {
 		return nil, err
 	}
@@ -28,10 +23,6 @@ func (s *taskXServiceServer) DeliverTask(ctx context.Context, req *proto.Deliver
 }
 
 func (s *taskXServiceServer) DeliverSubtask(ctx context.Context, req *proto.DeliverRequest) (*proto.DeliverResponse, error) {
-	if req.TraceId != "" {
-		golocalv1.PutTraceID(req.TraceId)
-		defer golocalv1.Clean()
-	}
 	if err := s.receiver.deliverSubtask(ctx, req.Ids); err != nil {
 		return nil, err
 	}
@@ -39,10 +30,6 @@ func (s *taskXServiceServer) DeliverSubtask(ctx context.Context, req *proto.Deli
 }
 
 func (s *taskXServiceServer) DeliverSubtaskRollback(ctx context.Context, req *proto.DeliverRequest) (*proto.DeliverResponse, error) {
-	if req.TraceId != "" {
-		golocalv1.PutTraceID(req.TraceId)
-		defer golocalv1.Clean()
-	}
 	if err := s.receiver.deliverSubtaskRollback(ctx, req.Ids); err != nil {
 		return nil, err
 	}
@@ -50,10 +37,6 @@ func (s *taskXServiceServer) DeliverSubtaskRollback(ctx context.Context, req *pr
 }
 
 func (s *taskXServiceServer) HandleTaskImmediately(ctx context.Context, req *proto.HandleTaskImmediatelyRequest) (*proto.HandleTaskImmediatelyResponse, error) {
-	if req.TraceId != "" {
-		golocalv1.PutTraceID(req.TraceId)
-		defer golocalv1.Clean()
-	}
 	s.receiver.TaskDispatcher.enqueueTaskIDs(req.TaskIds)
 	return &proto.HandleTaskImmediatelyResponse{}, nil
 }
