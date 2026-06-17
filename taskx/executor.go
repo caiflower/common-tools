@@ -2,6 +2,7 @@ package taskx
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -132,6 +133,14 @@ func ClearProviders(taskName string) {
 	defer _branchRegistry.Unlock()
 	delete(_branchRegistry.branches, taskName)
 
+	_branchConditionProviderRegistry.Lock()
+	defer _branchConditionProviderRegistry.Unlock()
+	for key := range _branchConditionProviderRegistry.providers {
+		if strings.HasPrefix(key, taskName+"/") {
+			delete(_branchConditionProviderRegistry.providers, key)
+		}
+	}
+
 	_customRollbackRegistry.Lock()
 	defer _customRollbackRegistry.Unlock()
 	delete(_customRollbackRegistry.funcs, taskName)
@@ -150,6 +159,10 @@ func ClearAllProviders() {
 	_branchRegistry.Lock()
 	defer _branchRegistry.Unlock()
 	_branchRegistry.branches = make(map[string]map[string][]*Branch)
+
+	_branchConditionProviderRegistry.Lock()
+	defer _branchConditionProviderRegistry.Unlock()
+	_branchConditionProviderRegistry.providers = make(map[string]executor.ExecutorProvider)
 
 	_customRollbackRegistry.Lock()
 	defer _customRollbackRegistry.Unlock()
@@ -192,6 +205,38 @@ func getRegisteredBranches(taskName string) map[string][]*Branch {
 	_branchRegistry.RLock()
 	defer _branchRegistry.RUnlock()
 	return _branchRegistry.branches[taskName]
+}
+
+// _branchConditionProviderRegistry 全局分支条件 Provider 注册表
+// 存储 ExecutorProvider 用于 DB 恢复时重建分支条件（key: "taskName/nodeName/index"）
+var (
+	_branchConditionProviderRegistry = struct {
+		sync.RWMutex
+		providers map[string]executor.ExecutorProvider
+	}{providers: make(map[string]executor.ExecutorProvider)}
+)
+
+// registerBranchConditionProvider 注册分支条件 Provider 到全局注册表
+func registerBranchConditionProvider(taskName, nodeName string, p executor.ExecutorProvider) {
+	_branchConditionProviderRegistry.Lock()
+	defer _branchConditionProviderRegistry.Unlock()
+	idx := 0
+	for {
+		key := fmt.Sprintf("%s/%s/%d", taskName, nodeName, idx)
+		if _, exists := _branchConditionProviderRegistry.providers[key]; !exists {
+			_branchConditionProviderRegistry.providers[key] = p
+			return
+		}
+		idx++
+	}
+}
+
+// getBranchConditionProvider 从全局注册表查找分支条件 Provider
+func getBranchConditionProvider(taskName, nodeName string, index int) executor.ExecutorProvider {
+	_branchConditionProviderRegistry.RLock()
+	defer _branchConditionProviderRegistry.RUnlock()
+	key := fmt.Sprintf("%s/%s/%d", taskName, nodeName, index)
+	return _branchConditionProviderRegistry.providers[key]
 }
 
 // _processorRegistry 全局处理器注册表（集群框架：receiver 从数据库恢复时查找 preProcessor/postProcessor）

@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/caiflower/common-tools/taskx/executor"
 )
 
 // EdgeType 边的类型
@@ -173,18 +175,37 @@ func (f FieldPath) join() string {
 // Processor 处理器函数类型，用于 Pre/Post Processor
 type Processor func(ctx interface{}, data any) (any, error)
 
-// Branch 条件分支
-type Branch struct {
-	// condition 条件函数，输入前驱节点的输出，返回选中的目标节点 key
-	Condition func(ctx interface{}, input any) (string, error)
-	// endNodes 合法的分支目标节点集合
-	EndNodes map[string]bool
-	// noDataFlow 是否跳过数据流
-	//NoDataFlow bool
+// SubtaskSettings 子任务的可扩展 JSON 配置，存储在 DB 的 settings 字段中
+type SubtaskSettings struct {
+	BranchConfig *BranchConfig `json:"branch_config,omitempty"`
 }
 
-// NewBranch 创建条件分支
-func NewBranch(condition func(ctx interface{}, input any) (string, error), endNodes map[string]bool) *Branch {
+// BranchConfig 分支配置（持久化到 DB，从全局注册表恢复 ConditionProvider）
+type BranchConfig struct {
+	EndNodes          []string `json:"end_nodes"`          // 分支目标节点名称列表
+	ConditionProvider string   `json:"condition_provider"` // 条件 provider 标识（用于全局注册表查找）
+}
+
+// Branch 条件分支
+type Branch struct {
+	// ConditionProvider 可持久化的条件执行器，Execute 返回选中的目标节点 key (string)
+	ConditionProvider executor.ExecutorProvider
+	// Condition 向后兼容的闭包条件函数，不持久化到 DB
+	Condition func(ctx interface{}, input any) (string, error)
+	// EndNodes 分支目标节点集合
+	EndNodes map[string]bool
+}
+
+// NewBranch 创建基于 ExecutorProvider 的条件分支（可持久化）
+func NewBranch(provider executor.ExecutorProvider, endNodes map[string]bool) *Branch {
+	return &Branch{
+		ConditionProvider: provider,
+		EndNodes:          endNodes,
+	}
+}
+
+// NewBranchFunc 创建基于闭包的条件分支（向后兼容，不持久化）
+func NewBranchFunc(condition func(ctx interface{}, input any) (string, error), endNodes map[string]bool) *Branch {
 	return &Branch{
 		Condition: condition,
 		EndNodes:  endNodes,

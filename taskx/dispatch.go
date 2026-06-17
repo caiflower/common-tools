@@ -19,6 +19,7 @@ package taskx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/dao"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/caiflower/common-tools/taskx/proto"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/uptrace/bun"
@@ -525,6 +527,7 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 
 // processBranches handles branch selection logic.
 // Checks completed nodes for branch definitions, executes condition functions, and automatically skips unselected branch target nodes.
+// Supports both ConditionProvider (new, persistable) and Condition closure (legacy).
 func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 	compiled := task.getCompiled()
 	if compiled == nil {
@@ -539,7 +542,7 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 		}
 
 		for _, branch := range branches {
-			if branch.Condition == nil {
+			if branch.ConditionProvider == nil && branch.Condition == nil {
 				continue
 			}
 
@@ -551,10 +554,34 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 				input = data
 			}
 
-			// Execute the condition function
-			selectedKey, err := branch.Condition(nil, input)
-			if err != nil {
-				logger.Error("[processBranches] branch condition for node %s failed: %v", nodeKey, err)
+			// Execute the condition: prefer ConditionProvider, fallback to Condition closure
+			var selectedKey string
+			var condErr error
+			if branch.ConditionProvider != nil {
+				taskData := &executor.TaskData{
+					RequestId: task.task.RequestID,
+					TaskId:    task.task.ID,
+					SubTaskId: nodeKey,
+				}
+				if input != nil {
+					if s, ok := input.(string); ok {
+						taskData.Input = s
+					}
+				}
+				result, execErr := branch.ConditionProvider.Execute(ctx, taskData)
+				if execErr != nil {
+					condErr = execErr
+				} else if s, ok := result.(string); ok {
+					selectedKey = s
+				} else {
+					condErr = fmt.Errorf("branch ConditionProvider returned non-string result: %v", result)
+				}
+			} else {
+				selectedKey, condErr = branch.Condition(nil, input)
+			}
+
+			if condErr != nil {
+				logger.Error("[processBranches] branch condition for node %s failed: %v", nodeKey, condErr)
 				continue
 			}
 
@@ -568,9 +595,9 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 				if endNode != nil && endNode.state == NodePending {
 					_ = task.SkipSubtask(endKey)
 					// Sync the subtask state in DB to Skipped
-					err = t.SubtaskDao.SetOutputAndState(ctx, endKey, "", string(TaskSkipped))
-					if err != nil {
-						logger.Error("[processBranches] failed to update DB state for skipped subtask %s: %v", endKey, err)
+					skipErr := t.SubtaskDao.SetOutputAndState(ctx, endKey, "", string(TaskSkipped))
+					if skipErr != nil {
+						logger.Error("[processBranches] failed to update DB state for skipped subtask %s: %v", endKey, skipErr)
 					}
 					logger.Debug("[processBranches] skipped unselected branch target %s (selected: %s)", endKey, selectedKey)
 				}

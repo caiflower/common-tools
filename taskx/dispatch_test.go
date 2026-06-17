@@ -48,6 +48,7 @@ const (
 	taskNameOfNonRetryable = "taskNonRetryable_flow"
 	taskBranchName         = "taskBranch_flow"
 	taskNestedBranchName   = "taskNestedBranch_flow"
+	taskBranchProviderName = "taskBranchProvider_flow"
 
 	stepOne   = "stepOne"
 	stepTwo   = "stepTwo"
@@ -666,6 +667,120 @@ func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, do
 	done <- struct{}{}
 }
 
+// submitBranchProviderTaskAndCheck 条件分支（ConditionProvider）：start -> pathA/pathB（选 pathA）-> end
+// 验证 ExecutorProvider 路径在 dispatch 层的分支选择正确性
+func submitBranchProviderTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan struct{}) {
+	task := NewTask(taskBranchProviderName).SetUrgent()
+
+	start := NewSubtask("start", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "start"})
+	pathA := NewSubtask("pathA", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "pathA"})
+	pathB := NewSubtask("pathB", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "pathB"})
+	end := NewSubtask("end", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "end"})
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddSubtask(end)
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+	_ = task.AddEdge(pathA, end)
+	_ = task.AddEdge(pathB, end)
+
+	// 使用 NewBranch + ConditionProvider（而非 Condition 闭包）
+	branchProvider := executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (string, error) {
+		return pathA.GetID(), nil
+	})
+	_ = task.AddBranch(start, NewBranch(branchProvider, map[string]bool{pathA.GetID(): true, pathB.GetID(): true}))
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	dbTask, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	assert.Equal(t, string(TaskSucceeded), dbTask.State, "branch provider task should succeed")
+	assertSubtaskState(t, subtaskMap, "start", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "pathA", string(TaskSucceeded))
+	assertSubtaskState(t, subtaskMap, "pathB", string(TaskSkipped))
+	assertSubtaskState(t, subtaskMap, "end", string(TaskSucceeded))
+
+	done <- struct{}{}
+}
+
+// TestBranchSettingsPersistenceRoundtrip 验证分支配置的 DB 持久化 roundtrip：
+// convert2Bean 序列化 → initByBean 反序列化，确保 ConditionProvider 正确恢复
+func TestBranchSettingsPersistenceRoundtrip(t *testing.T) {
+	taskName := "testBranchPersistRoundtrip"
+
+	task := NewTask(taskName)
+	start := NewSubtask("start", executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "start"})
+	pathA := NewSubtask("pathA", executor.NewLocalExecutor(echoInput))
+	pathB := NewSubtask("pathB", executor.NewLocalExecutor(echoInput))
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+
+	branchProvider := executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (string, error) {
+		return pathA.GetID(), nil
+	})
+	_ = task.AddBranch(start, NewBranch(branchProvider, map[string]bool{pathA.GetID(): true, pathB.GetID(): true}))
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	// convert2Bean: 序列化
+	_, subtaskBeans, edgeBeans := task.convert2Bean()
+
+	// 验证 start 子任务的 settings 包含 branch_config
+	var startBean *model.Subtask
+	for i := range subtaskBeans {
+		if subtaskBeans[i].TaskName == "start" {
+			startBean = &subtaskBeans[i]
+			break
+		}
+	}
+	assert.NotNil(t, startBean, "start subtask bean should exist")
+	assert.NotEmpty(t, startBean.Settings, "start settings should not be empty")
+
+	var settings SubtaskSettings
+	err = json.Unmarshal([]byte(startBean.Settings), &settings)
+	assert.NoError(t, err, "settings JSON should be valid")
+	assert.NotNil(t, settings.BranchConfig, "branch_config should be present")
+	assert.Equal(t, "local", settings.BranchConfig.ConditionProvider, "provider protocol should be 'local'")
+	assert.Equal(t, 2, len(settings.BranchConfig.EndNodes), "should have 2 end nodes")
+	t.Logf("settings JSON: %s", startBean.Settings)
+
+	// initByBean: 反序列化（模拟 DB roundtrip）
+	restoredTask := &Task{dag: NewDAGGraph(), subtaskMap: make(map[string]*Subtask)}
+	_, err = restoredTask.initByBean(&model.Task{
+		ID: task.GetID(), TaskName: taskName, State: string(TaskPending),
+	}, subtaskBeans, edgeBeans)
+	assert.NoError(t, err, "initByBean should not fail")
+
+	// 验证分支已恢复且 ConditionProvider 可用
+	branchesMap := restoredTask.compiled.GetBranchesMap()
+	assert.Equal(t, 1, len(branchesMap), "should have 1 branch source node")
+
+	for _, branches := range branchesMap {
+		assert.Equal(t, 1, len(branches), "should have 1 branch")
+		branch := branches[0]
+		assert.NotNil(t, branch.ConditionProvider, "ConditionProvider should be restored from global registry")
+		assert.Equal(t, 2, len(branch.EndNodes), "endNodes should be restored")
+
+		// 实际调用 ConditionProvider 验证其可工作
+		result, execErr := branch.ConditionProvider.Execute(context.Background(), &executor.TaskData{
+			Input: `{"name":"start"}`,
+		})
+		assert.NoError(t, execErr, "restored ConditionProvider should execute successfully")
+		assert.Equal(t, pathA.GetID(), result, "restored ConditionProvider should return correct path")
+	}
+
+	// 清理全局注册表
+	ClearProviders(taskName)
+}
+
 // submitRollbackFailedTaskAndCheck tests StrategyRollbackFailed: only the failed subtask is rolled back.
 // DAG: one → two → three(fail). With StrategyRollbackFailed, only three should be rolled back.
 func submitRollbackFailedTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
@@ -861,7 +976,7 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 11
+	size := 12
 	done := make(chan struct{}, size)
 
 	go submitDemoTaskAndCheck(t, dispatcher1, done)
@@ -874,6 +989,7 @@ func TestDisPatch(t *testing.T) {
 	go submitAffinityTaskAndCheck(t, dispatcher1, done)
 	go submitBranchTaskAndCheck(t, dispatcher1, done)
 	go submitNestedBranchTaskAndCheck(t, dispatcher1, done)
+	go submitBranchProviderTaskAndCheck(t, dispatcher1, done)
 	go submitEdgeTypeDataFlowTask(t, dispatcher1, done)
 
 	for i := 0; i < size; i++ {

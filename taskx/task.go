@@ -446,8 +446,12 @@ func (t *Task) AddEdge(src, dst *Subtask, mappings ...*FieldMapping) error {
 }
 
 // AddBranch 添加条件分支
+// 如果 Branch 使用 ConditionProvider，会自动注册到全局注册表以便 DB 恢复
 func (t *Task) AddBranch(node *Subtask, branch *Branch) error {
 	registerBranch(t.task.TaskName, node.GetID(), branch)
+	if branch.ConditionProvider != nil {
+		registerBranchConditionProvider(t.task.TaskName, node.GetID(), branch.ConditionProvider)
+	}
 	return t.dag.AddBranch(node.GetID(), branch)
 }
 
@@ -968,6 +972,27 @@ func (t *Task) convert2Bean() (*model.Task, []model.Subtask, []model.TaskEdge) {
 			bean.PreSubtaskID = strings.Join(ids, ",")
 		}
 		bean.Status = 1
+		// 序列化分支配置到 settings JSON
+		if branches, ok := t.dag.branches[subtask.GetID()]; ok && len(branches) > 0 {
+			settings := SubtaskSettings{}
+			for _, br := range branches {
+				endNodeNames := make([]string, 0, len(br.EndNodes))
+				for k := range br.EndNodes {
+					if s, exists := t.subtaskMap[k]; exists {
+						endNodeNames = append(endNodeNames, s.GetName())
+					}
+				}
+				providerName := ""
+				if br.ConditionProvider != nil {
+					providerName = string(br.ConditionProvider.Protocol())
+				}
+				settings.BranchConfig = &BranchConfig{
+					EndNodes:          endNodeNames,
+					ConditionProvider: providerName,
+				}
+			}
+			bean.Settings = tools.ToJson(settings)
+		}
 		subtaskBeans = append(subtaskBeans, bean)
 	}
 
@@ -1085,9 +1110,18 @@ func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask, ed
 			}
 		}
 	}
-	// 从全局注册表恢复分支信息（分支的 Condition 函数无法持久化到 DB，必须从全局注册表恢复）
+	// 从全局注册表恢复分支信息
+	// 优先使用 ConditionProvider（可持久化），回退到 Condition 闭包（向后兼容）
 	if registeredBranches := getRegisteredBranches(taskBean.TaskName); len(registeredBranches) > 0 {
 		for nodeKey, branches := range registeredBranches {
+			for i, br := range branches {
+				// 如果 Branch 有 ConditionProvider，从新注册表恢复
+				if br.ConditionProvider == nil && br.Condition == nil {
+					if p := getBranchConditionProvider(taskBean.TaskName, nodeKey, i); p != nil {
+						br.ConditionProvider = p
+					}
+				}
+			}
 			t.dag.branches[nodeKey] = branches
 		}
 	}

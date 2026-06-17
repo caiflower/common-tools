@@ -26,6 +26,7 @@ type SubtaskBak struct {
 	Rollback      string     `bun:"rollback" json:"rollback"`            // 回滚策略
 	LastRunTime   basic.Time `bun:"last_run_time" json:"lastRunTime"`    // 最后执行时间
 	Status        int8       `bun:"status" json:"status"`                // 子任务状态(0:禁用, 1:启用)
+	Settings      string     `bun:"settings" json:"settings"`            // extensible JSON config (branch_config, etc.)
 }
 
 type SubtaskBakFilter struct {

@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS subtask (
     retry_interval INT /* 重试间隔(秒) */,
     rollback VARCHAR(20) /* 回滚策略 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
-    status TINYINT /* 子任务状态(0:禁用, 1:启用) */
+    status TINYINT /* 子任务状态(0:禁用, 1:启用) */,
+    settings VARCHAR(4096) NOT NULL DEFAULT '' /* extensible JSON config (branch_config, etc.) */
     );
 
 -- 为subtask表创建索引
@@ -113,7 +114,8 @@ CREATE TABLE IF NOT EXISTS subtask_bak (
     retry_interval INT /* 重试间隔(秒) */,
     rollback VARCHAR(20) /* 回滚策略 */,
     last_run_time TIMESTAMP(3) /* 更新时间，保留3位毫秒 */,
-    status TINYINT /* 子任务状态(0:禁用, 1:启用) */
+    status TINYINT /* 子任务状态(0:禁用, 1:启用) */,
+    settings VARCHAR(4096) NOT NULL DEFAULT '' /* extensible JSON config (branch_config, etc.) */
     );
 
 -- 为subtask_bak表创建索引
