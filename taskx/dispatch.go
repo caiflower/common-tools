@@ -597,7 +597,7 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 					if err != nil {
 						logger.Error("[processBranches] failed to update DB state for skipped subtask %s: %v", endKey, err)
 					}
-					logger.Info("[processBranches] skipped unselected branch target %s (selected: %s)", endKey, selectedKey)
+					logger.Debug("[processBranches] skipped unselected branch target %s (selected: %s)", endKey, selectedKey)
 				}
 			}
 		}
@@ -919,7 +919,7 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 		_, err = client.HandleTaskImmediately(callCtx, &proto.HandleTaskImmediatelyRequest{TaskIds: []string{taskID}, TraceId: traceID})
 		cancel()
 		if err == nil {
-			logger.Info("[notifyLeader] task %s notified leader %s via gRPC successfully", taskID, leaderName)
+			logger.Debug("[notifyLeader] task %s notified leader %s via gRPC successfully", taskID, leaderName)
 			return
 		}
 		lastErr = err
@@ -933,7 +933,7 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 }
 
 func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
-	logger.Debug("[handleTaskImmediately] tasks %v, isReady=%v, isLeader=%v", taskIDs, t.Cluster.IsReady(), t.Cluster.IsLeader())
+	logger.Trace("[handleTaskImmediately] tasks %v, isReady=%v, isLeader=%v", taskIDs, t.Cluster.IsReady(), t.Cluster.IsLeader())
 
 	if !t.Cluster.IsReady() {
 		logger.Warn("[handleTaskImmediately] cluster not ready, skip")
@@ -1007,7 +1007,7 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 	}
 
 	// Batch allocate workers
-	logger.Info("[handleTaskImmediately] allocateWorker: tasks=%d subtasks=%d rollbacks=%d", len(runningTasks), len(runningSubtasks), len(rollbackSubtasks))
+	logger.Debug("[handleTaskImmediately] allocateWorker: tasks=%d subtasks=%d rollbacks=%d", len(runningTasks), len(runningSubtasks), len(rollbackSubtasks))
 	if len(runningTasks) > 0 || len(runningSubtasks) > 0 || len(rollbackSubtasks) > 0 {
 		t.allocateWorker(ctx, runningTasks, runningSubtasks, rollbackSubtasks, taskAffinityMap)
 	}
