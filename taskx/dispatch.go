@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"math/rand"
-	"strings"
 	"sync"
 	"time"
 
@@ -445,21 +444,6 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 	// Handle branch selection: check completed nodes for branches, execute conditions, and skip unselected branch targets
 	t.processBranches(ctx, task)
 
-	// ========== Rollback detection and execution ==========
-	rollbackableSubtasks := task.GetRollbackableSubtasks()
-	logger.Trace("[analysisTask] task=%s rollbackableSubtasks=%v", task.GetID(), rollbackableSubtasks)
-	for _, subtaskID := range rollbackableSubtasks {
-		subtaskFromDB := subtaskMap[subtaskID]
-		if subtaskFromDB != nil && t.canExecuteSubtask(subtaskFromDB, true) {
-			rollbackSubtasks = append(rollbackSubtasks, subtaskFromDB.getModel())
-		}
-	}
-
-	rollbackableIDSet := make(map[string]bool)
-	for _, id := range rollbackableSubtasks {
-		rollbackableIDSet[id] = true
-	}
-
 	// Determine if rollback is truly triggered: only subtasks with state=failed indicate retries are exhausted and rollback is needed
 	// state=pending + retry>0 means still retrying, rollback should not be triggered
 	rollbackTriggered := false
@@ -481,43 +465,21 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 			st := subtask.GetState()
 			if (st == string(TaskSucceeded) || st == string(TaskFailed)) && subtask.hasRollbackExecutor() {
 				// Terminal state subtask + has rollback executor -> needs rollback
-				//_ = t.SubtaskDao.SetRollbackAndState(ctx, subtask.GetID(), string(RollbackPending), subtask.subtask.Output)
-				//subtask.subtask.Rollback = string(RollbackPending)
 				logger.Info("[analysisTask] task=%s set %s rollback=rollback_pending (terminal state=%s)", task.GetID(), subtask.GetID(), st)
 			}
 		}
 
-		// Leaf-first rollback: build forward dependency map (subtaskID -> subtasks that depend on it)
-		dependsOn := make(map[string][]string)
-		for _, subtask := range subtaskMap {
-			if subtask.subtask.PreSubtaskID != "" {
-				for _, preID := range strings.Split(subtask.subtask.PreSubtaskID, ",") {
-					preID = strings.TrimSpace(preID)
-					if preID != "" {
-						dependsOn[preID] = append(dependsOn[preID], subtask.GetID())
-					}
-				}
+		// Leaf-first rollback: Task computes leaves internally, dispatcher filters by canExecuteSubtask
+		leafRollbacks := task.LeafRollbackSubtasks()
+		for _, s := range leafRollbacks {
+			subtaskFromDB := subtaskMap[s.ID]
+			if subtaskFromDB != nil && t.canExecuteSubtask(subtaskFromDB, true) {
+				rollbackSubtasks = append(rollbackSubtasks, s)
 			}
 		}
-		// Only keep leaves whose dependencies have all completed rollback
-		var leafRollbackSubtasks []*model.Subtask
-		for _, subtask := range rollbackSubtasks {
-			isLeaf := true
-			for _, depID := range dependsOn[subtask.ID] {
-				depSubtask := subtaskMap[depID]
-				if depSubtask != nil && rollbackableIDSet[depID] && !isRollbackFinished(depSubtask.getRollback()) {
-					isLeaf = false
-					break
-				}
-			}
-			if isLeaf {
-				leafRollbackSubtasks = append(leafRollbackSubtasks, subtask)
-			}
-		}
-		rollbackSubtasks = leafRollbackSubtasks
 
 		if len(rollbackSubtasks) > 0 {
-			logger.Trace("[analysisTask] task=%s dispatching %d leaf rollback subtasks (of %d rollbackable)", task.GetID(), len(rollbackSubtasks), len(rollbackableSubtasks))
+			logger.Trace("[analysisTask] task=%s dispatching %d leaf rollback subtasks", task.GetID(), len(rollbackSubtasks))
 			return
 		}
 

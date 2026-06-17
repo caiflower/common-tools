@@ -728,6 +728,53 @@ func (t *Task) GetRollbackableSubtasks() []string {
 	}
 }
 
+// LeafRollbackSubtasks returns the leaf rollback subtasks in reverse topological order.
+// A leaf is a rollbackable subtask whose forward dependents (subtasks that depend on it)
+// have all completed their rollback. This ensures rollback proceeds from leaves toward roots.
+//
+// The rollbackable set and dependency graph are computed entirely from the Task's own state.
+func (t *Task) LeafRollbackSubtasks() []*model.Subtask {
+	rollbackableIDs := t.GetRollbackableSubtasks()
+	rollbackableIDSet := make(map[string]bool, len(rollbackableIDs))
+	for _, id := range rollbackableIDs {
+		rollbackableIDSet[id] = true
+	}
+
+	// Build forward dependency map: subtaskID -> subtasks that depend on it
+	dependsOn := make(map[string][]string)
+	for _, subtask := range t.subtaskMap {
+		if subtask.subtask.PreSubtaskID != "" {
+			for _, preID := range strings.Split(subtask.subtask.PreSubtaskID, ",") {
+				preID = strings.TrimSpace(preID)
+				if preID != "" {
+					dependsOn[preID] = append(dependsOn[preID], subtask.GetID())
+				}
+			}
+		}
+	}
+
+	// Only keep rollbackable leaves whose dependencies have all completed rollback
+	var leaves []*model.Subtask
+	for _, id := range rollbackableIDs {
+		subtask := t.subtaskMap[id]
+		if subtask == nil {
+			continue
+		}
+		isLeaf := true
+		for _, depID := range dependsOn[id] {
+			depSubtask := t.subtaskMap[depID]
+			if depSubtask != nil && rollbackableIDSet[depID] && !depSubtask.isRollbackFinished() {
+				isLeaf = false
+				break
+			}
+		}
+		if isLeaf {
+			leaves = append(leaves, subtask.getModel())
+		}
+	}
+	return leaves
+}
+
 // getCustomRollbackFunc 获取自定义回滚函数（内部使用）
 func (t *Task) getCustomRollbackFunc() func(completed []string, failed string) []string {
 	return t.customRollback

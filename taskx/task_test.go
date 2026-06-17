@@ -421,3 +421,187 @@ func TestTask_ProviderExecution(t *testing.T) {
 	assert.Equal(t, 0, len(next))
 	assert.True(t, myTask.IsFinished())
 }
+
+// buildRollbackTask creates a compiled Task with subtask beans ready for rollback testing.
+// It goes through the convert2Bean → initByBean cycle so PreSubtaskID is populated.
+// Returns the restored task and a name→ID mapping.
+func buildRollbackTask(taskName string, subtasks []*Subtask, edges [][2]*Subtask) (task *Task, nameToID map[string]string) {
+	t := NewTask(taskName)
+	for _, s := range subtasks {
+		_ = t.AddSubtask(s)
+	}
+	for _, e := range edges {
+		_ = t.AddControlEdge(e[0], e[1])
+	}
+	_, _ = t.Compile()
+
+	taskBean, subtaskBeans, _ := t.convert2Bean()
+
+	// Set all subtasks to succeeded state with rollback_pending (rollbackable)
+	for i := range subtaskBeans {
+		subtaskBeans[i].State = string(TaskSucceeded)
+		subtaskBeans[i].Rollback = string(RollbackPending)
+	}
+
+	restored := &Task{em: &executorManager{}}
+	restored, _ = restored.initByBean(taskBean, subtaskBeans, nil)
+
+	nameToID = make(map[string]string)
+	for id, s := range restored.subtaskMap {
+		nameToID[s.GetName()] = id
+	}
+	return restored, nameToID
+}
+
+// TestTask_LeafRollbackSubtasks_LinearChain tests A→B→C: only C (the leaf) should be returned
+func TestTask_LeafRollbackSubtasks_LinearChain(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
+
+	task, ids := buildRollbackTask("linear-rb", []*Subtask{a, b, c}, [][2]*Subtask{{a, b}, {b, c}})
+
+	leaves := task.LeafRollbackSubtasks()
+	assert.Equal(t, 1, len(leaves))
+	assert.Equal(t, ids["c"], leaves[0].ID, "C should be the only leaf")
+}
+
+// TestTask_LeafRollbackSubtasks_Diamond tests A→C, B→C, C→D: D is the only leaf
+func TestTask_LeafRollbackSubtasks_Diamond(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
+	d := NewSubtask("d", noopExec)
+
+	task, ids := buildRollbackTask("diamond-rb",
+		[]*Subtask{a, b, c, d},
+		[][2]*Subtask{{a, c}, {b, c}, {c, d}},
+	)
+
+	leaves := task.LeafRollbackSubtasks()
+	assert.Equal(t, 1, len(leaves))
+	assert.Equal(t, ids["d"], leaves[0].ID, "D should be the only leaf")
+}
+
+// TestTask_LeafRollbackSubtasks_PartialRollback tests A→B→C where C already finished rollback.
+// B should become a leaf alongside C.
+func TestTask_LeafRollbackSubtasks_PartialRollback(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
+
+	task, ids := buildRollbackTask("partial-rb", []*Subtask{a, b, c}, [][2]*Subtask{{a, b}, {b, c}})
+
+	// Simulate C already completed rollback
+	task.subtaskMap[ids["c"]].subtask.Rollback = string(RollbackSucceeded)
+
+	leaves := task.LeafRollbackSubtasks()
+	leafNames := make(map[string]bool)
+	for _, l := range leaves {
+		leafNames[task.subtaskMap[l.ID].GetName()] = true
+	}
+	assert.True(t, leafNames["b"], "B should be a leaf (dependent C finished rollback)")
+	assert.True(t, leafNames["c"], "C should be a leaf (no forward dependents)")
+}
+
+// TestTask_LeafRollbackSubtasks_Empty tests no rollbackable subtasks → empty result
+func TestTask_LeafRollbackSubtasks_Empty(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+
+	task := NewTask("empty-rb")
+	_ = task.AddSubtask(a)
+	_ = task.AddSubtask(b)
+	_ = task.AddControlEdge(a, b)
+	_, _ = task.Compile()
+
+	taskBean, subtaskBeans, _ := task.convert2Bean()
+	// All subtasks pending → no rollbackable
+	for i := range subtaskBeans {
+		subtaskBeans[i].State = string(TaskPending)
+		subtaskBeans[i].Rollback = string(NoneRollback)
+	}
+	restored := &Task{em: &executorManager{}}
+	restored, _ = restored.initByBean(taskBean, subtaskBeans, nil)
+
+	leaves := restored.LeafRollbackSubtasks()
+	assert.Empty(t, leaves)
+}
+
+// TestTask_LeafRollbackSubtasks_MixedDependents tests A→B, A→C where B is rollbackable but C is not.
+// B should be a leaf. A is NOT a leaf because B (rollbackable, not done) depends on it.
+func TestTask_LeafRollbackSubtasks_MixedDependents(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+	c := NewSubtask("c", noopExec)
+
+	task := NewTask("mixed-rb")
+	_ = task.AddSubtask(a)
+	_ = task.AddSubtask(b)
+	_ = task.AddSubtask(c)
+	_ = task.AddControlEdge(a, b)
+	_ = task.AddControlEdge(a, c)
+	_, _ = task.Compile()
+
+	taskBean, subtaskBeans, _ := task.convert2Bean()
+	for i := range subtaskBeans {
+		switch subtaskBeans[i].TaskName {
+		case "a":
+			subtaskBeans[i].State = string(TaskSucceeded)
+			subtaskBeans[i].Rollback = string(RollbackPending)
+		case "b":
+			subtaskBeans[i].State = string(TaskSucceeded)
+			subtaskBeans[i].Rollback = string(RollbackPending)
+		case "c":
+			// C is pending → not rollbackable (not succeeded/failed)
+			subtaskBeans[i].State = string(TaskPending)
+			subtaskBeans[i].Rollback = string(NoneRollback)
+		}
+	}
+
+	restored := &Task{em: &executorManager{}}
+	restored, _ = restored.initByBean(taskBean, subtaskBeans, nil)
+
+	leaves := restored.LeafRollbackSubtasks()
+	leafNames := make(map[string]bool)
+	for _, l := range leaves {
+		leafNames[restored.subtaskMap[l.ID].GetName()] = true
+	}
+	assert.True(t, leafNames["b"], "B should be a leaf (no forward dependents)")
+	assert.False(t, leafNames["a"], "A should NOT be a leaf (B is rollbackable and not done)")
+	assert.False(t, leafNames["c"], "C should NOT appear (not rollbackable)")
+}
+
+// TestTask_LeafRollbackSubtasks_FailedSubtask tests A→B where B failed.
+// Both A (succeeded) and B (failed) are rollbackable; B is the leaf.
+func TestTask_LeafRollbackSubtasks_FailedSubtask(t *testing.T) {
+	a := NewSubtask("a", noopExec)
+	b := NewSubtask("b", noopExec)
+
+	task := NewTask("failed-rb")
+	_ = task.AddSubtask(a)
+	_ = task.AddSubtask(b)
+	_ = task.AddControlEdge(a, b)
+	_, _ = task.Compile()
+
+	taskBean, subtaskBeans, _ := task.convert2Bean()
+	nameToID := make(map[string]string)
+	for i := range subtaskBeans {
+		nameToID[subtaskBeans[i].TaskName] = subtaskBeans[i].ID
+		switch subtaskBeans[i].TaskName {
+		case "a":
+			subtaskBeans[i].State = string(TaskSucceeded)
+			subtaskBeans[i].Rollback = string(RollbackPending)
+		case "b":
+			subtaskBeans[i].State = string(TaskFailed)
+			subtaskBeans[i].Rollback = string(RollbackPending)
+		}
+	}
+
+	restored := &Task{em: &executorManager{}}
+	restored, _ = restored.initByBean(taskBean, subtaskBeans, nil)
+
+	leaves := restored.LeafRollbackSubtasks()
+	assert.Equal(t, 1, len(leaves))
+	assert.Equal(t, nameToID["b"], leaves[0].ID, "B (failed) should be the leaf")
+}
