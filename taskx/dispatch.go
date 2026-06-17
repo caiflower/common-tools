@@ -64,9 +64,9 @@ type taskDispatcher struct {
 	inQueueTasks           sync.Map
 	delayQueue             *basic.DelayQueue
 	leaderStopChan         chan struct{}
-	lastMasterCallTime     atomic.Value   // 上次 MasterCall 时间，用于节流
-	taskCache              *gocache.Cache // taskID -> *Task，缓存编译后的 DAG，自动过期清理
-	randSource             *rand.Rand     // 局部随机数生成器，避免全局锁
+	lastMasterCallTime     atomic.Value   // last MasterCall time, used for throttling
+	taskCache              *gocache.Cache // taskID -> *Task, caches compiled DAGs with automatic expiration cleanup
+	randSource             *rand.Rand     // local random number generator to avoid global lock
 }
 
 type Config struct {
@@ -90,9 +90,9 @@ type affinity struct {
 	Worker string
 }
 
-// taskCache 缓存编译后的 Task，避免每次调度都重建 DAG，30s 自动过期
+// taskCache caches compiled Tasks to avoid rebuilding the DAG on every scheduling cycle, with 30s auto-expiration
 
-// masterCallMinInterval MasterCall 最小调用间隔，避免频繁查询 DB
+// masterCallMinInterval is the minimum interval between MasterCall invocations to avoid frequent DB queries
 const masterCallMinInterval = 5 * time.Second
 
 func InitTaskDispatcher(cfg *Config) {
@@ -143,7 +143,7 @@ func (t *taskDispatcher) MasterCall() {
 		return
 	}
 
-	// 节流：距离上次调用不足 masterCallMinInterval 则跳过
+	// Throttle: skip if less than masterCallMinInterval since last call
 	if lastCall := t.lastMasterCallTime.Load(); lastCall != nil {
 		if time.Since(lastCall.(time.Time)) < masterCallMinInterval {
 			logger.Trace("[MasterCall] throttled, lastCall=%v, elapsed=%v", lastCall.(time.Time).Format("15:04:05.000"), time.Since(lastCall.(time.Time)))
@@ -179,7 +179,7 @@ func (t *taskDispatcher) OnStartedLeading() {
 		// Take task from delay queue (supports stop signal)
 		item := t.delayQueue.TakeWithStop(t.leaderStopChan)
 		if item == nil {
-			// 收到停止信号
+			// Stop signal received
 			logger.Info("[taskDispatcher] leader stop signal received, exiting dispatch loop")
 			return
 		}
@@ -203,12 +203,12 @@ func (t *taskDispatcher) OnStartedLeading() {
 func (t *taskDispatcher) OnStoppedLeading() {
 	logger.Info("[taskDispatcher] node %s stops dispatching tasks", t.Cluster.GetMyName())
 	t.running.Store(false)
-	// 关闭 leaderStopChan，中断 TakeWithStop 的阻塞等待
+	// Close leaderStopChan to interrupt the blocking wait in TakeWithStop
 	if t.leaderStopChan != nil {
 		close(t.leaderStopChan)
 		t.leaderStopChan = nil
 	}
-	// 清理任务缓存
+	// Flush task cache
 	t.taskCache.Flush()
 }
 
@@ -233,7 +233,7 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 		return err
 	})
 
-	// if not rollback executor, set rollback to NoneRollback
+	// If no rollback executor, set rollback to NoneRollback
 	for i, subtask := range subtaskBeans {
 		if task.em.getRollbackProvider(taskBean.TaskName, subtask.TaskName) == nil {
 			subtaskBeans[i].Rollback = string(NoneRollback)
@@ -272,7 +272,7 @@ func SubmitTaskWithTx(task *Task, tx *bun.Tx) error {
 func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *bun.Tx) error {
 	taskBean, subtaskBeans, edgeBeans := task.convert2Bean()
 
-	// if not rollback executor, set rollback to NoneRollback（与 SubmitTask 保持一致）
+	// If no rollback executor, set rollback to NoneRollback (consistent with SubmitTask)
 	for i, subtask := range subtaskBeans {
 		if task.em.getRollbackProvider(taskBean.TaskName, subtask.TaskName) == nil {
 			subtaskBeans[i].Rollback = string(NoneRollback)
@@ -368,7 +368,7 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 		return
 	}
 
-	// 清理 inQueueTasks 中已完成的任务（防止内存泄漏）
+	// Clean up finished tasks from inQueueTasks to prevent memory leaks
 	t.inQueueTasks.Range(func(key, _ interface{}) bool {
 		taskID := key.(string)
 		for _, task := range tasks {
@@ -421,7 +421,7 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 	if task.IsFinished() {
 		logger.Trace("[analysisTask] task=%s already finished, dbState=%s", task.GetID(), task.getState())
 		finished = true
-		// 同步 DB 状态：如果内存中判断已完成但 DB 状态未更新，需要更新 DB
+		// Sync DB state: update DB if in-memory state is finished but DB state is not yet updated
 		hasFailed := false
 		for _, subtask := range subtaskMap {
 			if subtask.GetState() == string(TaskFailed) {
@@ -437,13 +437,15 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 			task.task.State = string(TaskSucceeded)
 		}
 		logger.Trace("[analysisTask] task=%s synced DB state to %s", task.GetID(), task.getState())
+		// Task finished, remove from cache to prevent memory leaks
+		t.taskCache.Delete(task.GetID())
 		return
 	}
 
-	// 处理分支选择：检查已完成的节点是否有分支，执行条件并 Skip 未选中的分支目标
+	// Handle branch selection: check completed nodes for branches, execute conditions, and skip unselected branch targets
 	t.processBranches(ctx, task)
 
-	// ========== 回滚检测与执行 ==========
+	// ========== Rollback detection and execution ==========
 	rollbackableSubtasks := task.GetRollbackableSubtasks()
 	logger.Trace("[analysisTask] task=%s rollbackableSubtasks=%v", task.GetID(), rollbackableSubtasks)
 	for _, subtaskID := range rollbackableSubtasks {
@@ -458,8 +460,8 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 		rollbackableIDSet[id] = true
 	}
 
-	// 判断回滚是否真正触发：只有 state=failed 的子任务才表示重试已耗尽、需要回滚
-	// state=pending + retry>0 表示还在重试中，不应触发回滚
+	// Determine if rollback is truly triggered: only subtasks with state=failed indicate retries are exhausted and rollback is needed
+	// state=pending + retry>0 means still retrying, rollback should not be triggered
 	rollbackTriggered := false
 	hasRetrying := false
 	for _, subtask := range subtaskMap {
@@ -470,22 +472,22 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 	}
 
 	if rollbackTriggered && !hasRetrying {
-		// 回滚已触发：设置所有相关子任务的 rollback = rollback_pending
+		// Rollback triggered: set rollback = rollback_pending for all relevant subtasks
 		for _, subtask := range subtaskMap {
 			rb := subtask.getRollback()
 			if rb != string(NoneRollback) && rb != "" {
-				continue // 已有 rollback 状态，不覆盖
+				continue // already has a rollback state, do not overwrite
 			}
 			st := subtask.GetState()
 			if (st == string(TaskSucceeded) || st == string(TaskFailed)) && subtask.hasRollbackExecutor() {
-				// 终态子任务 + 有 rollback executor → 需要回滚
+				// Terminal state subtask + has rollback executor -> needs rollback
 				//_ = t.SubtaskDao.SetRollbackAndState(ctx, subtask.GetID(), string(RollbackPending), subtask.subtask.Output)
 				//subtask.subtask.Rollback = string(RollbackPending)
 				logger.Info("[analysisTask] task=%s set %s rollback=rollback_pending (terminal state=%s)", task.GetID(), subtask.GetID(), st)
 			}
 		}
 
-		// 叶子优先回滚：构建正向依赖（subtaskID → 依赖它的子任务）
+		// Leaf-first rollback: build forward dependency map (subtaskID -> subtasks that depend on it)
 		dependsOn := make(map[string][]string)
 		for _, subtask := range subtaskMap {
 			if subtask.subtask.PreSubtaskID != "" {
@@ -497,7 +499,7 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 				}
 			}
 		}
-		// 只保留依赖都已回滚完成的叶子
+		// Only keep leaves whose dependencies have all completed rollback
 		var leafRollbackSubtasks []*model.Subtask
 		for _, subtask := range rollbackSubtasks {
 			isLeaf := true
@@ -522,10 +524,12 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 		logger.Info("[analysisTask] task=%s all rollbacks done or no leaves, checking allDone", task.GetID())
 		_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskFailed))
 		task.task.State = string(TaskFailed)
+		// Task completed (rollback finished), remove from cache to prevent memory leaks
+		t.taskCache.Delete(task.GetID())
 		return
 	}
 
-	// 获取下一个可执行的子任务
+	// Get the next executable subtasks
 	nextPendingSubTasks := task.NextSubTasks()
 	logger.Trace("[analysisTask] task=%s nextPendingSubTasks=%d", task.GetID(), len(nextPendingSubTasks))
 	if len(nextPendingSubTasks) > 0 {
@@ -544,8 +548,8 @@ func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMa
 	return
 }
 
-// processBranches 处理分支选择逻辑
-// 检查已完成的节点是否有分支定义，执行条件函数，并自动 Skip 未选中的分支目标节点
+// processBranches handles branch selection logic.
+// Checks completed nodes for branch definitions, executes condition functions, and automatically skips unselected branch target nodes.
 func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 	compiled := task.getCompiled()
 	if compiled == nil {
@@ -553,7 +557,7 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 	}
 
 	for nodeKey, branches := range compiled.GetBranchesMap() {
-		// 检查分支源节点是否已完成
+		// Check if the branch source node has completed
 		node := task.dag.nodes[nodeKey]
 		if node == nil || node.state != NodeSucceeded {
 			continue
@@ -564,7 +568,7 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 				continue
 			}
 
-			// 获取分支源节点的输出作为条件输入
+			// Get the branch source node's output as condition input
 			ch := compiled.GetChannel(nodeKey)
 			var input any
 			if ch != nil {
@@ -572,23 +576,23 @@ func (t *taskDispatcher) processBranches(ctx context.Context, task *Task) {
 				input = data
 			}
 
-			// 执行条件函数
+			// Execute the condition function
 			selectedKey, err := branch.Condition(nil, input)
 			if err != nil {
 				logger.Error("[processBranches] branch condition for node %s failed: %v", nodeKey, err)
 				continue
 			}
 
-			// Skip 未选中的分支目标节点
+			// Skip unselected branch target nodes
 			for endKey := range branch.EndNodes {
 				if endKey == selectedKey {
 					continue
 				}
-				// 检查目标节点是否还是 Pending 状态
+				// Check if the target node is still in Pending state
 				endNode := task.dag.nodes[endKey]
 				if endNode != nil && endNode.state == NodePending {
 					_ = task.SkipSubtask(endKey)
-					// 同步更新 DB 中的子任务状态为 Skipped
+					// Sync the subtask state in DB to Skipped
 					err = t.SubtaskDao.SetOutputAndState(ctx, endKey, "", string(TaskSkipped))
 					if err != nil {
 						logger.Error("[processBranches] failed to update DB state for skipped subtask %s: %v", endKey, err)
@@ -634,14 +638,14 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 	}
 
 	defer func() {
-		// 清除分配中标志
+		// Clear in-flight allocation flags
 		t.deleteInflightSubtasks(runningSubtasks)
 		t.deleteInflightSubtasks(runningSubtaskRollbacks)
 		t.deleteInflightTasks(runningTasks)
 	}()
 
-	// 注意：不在 allocateWorker 中清理 inflight，而是在 handleTaskImmediately 中
-	// 根据 DB 状态清理已完成的任务，避免在 dispatch 阶段过早清理导致重复分配
+	// NOTE: inflight cleanup is not done in allocateWorker, but in handleTaskImmediately
+	// based on DB state, to avoid premature cleanup during dispatch causing duplicate allocation
 
 	subtaskWorkerMap := make(map[string][]string)
 	subtaskRollbackWorkerMap := make(map[string][]string)
@@ -658,31 +662,31 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 		return affinityConf
 	}
 
-	// 先分配任务执行节点（子任务可能需要依赖 task 的 worker 做 affinity）
+	// Allocate task execution nodes first (subtasks may need to reference the task's worker for affinity)
 	t.allocateItems(ctx, len(runningTasks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
 		return runningTasks[i].ID, runningTasks[i].ID, runningTasks[i].Worker, runningTasks[i].Worker
 	}, func(ctx context.Context, i int, nodeName string) (int64, error) {
 		return t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTasks[i].ID, nodeName, string(TaskRunning), runningTasks[i].Worker)
 	}, getAffinity, taskWorkerMap)
 
-	// 构建 taskWorker 查找表（task 分配完 worker 后，子任务可以参考）
+	// Build taskWorker lookup table (after task is allocated a worker, subtasks can reference it)
 	taskAllocatedWorker := make(map[string]string) // taskID -> allocated worker
 	for nodeName, taskIDs := range taskWorkerMap {
 		for _, tid := range taskIDs {
 			taskAllocatedWorker[tid] = nodeName
 		}
 	}
-	// 同时从 DB 中已有 worker 的 task 获取
+	// Also get tasks that already have a worker in DB
 	for i := range runningTasks {
 		if runningTasks[i].Worker != "" {
 			taskAllocatedWorker[runningTasks[i].ID] = runningTasks[i].Worker
 		}
 	}
 
-	// 分配子任务执行节点
-	// 注意：currentWorker 是 DB 中的实际 worker（用于 CAS 条件），affinityNode 是亲和性提示（用于选节点）
+	// Allocate subtask execution nodes
+	// NOTE: currentWorker is the actual worker in DB (for CAS conditions), affinityNode is the affinity hint (for node selection)
 	t.allocateItems(ctx, len(runningSubtasks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
-		// affinityNode：如果子任务没有 worker，使用 task 的 worker 作为亲和性提示
+		// affinityNode: if the subtask has no worker, use the task's worker as affinity hint
 		affNode := runningSubtasks[i].Worker
 		if affNode == "" {
 			if tw, ok := taskAllocatedWorker[runningSubtasks[i].TaskID]; ok {
@@ -694,7 +698,7 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 		return t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtasks[i].ID, nodeName, string(TaskRunning), runningSubtasks[i].Worker)
 	}, getAffinity, subtaskWorkerMap)
 
-	// 分配回滚任务执行节点
+	// Allocate rollback task execution nodes
 	t.allocateItems(ctx, len(runningSubtaskRollbacks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
 		return runningSubtaskRollbacks[i].TaskID, runningSubtaskRollbacks[i].ID, runningSubtaskRollbacks[i].Worker, runningSubtaskRollbacks[i].Worker
 	}, func(ctx context.Context, i int, nodeName string) (int64, error) {
@@ -706,14 +710,14 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 	t.deliverToCluster(ctx, subtaskRollbackWorkerMap, deliverSubtaskRollback)
 }
 
-// allocateItemInfo 获取待分配项的信息
-// 返回: taskID, itemID, currentWorker(DB中的实际worker，用于CAS条件), affinityNode(亲和性提示节点，用于选节点)
+// allocateItemInfo returns allocation item information.
+// Returns: taskID, itemID, currentWorker (actual worker in DB, for CAS conditions), affinityNode (affinity hint node, for node selection)
 type allocateItemInfo func(i int) (taskID, itemID, currentWorker, affinityNode string)
 
-// allocateItemCAS 尝试 CAS 更新 worker，返回 (affectedRows, error)
+// allocateItemCAS attempts a CAS update on the worker, returning (affectedRows, error)
 type allocateItemCAS func(ctx context.Context, i int, nodeName string) (int64, error)
 
-// allocateItems 通用的节点分配逻辑，消除 subtask/task/rollback 三段重复代码
+// allocateItems is the generic node allocation logic, eliminating duplicated code across subtask/task/rollback
 func (t *taskDispatcher) allocateItems(ctx context.Context, count int, getInfo allocateItemInfo, casUpdate allocateItemCAS, getAffinity func(string) affinity, workerMap map[string][]string) {
 	for i := 0; i < count; i++ {
 		taskID, itemID, currentWorker, affinityNode := getInfo(i)
@@ -790,7 +794,7 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 		if currentNode != "" && tools.StringSliceContains(aliveNodes, currentNode) && !tools.StringSliceContains(lostNodes, currentNode) {
 			return currentNode
 		}
-		// ForceSameNode 但没有指定 primaryWorker 且没有当前 worker，随机选一个
+		// ForceSameNode but no primaryWorker specified and no current worker, pick randomly
 		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
 	case AffinityPreferSameNode:
 		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
@@ -958,9 +962,10 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 	for i := range tasks {
 		dbTask := &tasks[i]
 
-		// 跳过已完成的任务
+		// Skip finished tasks and remove from cache to prevent memory leaks
 		if isFinished(dbTask.State) {
 			logger.Trace("[handleTaskImmediately] task=%s state=%s is finished, skip", dbTask.ID, dbTask.State)
+			t.taskCache.Delete(dbTask.ID)
 			continue
 		}
 
@@ -987,13 +992,13 @@ func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []st
 			continue
 		}
 
-		// task 从 Pending → SubtaskRunning，需要分配 worker 并 deliver
+		// Task transitions from Pending -> SubtaskRunning, needs worker allocation and delivery
 		if dbTask.State == string(TaskPending) {
 			runningTasks = append(runningTasks, dbTask)
 		}
 
 		if len(runnings) > 0 {
-			// 预计算 Input：从数据前驱的输出合并写入 DB，避免 worker 侧额外查询
+			// Pre-compute Input: merge outputs from data predecessors and write to DB, avoiding extra queries on the worker side
 			t.computeInput(ctx, task, runnings)
 			runningSubtasks = append(runningSubtasks, runnings...)
 		} else if len(rollbacks) > 0 {
@@ -1019,11 +1024,11 @@ func (t *taskDispatcher) computeInput(ctx context.Context, task *Task, runnings 
 				if !ok {
 					continue
 				}
-				// 被跳过的前驱 Output 必然为空，反序列化无意义，跳过即可
+				// Skipped predecessor Output is always empty, deserialization is pointless, just skip
 				if s.IsSkipped() {
 					continue
 				}
-				// s.subtask.Output 是 Output 结构体的 JSON，需要提取内部的 Output 字段
+				// s.subtask.Output is a JSON of the Output struct, need to extract the inner Output field
 				var output Output
 				if err := tools.Unmarshal([]byte(s.subtask.Output), &output); err == nil {
 					preSubtasks[s.GetName()] = output.Output
@@ -1064,21 +1069,21 @@ func (t *taskDispatcher) computeInput(ctx context.Context, task *Task, runnings 
 	}
 }
 
-// getOrInitTask 获取或初始化 Task（带缓存），避免每次调度都重建 DAG
+// getOrInitTask retrieves or initializes a Task (with cache), avoiding rebuilding the DAG on every scheduling cycle
 func (t *taskDispatcher) getOrInitTask(ctx context.Context, dbTask *model.Task, subtasks []model.Subtask) *Task {
-	// 检查缓存
+	// Check cache
 	if cached, ok := t.taskCache.Get(dbTask.ID); ok {
 		ct := cached.(*Task)
 		t.refreshSubtaskStates(ct, subtasks)
 		return ct
 	}
 
-	// 加载边信息
+	// Load edge information
 	edges, err := t.TaskEdgeDao.GetByTaskID(ctx, dbTask.ID)
 	if err != nil {
 		logger.Warn("[getOrInitTask] task %s load edges failed: %v, fallback to pre_subtask_id inference", dbTask.ID, err)
 	}
-	// 缓存未命中，重建 Task
+	// Cache miss, rebuild Task
 	task := &Task{}
 	task, err = task.initByBean(dbTask, subtasks, edges)
 	if err != nil {
@@ -1086,14 +1091,14 @@ func (t *taskDispatcher) getOrInitTask(ctx context.Context, dbTask *model.Task, 
 		return nil
 	}
 
-	// 写入缓存（go-cache 自动 30s 过期清理）
+	// Write to cache (go-cache auto-expires and cleans up after 30s)
 	t.taskCache.SetDefault(dbTask.ID, task)
 
 	return task
 }
 
-// refreshSubtaskStates 用 DB 中的最新状态刷新缓存 Task 的子任务状态
-// 同时同步 DAG 节点状态和 channel 通知，确保 GetExecutableNodes 返回正确结果
+// refreshSubtaskStates refreshes cached Task subtask states with the latest state from DB.
+// Also syncs DAG node states and channel notifications to ensure GetExecutableNodes returns correct results.
 func (t *taskDispatcher) refreshSubtaskStates(task *Task, subtasks []model.Subtask) {
 	for _, dbSubtask := range subtasks {
 		cached, ok := task.subtaskMap[dbSubtask.ID]
@@ -1109,17 +1114,17 @@ func (t *taskDispatcher) refreshSubtaskStates(task *Task, subtasks []model.Subta
 		cached.subtask.Retry = dbSubtask.Retry
 		cached.subtask.LastRunTime = dbSubtask.LastRunTime
 
-		// 状态未变化，无需更新 DAG
+		// State unchanged, no need to update DAG
 		if oldState == dbSubtask.State {
 			continue
 		}
 
 		logger.Trace("[refreshSubtaskStates] task=%s subtask=%s oldState=%s newState=%s", task.GetID(), dbSubtask.ID, oldState, dbSubtask.State)
 
-		// 同步 DAG 节点状态和 channel 通知
+		// Sync DAG node state and channel notifications
 		switch dbSubtask.State {
 		case string(TaskPending):
-			// retry 后状态从 running → pending，DAG 节点需要回退到 NodePending 以便重新执行
+			// After retry, state goes from running -> pending; DAG node needs to revert to NodePending for re-execution
 			_ = task.dag.UpdateNodeState(dbSubtask.ID, NodePending)
 		case string(TaskSucceeded):
 			if err := task.dag.UpdateNodeState(dbSubtask.ID, NodeSucceeded); err != nil {
