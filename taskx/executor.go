@@ -81,6 +81,27 @@ var (
 	}{executors: make(map[string]TaskExecutor)}
 )
 
+// _customRollbackRegistry 全局自定义回滚函数注册表（集群框架：dispatcher 从 DB 重建 Task 时恢复）
+// taskName -> custom rollback function
+var (
+	_customRollbackRegistry = struct {
+		sync.RWMutex
+		funcs map[string]func(completed []string, failed string) []string
+	}{funcs: make(map[string]func(completed []string, failed string) []string)}
+)
+
+func registerCustomRollback(taskName string, fn func(completed []string, failed string) []string) {
+	_customRollbackRegistry.Lock()
+	defer _customRollbackRegistry.Unlock()
+	_customRollbackRegistry.funcs[taskName] = fn
+}
+
+func getCustomRollback(taskName string) func(completed []string, failed string) []string {
+	_customRollbackRegistry.RLock()
+	defer _customRollbackRegistry.RUnlock()
+	return _customRollbackRegistry.funcs[taskName]
+}
+
 func registerTaskExecutor(e TaskExecutor) {
 	_taskExecutorRegistry.Lock()
 	defer _taskExecutorRegistry.Unlock()
@@ -110,6 +131,10 @@ func ClearProviders(taskName string) {
 	_branchRegistry.Lock()
 	defer _branchRegistry.Unlock()
 	delete(_branchRegistry.branches, taskName)
+
+	_customRollbackRegistry.Lock()
+	defer _customRollbackRegistry.Unlock()
+	delete(_customRollbackRegistry.funcs, taskName)
 }
 
 // ClearAllProviders 清理所有全局执行器注册表
@@ -125,6 +150,10 @@ func ClearAllProviders() {
 	_branchRegistry.Lock()
 	defer _branchRegistry.Unlock()
 	_branchRegistry.branches = make(map[string]map[string][]*Branch)
+
+	_customRollbackRegistry.Lock()
+	defer _customRollbackRegistry.Unlock()
+	_customRollbackRegistry.funcs = make(map[string]func(completed []string, failed string) []string)
 }
 
 // ClearTaskExecutors 清理指定 taskName 的全局 TaskExecutor 注册表

@@ -43,6 +43,8 @@ import (
 const (
 	taskDemoName           = "taskDemo_flow"
 	taskRollbackName       = "taskRollback_flow"
+	taskRollbackFailedName = "taskRollbackFailed_flow"
+	taskRollbackCustomName = "taskRollbackCustom_flow"
 	taskNameOfNonRetryable = "taskNonRetryable_flow"
 	taskBranchName         = "taskBranch_flow"
 	taskNestedBranchName   = "taskNestedBranch_flow"
@@ -474,6 +476,7 @@ func submitRollbackTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 	assert.Equal(t, false, isFinished(dbFive.State), "check subtask finish state failed")
 
 	// check finish time
+	t.Logf("two.LastRunTime=%v three.LastRunTime=%v four.LastRunTime=%v", dbTwo.LastRunTime.Time(), dbThree.LastRunTime.Time(), dbFour.LastRunTime.Time())
 	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbThree.LastRunTime.Time()) >= 0, "check finishTime failed")
 	assert.Equal(t, true, dbTwo.LastRunTime.Time().Sub(dbFour.LastRunTime.Time()) >= 0, "check finishTime failed")
 
@@ -663,6 +666,104 @@ func submitNestedBranchTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, do
 	done <- struct{}{}
 }
 
+// submitRollbackFailedTaskAndCheck tests StrategyRollbackFailed: only the failed subtask is rolled back.
+// DAG: one → two → three(fail). With StrategyRollbackFailed, only three should be rolled back.
+func submitRollbackFailedTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	task := NewTask(taskRollbackFailedName).SetUrgent().SetRollbackStrategy(StrategyRollbackFailed)
+
+	one := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepOne}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	two := NewSubtask(stepTwo, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepTwo}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	three := NewSubtask(stepThree, executor.NewLocalExecutor(failStep)).SetInput(map[string]any{"name": stepThree}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddEdge(one, two)
+	_ = task.AddEdge(two, three)
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	_, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	dbOne := subtaskMap[stepOne]
+	dbTwo := subtaskMap[stepTwo]
+	dbThree := subtaskMap[stepThree]
+
+	// three failed and has rollback executor → should be rolled back
+	assert.Equal(t, string(TaskFailed), dbThree.State, "three should be failed")
+	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "three rollback should be finished")
+
+	// one and two succeeded → with StrategyRollbackFailed, they should NOT be rolled back
+	assert.Equal(t, string(TaskSucceeded), dbOne.State, "one should be succeeded")
+	assert.Equal(t, string(TaskSucceeded), dbTwo.State, "two should be succeeded")
+	assert.Equal(t, string(RollbackPending), dbOne.Rollback, "one should still be rollback_pending (not rolled back)")
+	assert.Equal(t, string(RollbackPending), dbTwo.Rollback, "two should still be rollback_pending (not rolled back)")
+
+	done <- struct{}{}
+}
+
+// submitRollbackCustomTaskAndCheck tests StrategyRollbackCustom: custom function selects which subtasks to roll back.
+// DAG: one → two → three → four(fail). Custom func returns [one, three], skipping two.
+func submitRollbackCustomTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
+	task := NewTask(taskRollbackCustomName).SetUrgent()
+
+	one := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepOne}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	two := NewSubtask(stepTwo, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepTwo}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	three := NewSubtask(stepThree, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": stepThree}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+	four := NewSubtask(stepFour, executor.NewLocalExecutor(failStep)).SetInput(map[string]any{"name": stepFour}).
+		SetRollbackExecutor(executor.NewLocalExecutor(rollbackStep))
+
+	_ = task.AddSubtask(one)
+	_ = task.AddSubtask(two)
+	_ = task.AddSubtask(three)
+	_ = task.AddSubtask(four)
+	_ = task.AddEdge(one, two)
+	_ = task.AddEdge(two, three)
+	_ = task.AddEdge(three, four)
+
+	// Custom rollback: only roll back one and three, skip two
+	task.SetCustomRollbackFunc(func(completed []string, failed string) []string {
+		var result []string
+		for _, id := range completed {
+			s := task.subtaskMap[id]
+			if s != nil && (s.GetName() == stepOne || s.GetName() == stepThree) {
+				result = append(result, id)
+			}
+		}
+		return result
+	})
+
+	_, err := task.Compile()
+	assert.NoError(t, err)
+
+	_, _, subtaskMap := submitAndWait(t, dispatcher, task)
+
+	dbOne := subtaskMap[stepOne]
+	dbTwo := subtaskMap[stepTwo]
+	dbThree := subtaskMap[stepThree]
+	dbFour := subtaskMap[stepFour]
+
+	// four failed
+	assert.Equal(t, string(TaskFailed), dbFour.State, "four should be failed")
+
+	// one and three were selected by custom func → should be rolled back
+	assert.Equal(t, true, isRollbackFinished(dbOne.Rollback), "one rollback should be finished (selected by custom)")
+	assert.Equal(t, true, isRollbackFinished(dbThree.Rollback), "three rollback should be finished (selected by custom)")
+
+	// two was NOT selected by custom func → should remain rollback_pending
+	assert.Equal(t, string(TaskSucceeded), dbTwo.State, "two should be succeeded")
+	assert.Equal(t, string(RollbackPending), dbTwo.Rollback, "two should still be rollback_pending (not selected by custom)")
+
+	done <- struct{}{}
+}
+
 // ===== 主测试入口 =====
 
 func submitEdgeTypeDataFlowTask(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
@@ -760,11 +861,13 @@ func TestDisPatch(t *testing.T) {
 		}
 	}
 
-	size := 9
+	size := 11
 	done := make(chan struct{}, size)
 
 	go submitDemoTaskAndCheck(t, dispatcher1, done)
 	go submitRollbackTaskAndCheck(t, dispatcher1, done)
+	go submitRollbackFailedTaskAndCheck(t, dispatcher1, done)
+	go submitRollbackCustomTaskAndCheck(t, dispatcher1, done)
 	go submitNonRetryTaskAndCheck(t, dispatcher1, done)
 	go submitScheduleTask(t, dispatcher1, done)
 	go submitPanicTaskAndCheck(t, dispatcher1, done)

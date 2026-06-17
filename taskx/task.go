@@ -383,6 +383,8 @@ func (t *Task) SetRollbackStrategy(strategy RollbackStrategy) *Task {
 func (t *Task) SetCustomRollbackFunc(fn func(completed []string, failed string) []string) *Task {
 	t.customRollback = fn
 	t.rollbackStrategy = StrategyRollbackCustom
+	// Register to global registry (cluster framework: dispatcher restores Task from DB)
+	registerCustomRollback(t.task.TaskName, fn)
 	return t
 }
 
@@ -1004,6 +1006,10 @@ func (t *Task) initByBean(taskBean *model.Task, subtaskBeans []model.Subtask, ed
 	t.task = *taskBean
 	t.rollbackStrategy = rollbackStrategyFromDBString(taskBean.RollbackStrategy)
 	t.subtaskMap = make(map[string]*Subtask)
+	// Restore custom rollback function from global registry (cluster framework)
+	if fn := getCustomRollback(taskBean.TaskName); fn != nil {
+		t.customRollback = fn
+	}
 
 	// 初始化 executorManager 并从全局注册表恢复执行器
 	t.em = newExecutorManager()

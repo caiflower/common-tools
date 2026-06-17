@@ -418,27 +418,40 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 func (t *taskDispatcher) analysisTask(ctx context.Context, task *Task, subtaskMap map[string]*Subtask) (finished, retry bool, runningSubtasks []*model.Subtask, rollbackSubtasks []*model.Subtask) {
 	// sync task status to db
 	if task.IsFinished() {
-		logger.Trace("[analysisTask] task=%s already finished, dbState=%s", task.GetID(), task.getState())
-		finished = true
-		// Sync DB state: update DB if in-memory state is finished but DB state is not yet updated
+		logger.Trace("[analysisTask] task=%s all subtasks in terminal state, dbState=%s", task.GetID(), task.getState())
+
+		// Check if rollback is triggered even though all subtasks are in terminal state.
+		// A failed subtask with a rollback executor that hasn't completed rollback yet
+		// means we must proceed to the rollback section instead of finishing.
 		hasFailed := false
+		rollbackNeeded := false
 		for _, subtask := range subtaskMap {
 			if subtask.GetState() == string(TaskFailed) {
 				hasFailed = true
-				break
+				if subtask.hasRollbackExecutor() && !subtask.isRollbackFinished() {
+					rollbackNeeded = true
+					break
+				}
 			}
 		}
-		if hasFailed {
-			_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskFailed))
-			task.task.State = string(TaskFailed)
-		} else {
-			_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskSucceeded))
-			task.task.State = string(TaskSucceeded)
+
+		if !rollbackNeeded {
+			// No pending rollbacks, sync DB state and finish
+			finished = true
+			if hasFailed {
+				_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskFailed))
+				task.task.State = string(TaskFailed)
+			} else {
+				_, _ = t.TaskDao.SetState(ctx, task.GetID(), string(TaskSucceeded))
+				task.task.State = string(TaskSucceeded)
+			}
+			logger.Trace("[analysisTask] task=%s synced DB state to %s", task.GetID(), task.getState())
+			// Task finished (rollback finished), remove from cache to prevent memory leaks
+			t.taskCache.Delete(task.GetID())
+			return
 		}
-		logger.Trace("[analysisTask] task=%s synced DB state to %s", task.GetID(), task.getState())
-		// Task finished, remove from cache to prevent memory leaks
-		t.taskCache.Delete(task.GetID())
-		return
+		// Rollback is still pending, fall through to rollback section
+		logger.Trace("[analysisTask] task=%s has pending rollbacks, proceeding to rollback section", task.GetID())
 	}
 
 	// Handle branch selection: check completed nodes for branches, execute conditions, and skip unselected branch targets
