@@ -54,6 +54,6 @@ func (s *taskXServiceServer) HandleTaskImmediately(ctx context.Context, req *pro
 		golocalv1.PutTraceID(req.TraceId)
 		defer golocalv1.Clean()
 	}
-	s.receiver.TaskDispatcher.handleTaskImmediately(ctx, req.TaskIds)
+	s.receiver.TaskDispatcher.enqueueTaskIDs(req.TaskIds)
 	return &proto.HandleTaskImmediatelyResponse{}, nil
 }

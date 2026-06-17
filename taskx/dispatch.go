@@ -68,6 +68,7 @@ type taskDispatcher struct {
 	lastMasterCallTime     atomic.Value   // last MasterCall time, used for throttling
 	taskCache              *gocache.Cache // taskID -> *Task, caches compiled DAGs with automatic expiration cleanup
 	randSource             *rand.Rand     // local random number generator to avoid global lock
+	randMu                 sync.Mutex     // protects randSource from concurrent access
 }
 
 type Config struct {
@@ -207,7 +208,6 @@ func (t *taskDispatcher) OnStoppedLeading() {
 	// Close leaderStopChan to interrupt the blocking wait in TakeWithStop
 	if t.leaderStopChan != nil {
 		close(t.leaderStopChan)
-		t.leaderStopChan = nil
 	}
 	// Flush task cache
 	t.taskCache.Flush()
@@ -368,17 +368,6 @@ func (t *taskDispatcher) handleTask(ctx context.Context) {
 	if len(tasks) == 0 {
 		return
 	}
-
-	// Clean up finished tasks from inQueueTasks to prevent memory leaks
-	t.inQueueTasks.Range(func(key, _ interface{}) bool {
-		taskID := key.(string)
-		for _, task := range tasks {
-			if task.ID == taskID && isFinished(task.State) {
-				t.inQueueTasks.Delete(key)
-			}
-		}
-		return true
-	})
 
 	// Add task IDs to delay queue in batches
 	var immediateTasks []string
@@ -780,6 +769,14 @@ func (t *taskDispatcher) deleteInflightSubtasks(subtasks []model.Subtask) {
 	}
 }
 
+// randIntn is a concurrency-safe wrapper around randSource.Intn.
+func (t *taskDispatcher) randIntn(n int) int {
+	t.randMu.Lock()
+	v := t.randSource.Intn(n)
+	t.randMu.Unlock()
+	return v
+}
+
 func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType, primaryWorker string, currentNode string) string {
 	aliveNodes, lostNodes := t.Cluster.GetAliveNodeNames(), t.Cluster.GetLostNodeNames()
 
@@ -797,7 +794,7 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 			return currentNode
 		}
 		// ForceSameNode but no primaryWorker specified and no current worker, pick randomly
-		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
+		return aliveNodes[t.randIntn(len(aliveNodes))]
 	case AffinityPreferSameNode:
 		if primaryWorker != "" && tools.StringSliceContains(aliveNodes, primaryWorker) && !tools.StringSliceContains(lostNodes, primaryWorker) {
 			return primaryWorker
@@ -805,14 +802,14 @@ func (t *taskDispatcher) selectNodeByAffinity(taskAffinityType TaskAffinityType,
 		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
 			return currentNode
 		}
-		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
+		return aliveNodes[t.randIntn(len(aliveNodes))]
 	case AffinityRandom:
 		fallthrough
 	default:
 		if currentNode != "" && !tools.StringSliceContains(lostNodes, currentNode) {
 			return currentNode
 		}
-		return aliveNodes[t.randSource.Intn(len(aliveNodes))]
+		return aliveNodes[t.randIntn(len(aliveNodes))]
 	}
 }
 
@@ -891,7 +888,7 @@ func (t *taskDispatcher) deliverLocal(ctx context.Context, method string, ids []
 func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, taskID string) {
 	logger.Trace("[notifyLeaderHandleTaskImmediately] taskID=%s leader=%s myName=%s", taskID, t.Cluster.GetLeaderName(), t.Cluster.GetMyName())
 	if t.Cluster.GetLeaderName() == t.Cluster.GetMyName() {
-		t.handleTaskImmediately(ctx, []string{taskID})
+		t.enqueueTaskIDs([]string{taskID})
 		return
 	}
 
@@ -902,7 +899,7 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 	for i := 0; i < maxRetries; i++ {
 		leaderName := t.Cluster.GetLeaderName()
 		if leaderName == t.Cluster.GetMyName() {
-			t.handleTaskImmediately(ctx, []string{taskID})
+			t.enqueueTaskIDs([]string{taskID})
 			return
 		}
 
@@ -932,6 +929,24 @@ func (t *taskDispatcher) notifyLeaderHandleTaskImmediately(ctx context.Context, 
 		}
 	}
 	logger.Warn("[notifyLeader] task %s remote call 'handleTaskImmediately' failed after %d attempts. err: %v", taskID, maxRetries, lastErr)
+}
+
+// enqueueTaskIDs pushes task IDs into the delay queue with immediate priority and deduplication.
+// Returns immediately without blocking; the single OnStartedLeading goroutine processes them asynchronously.
+func (t *taskDispatcher) enqueueTaskIDs(taskIDs []string) {
+	if t.delayQueue == nil || len(taskIDs) == 0 {
+		return
+	}
+	var fresh []string
+	for _, id := range taskIDs {
+		if _, loaded := t.inQueueTasks.LoadOrStore(id, true); loaded {
+			continue // already queued, deduplicate
+		}
+		fresh = append(fresh, id)
+	}
+	if len(fresh) > 0 {
+		t.delayQueue.Add(fresh, time.Now())
+	}
 }
 
 func (t *taskDispatcher) handleTaskImmediately(ctx context.Context, taskIDs []string) {
