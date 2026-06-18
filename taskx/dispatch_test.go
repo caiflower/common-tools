@@ -33,7 +33,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/caiflower/common-tools/taskx/executor"
 	gocache "github.com/patrickmn/go-cache"
@@ -211,7 +211,7 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 	}
 
 	if config.Dialect == "sqlite" {
-		file, _ := os.Open("./dao/sql/table-sqlite.sql")
+		file, _ := os.Open("./dao/sqld/ddl/table-sqlite.sql")
 		sql, _ := io.ReadAll(file)
 		_, err = client.DB.ExecContext(context.TODO(), string(sql))
 		_ = file.Close()
@@ -220,11 +220,11 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 		}
 	}
 
-	taskDao := dao.NewTaskDAOWithClient(client)
-	taskBakDao := dao.NewTaskBakDAOWithClient(client)
-	subtaskDao := dao.NewSubtaskDAOWithClient(client)
-	subtaskBakDao := dao.NewSubtaskBakDAOWithClient(client)
-	taskEdgeDao := dao.NewTaskEdgeDAOWithClient(client)
+	taskDao := sqld.NewTaskDAOWithClient(client)
+	taskBakDao := sqld.NewTaskBakDAOWithClient(client)
+	subtaskDao := sqld.NewSubtaskDAOWithClient(client)
+	subtaskBakDao := sqld.NewSubtaskBakDAOWithClient(client)
+	taskEdgeDao := sqld.NewTaskEdgeDAOWithClient(client)
 
 	cfg := &Config{
 		RemoteCallTimeout: time.Second * 3,

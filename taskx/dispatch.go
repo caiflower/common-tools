@@ -36,6 +36,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/caiflower/common-tools/taskx/proto"
@@ -84,7 +85,7 @@ type Config struct {
 	// models. Any field left empty falls back to the default value
 	// (the same name used in the model's bun:"table:..." tag). When nil,
 	// all five tables use their default names.
-	Tables *dao.TableConfig `yaml:"tables" json:"tables"`
+	Tables *sqld.TableConfig `yaml:"tables" json:"tables"`
 }
 
 type affinity struct {
@@ -120,16 +121,16 @@ func InitTaskDispatcher(cfg *Config) {
 		// DAOs.
 		tables := cfg.Tables
 		if tables == nil {
-			tables = dao.DefaultTableConfig()
+			tables = sqld.DefaultTableConfig()
 		} else {
 			tables = tables.Normalize()
 			cfg.Tables = tables
 		}
-		bean.AddBean(dao.NewTaskDAOWithConfig(nil, tables.Task))
-		bean.AddBean(dao.NewTaskBakDAOWithConfig(nil, tables.TaskBak))
-		bean.AddBean(dao.NewSubtaskDAOWithConfig(nil, tables.Subtask))
-		bean.AddBean(dao.NewSubtaskBakDAOWithConfig(nil, tables.SubtaskBak))
-		bean.AddBean(dao.NewTaskEdgeDAOWithConfig(nil, tables.TaskEdge))
+		bean.AddBean(sqld.NewTaskDAOWithConfig(nil, tables.Task))
+		bean.AddBean(sqld.NewTaskBakDAOWithConfig(nil, tables.TaskBak))
+		bean.AddBean(sqld.NewSubtaskDAOWithConfig(nil, tables.Subtask))
+		bean.AddBean(sqld.NewSubtaskBakDAOWithConfig(nil, tables.SubtaskBak))
+		bean.AddBean(sqld.NewTaskEdgeDAOWithConfig(nil, tables.TaskEdge))
 		bean.AddBean(SingletonTaskDispatcher)
 		bean.AddBean(_tr)
 	})
@@ -218,7 +219,6 @@ func SubmitTask(ctx context.Context, task *Task) error {
 }
 
 func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
-	tx := dbv1.NewBatchTx(t.TaskDao.GetClient().GetDB())
 	taskBean, subtaskBeans, edgeBeans := task.convert2Bean()
 
 	if TaskAffinityType(taskBean.AffinityType) != AffinityRandom && taskBean.PrimaryWorker == "" {
@@ -229,11 +229,6 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 		taskBean.PrimaryWorker = nodeName
 	}
 
-	tx.Add(func(tx *bun.Tx) error {
-		_, err := t.TaskDao.Insert(ctx, taskBean, tx)
-		return err
-	})
-
 	// If no rollback executor, set rollback to NoneRollback
 	for i, subtask := range subtaskBeans {
 		if task.em.getRollbackProvider(taskBean.TaskName, subtask.TaskName) == nil {
@@ -241,19 +236,21 @@ func (t *taskDispatcher) SubmitTask(ctx context.Context, task *Task) error {
 		}
 	}
 
-	tx.Add(func(tx *bun.Tx) error {
-		_, err := t.SubtaskDao.BatchInsert(ctx, subtaskBeans, tx)
-		return err
-	})
-
-	if len(edgeBeans) > 0 {
-		tx.Add(func(tx *bun.Tx) error {
-			_, err := t.TaskEdgeDao.BatchInsert(ctx, edgeBeans, tx)
+	err := t.TaskDao.GetStore().RunInTx(ctx, func(ctx context.Context) error {
+		if _, err := t.TaskDao.Insert(ctx, taskBean); err != nil {
 			return err
-		})
-	}
-
-	if err := tx.Submit(); err != nil {
+		}
+		if _, err := t.SubtaskDao.BatchInsert(ctx, subtaskBeans); err != nil {
+			return err
+		}
+		if len(edgeBeans) > 0 {
+			if _, err := t.TaskEdgeDao.BatchInsert(ctx, edgeBeans); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -280,17 +277,20 @@ func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *b
 		}
 	}
 
-	_, err := t.TaskDao.Insert(ctx, taskBean, tx)
+	// Use context-based tx: the external tx is stored in context so DAO methods pick it up
+	txCtx := dao.WithTxContext(ctx, tx)
+
+	_, err := t.TaskDao.Insert(txCtx, taskBean)
 	if err != nil {
 		return err
 	}
-	_, err = t.SubtaskDao.BatchInsert(ctx, subtaskBeans, tx)
+	_, err = t.SubtaskDao.BatchInsert(txCtx, subtaskBeans)
 	if err != nil {
 		return err
 	}
 
 	if len(edgeBeans) > 0 {
-		_, err = t.TaskEdgeDao.BatchInsert(ctx, edgeBeans, tx)
+		_, err = t.TaskEdgeDao.BatchInsert(txCtx, edgeBeans)
 		if err != nil {
 			return err
 		}
@@ -657,7 +657,7 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 	t.allocateItems(ctx, len(runningTasks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
 		return runningTasks[i].ID, runningTasks[i].ID, runningTasks[i].Worker, runningTasks[i].Worker
 	}, func(ctx context.Context, i int, nodeName string) (int64, error) {
-		return t.TaskDao.SetWorkerAndTaskStateWithOldWorker(ctx, runningTasks[i].ID, nodeName, string(TaskRunning), runningTasks[i].Worker)
+		return t.TaskDao.CASWorkerAndState(ctx, runningTasks[i].ID, nodeName, string(TaskRunning), runningTasks[i].Worker)
 	}, getAffinity, taskWorkerMap)
 
 	// Build taskWorker lookup table (after task is allocated a worker, subtasks can reference it)
@@ -686,14 +686,14 @@ func (t *taskDispatcher) allocateWorker(ctx context.Context, _runningTasks []*mo
 		}
 		return runningSubtasks[i].TaskID, runningSubtasks[i].ID, runningSubtasks[i].Worker, affNode
 	}, func(ctx context.Context, i int, nodeName string) (int64, error) {
-		return t.SubtaskDao.SetWorkerAndStateWithOldWorker(ctx, runningSubtasks[i].ID, nodeName, string(TaskRunning), runningSubtasks[i].Worker)
+		return t.SubtaskDao.CASWorkerAndState(ctx, runningSubtasks[i].ID, nodeName, string(TaskRunning), runningSubtasks[i].Worker)
 	}, getAffinity, subtaskWorkerMap)
 
 	// Allocate rollback task execution nodes
 	t.allocateItems(ctx, len(runningSubtaskRollbacks), func(i int) (taskID, itemID, currentWorker, affinityNode string) {
 		return runningSubtaskRollbacks[i].TaskID, runningSubtaskRollbacks[i].ID, runningSubtaskRollbacks[i].Worker, runningSubtaskRollbacks[i].Worker
 	}, func(ctx context.Context, i int, nodeName string) (int64, error) {
-		return t.SubtaskDao.SetWorkerAndRollbackWithOldWorker(ctx, runningSubtaskRollbacks[i].ID, nodeName, string(RollingBack), runningSubtaskRollbacks[i].Worker)
+		return t.SubtaskDao.CASWorkerAndRollback(ctx, runningSubtaskRollbacks[i].ID, nodeName, string(RollingBack), runningSubtaskRollbacks[i].Worker)
 	}, getAffinity, subtaskRollbackWorkerMap)
 
 	t.deliverToCluster(ctx, subtaskWorkerMap, deliverSubtask)

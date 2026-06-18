@@ -30,3 +30,6 @@ skills-lock.json
 .agents
 hertz
 .codex
+.codegraph
+.comet
+.agent

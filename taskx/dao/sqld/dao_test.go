@@ -1,20 +1,4 @@
-/*
- * Copyright 2024 caiflower Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-package dao
+package sqld
 
 import (
 	"context"
@@ -27,8 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// createTestDB returns a SQLite-backed dbv1.Client initialised with the
-// taskx schema. The caller is responsible for closing the client.
 func createTestDB(t *testing.T) *dbv1.Client {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,9 +23,8 @@ func createTestDB(t *testing.T) *dbv1.Client {
 		t.Fatalf("create db client: %v", err)
 	}
 
-	// Load schema. The path is relative to the package directory.
 	wd, _ := os.Getwd()
-	schemaPath := filepath.Join(wd, "sql", "table-sqlite.sql")
+	schemaPath := filepath.Join(wd, "ddl", "table-sqlite.sql")
 	data, err := os.ReadFile(schemaPath)
 	if err != nil {
 		t.Fatalf("read schema: %v", err)
@@ -54,10 +35,6 @@ func createTestDB(t *testing.T) *dbv1.Client {
 	return client
 }
 
-// cloneTableSchema creates a new table with the same column list as src by
-// issuing `CREATE TABLE dst AS SELECT * FROM src WHERE 0`. CREATE TABLE AS
-// does not preserve PRIMARY KEY / NOT NULL, so we add a UNIQUE index on id
-// to keep bun's `id,pk,notnull` declaration happy.
 func cloneTableSchema(t *testing.T, client *dbv1.Client, src, dst string) {
 	t.Helper()
 	ctx := context.Background()
@@ -65,10 +42,6 @@ func cloneTableSchema(t *testing.T, client *dbv1.Client, src, dst string) {
 	if _, err := client.DB.ExecContext(ctx, stmt); err != nil {
 		t.Fatalf("clone table %s -> %s: %v", src, dst, err)
 	}
-	// SQLite's CREATE TABLE AS does not preserve PRIMARY KEY / NOT NULL,
-	// which the DAO relies on (the bun model declares id as pk,notnull).
-	// We work around by adding a primary-key index and trust the test data
-	// to never set id=NULL.
 	if _, err := client.DB.ExecContext(ctx, "CREATE UNIQUE INDEX IF NOT EXISTS idx_"+dst+"_id ON "+dst+"(id)"); err != nil {
 		t.Fatalf("create pk index for %s: %v", dst, err)
 	}
@@ -116,9 +89,6 @@ func TestTaskDAO_DefaultTableName(t *testing.T) {
 	}
 }
 
-// TestTaskDAO_CustomTableName writes to a shadow table with the same schema
-// as `task`, but a different physical name. The DAO is constructed with the
-// shadow name; the row should appear there, not in the default `task` table.
 func TestTaskDAO_CustomTableName(t *testing.T) {
 	client := createTestDB(t)
 	defer client.Close()
@@ -131,19 +101,16 @@ func TestTaskDAO_CustomTableName(t *testing.T) {
 	_, err := customDAO.Insert(ctx, &model.Task{ID: "t-custom", TaskName: "custom", State: "pending", Status: 1})
 	assert.NoError(t, err)
 
-	// Default DAO must NOT see the row in the custom table.
 	got, err := defaultDAO.GetByID(ctx, "t-custom")
 	assert.NoError(t, err)
 	assert.Nil(t, got, "default DAO should not see row in task_custom")
 
-	// Custom DAO can see its own row.
 	got, err = customDAO.GetByID(ctx, "t-custom")
 	assert.NoError(t, err)
 	if assert.NotNil(t, got) {
 		assert.Equal(t, "custom", got.TaskName)
 	}
 
-	// GetByIDs is also routed to the custom table.
 	tasks, err := customDAO.GetByIDs(ctx, []string{"t-custom"})
 	assert.NoError(t, err)
 	assert.Len(t, tasks, 1)
@@ -183,13 +150,11 @@ func TestSubtaskDAO_CustomTableName(t *testing.T) {
 		assert.Equal(t, "demo", got.TaskName)
 	}
 
-	// GetByTaskID should also be routed to the custom table.
 	list, err := dao.GetByTaskID(ctx, "t1")
 	assert.NoError(t, err)
 	assert.Len(t, list, 1)
 	assert.Equal(t, "s-custom", list[0].ID)
 
-	// SetInput should write to the custom table.
 	err = dao.SetInput(ctx, "s-custom", `{"x":1}`)
 	assert.NoError(t, err)
 	got, err = dao.GetByID(ctx, "s-custom")
@@ -221,7 +186,6 @@ func TestTaskEdgeDAO_CustomTableName(t *testing.T) {
 	assert.Len(t, edges, 1)
 	assert.Equal(t, "e1", edges[0].ID)
 
-	// Default DAO must NOT see this row.
 	defaultDAO := NewTaskEdgeDAOWithClient(client)
 	edges, err = defaultDAO.GetByTaskID(ctx, "t1")
 	assert.NoError(t, err)

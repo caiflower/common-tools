@@ -14,15 +14,9 @@
  * limitations under the License.
  */
 
-package dao
+package sqld
 
 // TableConfig configures the physical table names for taskx DAO models.
-//
-// All fields default to the same value as the model's bun:"table:..." tag,
-// so an empty/zero-value TableConfig behaves identically to the previous
-// hard-coded constants. Override individual fields to remap a logical model
-// to a differently-named table (e.g. when the same schema is used by
-// multiple tenants).
 type TableConfig struct {
 	Task       string `yaml:"task" json:"task" default:"task"`
 	Subtask    string `yaml:"subtask" json:"subtask" default:"subtask"`
@@ -31,9 +25,7 @@ type TableConfig struct {
 	TaskEdge   string `yaml:"taskEdge" json:"taskEdge" default:"task_edge"`
 }
 
-// DefaultTableConfig returns a TableConfig with the same default values as
-// the bun:"table:..." tags in the model layer. This is the configuration used
-// when no explicit TableConfig is provided.
+// DefaultTableConfig returns a TableConfig with default table names.
 func DefaultTableConfig() *TableConfig {
 	return &TableConfig{
 		Task:       "task",
@@ -45,7 +37,6 @@ func DefaultTableConfig() *TableConfig {
 }
 
 // Normalize returns a copy of cfg with empty fields filled from defaults.
-// A nil receiver yields the default configuration.
 func (c *TableConfig) Normalize() *TableConfig {
 	if c == nil {
 		return DefaultTableConfig()
