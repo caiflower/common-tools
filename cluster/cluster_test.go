@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -174,7 +174,7 @@ func TestSingleCluster(t *testing.T) {
 }
 
 func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
-	redisClient, err := redisv1.NewRedisClient(redisv1.Config{
+	redisClient, err := redisv2.NewRedisClient(redisv2.Config{
 		Addrs:    []string{"redis-master.app.svc.cluster.local:6379"},
 		Password: "",
 		DB:       0,

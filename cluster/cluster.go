@@ -36,7 +36,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/pkg/safego"
 	"github.com/caiflower/common-tools/pkg/shell"
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	gocache "github.com/patrickmn/go-cache"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -156,7 +156,7 @@ type Cluster struct {
 	localFuncsLock     sync.RWMutex
 	registeredServices map[string]*grpc.ServiceDesc // 预注册的 gRPC 服务
 	registeredImpls    map[string]interface{}       // 预注册的 gRPC 服务实现
-	Redis              redisv1.RedisClient          `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	Redis              redisv2.RedisClient          `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
 	ctx                context.Context
 	cancelFunc         context.CancelFunc
 	events             chan *event
@@ -221,7 +221,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		if b := bean.GetBean(config.RedisDiscovery.BeanName); b == nil {
 			panic(fmt.Sprintf("[cluster] redis mode, can not find redis bean %s.", config.RedisDiscovery.BeanName))
 		} else {
-			cluster.Redis = b.(redisv1.RedisClient)
+			cluster.Redis = b.(redisv2.RedisClient)
 		}
 	}
 

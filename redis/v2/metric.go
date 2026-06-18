@@ -14,25 +14,23 @@
  * limitations under the License.
  */
 
-package redisv1
+package v2
 
 import (
 	"context"
+	"net"
 	"strings"
 	"time"
 
 	xredis "github.com/caiflower/common-tools/redis"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
-
-// contextKey is a private type to avoid context key collisions.
-type contextKey struct{}
 
 func init() {
 	xredis.InitMetrics()
 }
 
-// MetricsHook implements redis.Hook (v8) to collect Prometheus metrics per command.
+// MetricsHook implements redis.Hook (v9) to collect Prometheus metrics per command.
 type MetricsHook struct {
 	addr string
 }
@@ -47,39 +45,46 @@ func newMetricsHook(config *Config) *MetricsHook {
 	return &MetricsHook{addr: addr}
 }
 
-func (h *MetricsHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
-	return context.WithValue(ctx, contextKey{}, time.Now()), nil
-}
-
-func (h *MetricsHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
-	start, _ := ctx.Value(contextKey{}).(time.Time)
-	elapsed := time.Since(start)
-
-	cmdName := strings.ToLower(cmd.FullName())
-	status := statusLabel(cmd.Err())
-
-	xredis.RecordCommand(h.addr, cmdName, status, elapsed)
-	return nil
-}
-
-func (h *MetricsHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
-	return context.WithValue(ctx, contextKey{}, time.Now()), nil
-}
-
-func (h *MetricsHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
-	start, _ := ctx.Value(contextKey{}).(time.Time)
-	elapsed := time.Since(start)
-
-	hasErr := false
-	for _, cmd := range cmds {
-		if cmd.Err() != nil && cmd.Err() != redis.Nil {
-			hasErr = true
-			break
-		}
+// DialHook is a no-op pass-through required by the v9 Hook interface.
+func (h *MetricsHook) DialHook(next redis.DialHook) redis.DialHook {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return next(ctx, network, addr)
 	}
+}
 
-	xredis.RecordPipeline(h.addr, len(cmds), hasErr, elapsed)
-	return nil
+// ProcessHook wraps the next ProcessHook to measure elapsed time and record metrics.
+func (h *MetricsHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		start := time.Now()
+		err := next(ctx, cmd)
+		elapsed := time.Since(start)
+
+		cmdName := strings.ToLower(cmd.FullName())
+		status := statusLabel(cmd.Err())
+
+		xredis.RecordCommand(h.addr, cmdName, status, elapsed)
+		return err
+	}
+}
+
+// ProcessPipelineHook wraps the next ProcessPipelineHook to measure elapsed time and record pipeline metrics.
+func (h *MetricsHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		start := time.Now()
+		err := next(ctx, cmds)
+		elapsed := time.Since(start)
+
+		hasErr := false
+		for _, cmd := range cmds {
+			if cmd.Err() != nil && cmd.Err() != redis.Nil {
+				hasErr = true
+				break
+			}
+		}
+
+		xredis.RecordPipeline(h.addr, len(cmds), hasErr, elapsed)
+		return err
+	}
 }
 
 // statusLabel returns "ok" for nil or redis.Nil errors, "error" otherwise.

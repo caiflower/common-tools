@@ -57,10 +57,8 @@ func withKeyPrefix(prefix string) func(*Config) {
 }
 
 func withMetrics() func(*Config) {
-	return func(c *Config) { c.EnableMetrics = ptrBool(true) }
+	return func(c *Config) { c.EnableMetrics = "true" }
 }
-
-func ptrBool(v bool) *bool { return &v }
 
 func TestNewRedisClient_BasicSetGet(t *testing.T) {
 	client := setupTestClient(t)

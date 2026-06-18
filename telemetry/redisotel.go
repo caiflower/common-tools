@@ -14,22 +14,23 @@
  * limitations under the License.
  */
 
- package telemetry
+package telemetry
 
 import (
 	"context"
+	"net"
+	"strings"
+
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/redis/go-redis/v9"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/go-redis/redis/extra/rediscmd/v8"
-	"github.com/go-redis/redis/v8"
 )
 
-var tracer = otel.Tracer("github.com/go-redis/redis")
+var tracer = otel.Tracer("github.com/redis/go-redis/v9")
 
 type TracingHook struct{}
 
@@ -51,70 +52,91 @@ func spanFromContext(ctx context.Context, name string) (context.Context, trace.S
 	return ctx, span
 }
 
-func (TracingHook) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
-	ctx, span := spanFromContext(ctx, cmd.FullName())
-	if !span.IsRecording() {
-		return ctx, nil
+// DialHook implements the v9 redis.Hook interface. It passes through to the next dialer.
+func (TracingHook) DialHook(next redis.DialHook) redis.DialHook {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return next(ctx, network, addr)
 	}
-
-	span.SetAttributes(
-		attribute.String("db.system", "redis"),
-		attribute.String("db.statement", rediscmd.CmdString(cmd)),
-	)
-
-	return ctx, nil
 }
 
-func (TracingHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
-	span := trace.SpanFromContext(ctx)
-	defer span.End()
-	if !span.IsRecording() {
-		return nil
-	}
+// ProcessHook implements the v9 redis.Hook interface using the middleware/wrapper pattern.
+// It creates a tracing span before the command executes and ends it after.
+func (TracingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		ctx, span := spanFromContext(ctx, cmd.FullName())
+		defer span.End()
 
-	if err := cmd.Err(); err != nil {
-		recordError(ctx, span, err)
-	}
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.String("db.system", "redis"),
+				attribute.String("db.statement", cmd.String()),
+			)
+		}
 
-	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
-	return nil
+		err := next(ctx, cmd)
+
+		if span.IsRecording() {
+			if cmdErr := cmd.Err(); cmdErr != nil && cmdErr != redis.Nil {
+				recordError(span, cmdErr)
+			}
+			logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+		}
+
+		return err
+	}
 }
 
-func (TracingHook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
-	summary, cmdsString := rediscmd.CmdsString(cmds)
+// ProcessPipelineHook implements the v9 redis.Hook interface for pipeline commands.
+func (TracingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		summary := pipelineSummary(cmds)
+		ctx, span := spanFromContext(ctx, "pipeline "+summary)
+		defer span.End()
 
-	ctx, span := spanFromContext(ctx, "pipeline "+summary)
-	if !span.IsRecording() {
-		return ctx, nil
+		if span.IsRecording() {
+			span.SetAttributes(
+				attribute.String("db.system", "redis"),
+				attribute.Int("db.redis.num_cmd", len(cmds)),
+				attribute.String("db.statement", pipelineCmdsString(cmds)),
+			)
+		}
+
+		err := next(ctx, cmds)
+
+		if span.IsRecording() {
+			if len(cmds) > 0 {
+				if cmdErr := cmds[0].Err(); cmdErr != nil && cmdErr != redis.Nil {
+					recordError(span, cmdErr)
+				}
+			}
+			logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+		}
+
+		return err
 	}
-
-	span.SetAttributes(
-		attribute.String("db.system", "redis"),
-		attribute.Int("db.redis.num_cmd", len(cmds)),
-		attribute.String("db.statement", cmdsString),
-	)
-
-	return ctx, nil
 }
 
-func (TracingHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
-	span := trace.SpanFromContext(ctx)
-	defer span.End()
-	if !span.IsRecording() {
-		return nil
-	}
-
-	if err := cmds[0].Err(); err != nil {
-		recordError(ctx, span, err)
-	}
-
-	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
-	return nil
+func recordError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }
 
-func recordError(ctx context.Context, span trace.Span, err error) {
-	if err != redis.Nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+// pipelineSummary returns a brief summary of the pipeline commands (first cmd name + count).
+func pipelineSummary(cmds []redis.Cmder) string {
+	if len(cmds) == 0 {
+		return "empty"
 	}
+	return cmds[0].FullName()
+}
+
+// pipelineCmdsString formats all pipeline commands into a single string.
+func pipelineCmdsString(cmds []redis.Cmder) string {
+	var sb strings.Builder
+	for i, cmd := range cmds {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(cmd.String())
+	}
+	return sb.String()
 }

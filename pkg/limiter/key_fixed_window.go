@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
-	"github.com/go-redis/redis/v8"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 //go:embed lua/key_fixed_window_acquire.lua
@@ -53,7 +53,7 @@ var _ KeyFixedWindowLimiterInterface = (*KeyFixedWindowLimiter)(nil)
 
 type KeyFixedWindowLimiter struct {
 	client               redis.Cmdable
-	scriptManager        *redisv1.ScriptManager
+	scriptManager        *redisv2.ScriptManager
 	defaultMaxConcurrent int64
 	defaultExpiration    time.Duration
 }
@@ -79,9 +79,13 @@ func NewKeyFixedWindowLimiter(ctx context.Context, r redis.Cmdable, opts ...KeyF
 		return nil, fmt.Errorf("invalid key fixed window config: %w", err)
 	}
 
-	kl.scriptManager = redisv1.NewScriptManager(r)
-	kl.scriptManager.Register("key_fixed_window_acquire", keyFixedWindowAcquireScript)
-	kl.scriptManager.Register("key_fixed_window_release", keyFixedWindowReleaseScript)
+	kl.scriptManager = redisv2.NewScriptManager(r)
+	if err := kl.scriptManager.Register("key_fixed_window_acquire", keyFixedWindowAcquireScript); err != nil {
+		return nil, fmt.Errorf("failed to register key_fixed_window_acquire script: %w", err)
+	}
+	if err := kl.scriptManager.Register("key_fixed_window_release", keyFixedWindowReleaseScript); err != nil {
+		return nil, fmt.Errorf("failed to register key_fixed_window_release script: %w", err)
+	}
 
 	if err := kl.scriptManager.LoadScripts(ctx); err != nil {
 		return nil, fmt.Errorf("failed to load key fixed window scripts: %w", err)
