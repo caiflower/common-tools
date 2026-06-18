@@ -80,6 +80,7 @@ func (k *keyBuilder) bakSubtaskIndexKey(taskID string) string {
 
 // toHash converts a struct to map[string]string suitable for Redis HSET.
 // Uses JSON marshal → map → string values pipeline.
+// JSON string values are unquoted for natural Redis storage and CAS comparison.
 func toHash(v interface{}) (map[string]string, error) {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -91,23 +92,51 @@ func toHash(v interface{}) (map[string]string, error) {
 	}
 	result := make(map[string]string, len(raw))
 	for k, v := range raw {
-		// Store raw JSON value as string (avoids double-encoding)
-		result[k] = string(v)
+		s := string(v)
+		// Unquote JSON strings for natural Redis storage (enables direct CAS comparison)
+		if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+			var unquoted string
+			if err := json.Unmarshal(v, &unquoted); err == nil {
+				s = unquoted
+			}
+		}
+		result[k] = s
 	}
 	return result, nil
 }
 
 // fromHash reconstructs a struct from a Redis HGETALL result map.
+// String values that aren't valid JSON literals are auto-quoted for unmarshalling.
 func fromHash(m map[string]string, v interface{}) error {
 	raw := make(map[string]json.RawMessage, len(m))
 	for k, val := range m {
-		raw[k] = json.RawMessage(val)
+		if isValidJSONLiteral(val) {
+			raw[k] = json.RawMessage(val)
+		} else {
+			// Auto-quote plain strings for JSON unmarshal compatibility
+			quoted, _ := json.Marshal(val)
+			raw[k] = quoted
+		}
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return fmt.Errorf("fromHash marshal raw: %w", err)
 	}
 	return json.Unmarshal(data, v)
+}
+
+// isValidJSONLiteral checks if s is a valid JSON value (number, bool, null, object, array, or quoted string).
+func isValidJSONLiteral(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	switch s[0] {
+	case '"', '{', '[', 't', 'f', 'n':
+		return json.Valid([]byte(s))
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return json.Valid([]byte(s))
+	}
+	return false
 }
 
 // parseInt8 parses a string to int8, returning 0 on error.

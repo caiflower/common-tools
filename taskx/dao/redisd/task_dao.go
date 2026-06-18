@@ -169,9 +169,9 @@ func (d *taskDAO) SetState(ctx context.Context, id string, state string) (int64,
 
 	pipe := getPipe(ctx)
 	if pipe != nil {
-		pipe.HSet(ctx, key, "state", fmt.Sprintf("%q", state))
+		pipe.HSet(ctx, key, "state", state)
 	} else {
-		c.HSet(ctx, key, "state", fmt.Sprintf("%q", state))
+		c.HSet(ctx, key, "state", state)
 	}
 
 	// Remove from todo set if terminal state

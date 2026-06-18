@@ -173,8 +173,8 @@ func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, s
 	c := cmd(d.client)
 	pipe := getPipe(ctx)
 	fields := map[string]interface{}{
-		"output":        fmt.Sprintf("%q", output),
-		"state":         fmt.Sprintf("%q", state),
+		"output":        output,
+		"state":         state,
 		"last_run_time": nowTime(),
 	}
 	if pipe != nil {
@@ -190,8 +190,8 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 	c := cmd(d.client)
 	pipe := getPipe(ctx)
 	fields := map[string]interface{}{
-		"rollback":      fmt.Sprintf("%q", rollback),
-		"output":        fmt.Sprintf("%q", output),
+		"rollback":      rollback,
+		"output":        output,
 		"last_run_time": nowTime(),
 	}
 	if pipe != nil {
@@ -207,9 +207,9 @@ func (d *subtaskDAO) SetInput(ctx context.Context, id, input string) error {
 	c := cmd(d.client)
 	pipe := getPipe(ctx)
 	if pipe != nil {
-		pipe.HSet(ctx, key, "input", fmt.Sprintf("%q", input))
+		pipe.HSet(ctx, key, "input", input)
 	} else {
-		c.HSet(ctx, key, "input", fmt.Sprintf("%q", input))
+		c.HSet(ctx, key, "input", input)
 	}
 	return nil
 }
@@ -219,8 +219,8 @@ func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8) error 
 	c := cmd(d.client)
 	pipe := getPipe(ctx)
 	fields := map[string]interface{}{
-		"retry":         fmt.Sprintf("%d", retry),
-		"state":         `"pending"`,
+		"retry":         retry,
+		"state":         "pending",
 		"last_run_time": nowTime(),
 	}
 	if pipe != nil {
