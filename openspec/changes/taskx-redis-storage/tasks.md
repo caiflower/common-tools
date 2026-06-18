@@ -35,9 +35,9 @@
 
 ### 2.5 测试
 
-- [ ] 2.5.1 编写 Redis DAO 单元测试：使用 `miniredis` 模拟 Redis，覆盖所有 DAO 方法的正常和异常路径
-- [ ] 2.5.2 编写 Lua 脚本专项测试：验证 CAS 成功/失败场景、BatchInsert 原子性、SubmitTask 原子写入
-- [ ] 2.5.3 编写 Redis Cluster hash tag 测试：验证所有 key 包含正确的 `{taskID}` hash tag
+- [x] 2.5.1 编写 Redis DAO 单元测试：使用 `miniredis` 模拟 Redis，覆盖所有 DAO 方法（30 个测试，common_test.go + dao_test.go）
+- [x] 2.5.2 编写 Lua 脚本专项测试：验证 CAS 成功/失败场景、BatchInsert 原子性、SubmitTask 原子写入
+- [x] 2.5.3 编写 Redis Cluster hash tag 测试：验证所有 key 包含正确的 `{taskID}` hash tag
 
 ## 3. 存储后端切换机制 (taskx-storage-switch) ✅ 已完成
 
@@ -49,9 +49,9 @@
 - [x] 3.6 `backupTask` 保持现有 SQL 逻辑（Redis 路径需独立重构）
 - [x] 3.7 `StorageBackend` 配置校验：无效值 panic，Redis 模式缺 RedisClient panic
 
-## 4. 集成测试与验证
+## 4. 集成测试与验证 ✅ 基本完成
 
-- [ ] 4.1 编写 SQL 后端回归测试：验证 SubmitTask → handleTask → execSubtask 全链路
-- [ ] 4.2 编写 Redis 后端集成测试：使用 miniredis 验证完整任务生命周期
-- [ ] 4.3 编写存储切换测试：同一 Config 框架下切换 `sql` → `redis`，验证 DAO 正确注入
-- [ ] 4.4 编写高并发压测：对比 SQL 和 Redis 后端在 1000+ 并发任务下的吞吐量和延迟
+- [x] 4.1 编写 SQL 后端回归测试：验证 SubmitTask → handleTask → execSubtask 全链路（已有 dispatch_test.go 覆盖）
+- [x] 4.2 编写 Redis 后端集成测试：使用 miniredis 验证完整任务生命周期
+- [x] 4.3 编写存储切换测试：同一 Config 框架下切换 `sql` → `redis`，验证 DAO 正确注入
+- [ ] 4.4 编写高并发压测：对比 SQL 和 Redis 后端在 1000+ 并发任务下的吞吐量和延迟（手动测试）

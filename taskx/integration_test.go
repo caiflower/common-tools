@@ -2,7 +2,6 @@ package taskx
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/caiflower/common-tools/web/common/json"
 
 	"github.com/caiflower/common-tools/taskx/executor"
 	"github.com/stretchr/testify/assert"

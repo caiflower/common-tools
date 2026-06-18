@@ -2,11 +2,11 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/caiflower/common-tools/pkg/json"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

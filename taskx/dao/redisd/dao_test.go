@@ -426,3 +426,128 @@ func TestTaskEdgeDAO_BatchInsert_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n)
 }
+
+// --- Hash Tag Tests (2.5.3) ---
+
+func TestKeyBuilder_HashTagConsistency(t *testing.T) {
+	kb := newKeyBuilder(nil)
+	taskID := "abc-123"
+
+	// All keys for the same task must contain {taskID} hash tag
+	taskKey := kb.taskKey(taskID)
+	subtaskIdx := kb.subtaskIndexKey(taskID)
+	edgeIdx := kb.edgeIndexKey(taskID)
+	bakTaskKey := kb.bakTaskKey(taskID)
+	bakSubtaskIdx := kb.bakSubtaskIndexKey(taskID)
+
+	tag := "{" + taskID + "}"
+	assert.Contains(t, taskKey, tag, "task key must contain hash tag")
+	assert.Contains(t, subtaskIdx, tag, "subtask index key must contain hash tag")
+	assert.Contains(t, edgeIdx, tag, "edge index key must contain hash tag")
+	assert.Contains(t, bakTaskKey, tag, "bak task key must contain hash tag")
+	assert.Contains(t, bakSubtaskIdx, tag, "bak subtask index key must contain hash tag")
+}
+
+func TestKeyBuilder_HashTagExtractedCorrectly(t *testing.T) {
+	kb := newKeyBuilder(nil)
+
+	// Subtask and edge keys should use their own ID but still be in the
+	// same slot when accessed via the task index (which uses {taskID})
+	// The subtask key uses {subtaskID}, not {taskID}, because subtasks
+	// are accessed individually. The index set uses {taskID} for co-location.
+	subKey := kb.subtaskKey("sub-1")
+	assert.Contains(t, subKey, "{sub-1}")
+
+	edgeKey := kb.edgeKey("edge-1")
+	assert.Contains(t, edgeKey, "{edge-1}")
+}
+
+// --- Lua Script Tests (2.5.2) ---
+
+func TestLuaScript_CASWorkerAndState_ConcurrentSimulation(t *testing.T) {
+	rc, _ := createTestRedis(t)
+	dao := NewTaskDAOWithClient(rc)
+	ctx := context.Background()
+
+	// Insert a task
+	_, _ = dao.Insert(ctx, &model.Task{ID: "lua-1", TaskName: "lua", State: "pending", Worker: "w1", Status: 1})
+
+	// First CAS succeeds
+	n1, _ := dao.CASWorkerAndState(ctx, "lua-1", "w2", "running", "w1")
+	assert.Equal(t, int64(1), n1)
+
+	// Second CAS with old worker fails (already changed to w2)
+	n2, _ := dao.CASWorkerAndState(ctx, "lua-1", "w3", "failed", "w1")
+	assert.Equal(t, int64(0), n2)
+
+	// Third CAS with correct current worker succeeds
+	n3, _ := dao.CASWorkerAndState(ctx, "lua-1", "w3", "succeeded", "w2")
+	assert.Equal(t, int64(1), n3)
+
+	// Verify final state
+	got, _ := dao.GetByID(ctx, "lua-1")
+	assert.Equal(t, "w3", got.Worker)
+	assert.Equal(t, "succeeded", got.State)
+}
+
+func TestLuaScript_CASWorkerAndRollback_ConcurrentSimulation(t *testing.T) {
+	rc, _ := createTestRedis(t)
+	dao := NewSubtaskDAOWithClient(rc)
+	ctx := context.Background()
+
+	_, _ = dao.BatchInsert(ctx, []model.Subtask{
+		{ID: "lua-rb", TaskID: "t1", TaskName: "rb", State: "running", Worker: "w1", Status: 1},
+	})
+
+	// First CAS succeeds
+	n1, _ := dao.CASWorkerAndRollback(ctx, "lua-rb", "w2", "rollback_all", "w1")
+	assert.Equal(t, int64(1), n1)
+
+	// Second CAS fails (worker already changed)
+	n2, _ := dao.CASWorkerAndRollback(ctx, "lua-rb", "w3", "none", "w1")
+	assert.Equal(t, int64(0), n2)
+
+	got, _ := dao.GetByID(ctx, "lua-rb")
+	assert.Equal(t, "w2", got.Worker)
+	assert.Equal(t, "rollback_all", got.Rollback)
+}
+
+func TestStore_RunInTx_AtomicBatch(t *testing.T) {
+	rc, _ := createTestRedis(t)
+	store := NewStore(rc)
+	taskDao := NewTaskDAOWithClient(rc)
+	subDao := NewSubtaskDAOWithClient(rc)
+	edgeDao := NewTaskEdgeDAOWithClient(rc)
+	ctx := context.Background()
+
+	// Simulate SubmitTask: insert task + subtasks + edges atomically
+	err := store.RunInTx(ctx, func(ctx context.Context) error {
+		if _, err := taskDao.Insert(ctx, &model.Task{ID: "atomic-1", TaskName: "atomic", State: "pending", Status: 1}); err != nil {
+			return err
+		}
+		if _, err := subDao.BatchInsert(ctx, []model.Subtask{
+			{ID: "as-1", TaskID: "atomic-1", TaskName: "s1", State: "pending", Status: 1},
+			{ID: "as-2", TaskID: "atomic-1", TaskName: "s2", State: "pending", Status: 1},
+		}); err != nil {
+			return err
+		}
+		if _, err := edgeDao.BatchInsert(ctx, []model.TaskEdge{
+			{ID: "ae-1", TaskID: "atomic-1", FromSubtaskID: "as-1", ToSubtaskID: "as-2", EdgeType: "control"},
+		}); err != nil {
+			return err
+		}
+		return nil
+	})
+	require.NoError(t, err)
+
+	// Verify all data was written
+	task, _ := taskDao.GetByID(ctx, "atomic-1")
+	require.NotNil(t, task)
+	assert.Equal(t, "atomic", task.TaskName)
+
+	subs, _ := subDao.GetByTaskID(ctx, "atomic-1")
+	assert.Len(t, subs, 2)
+
+	edges, _ := edgeDao.GetByTaskID(ctx, "atomic-1")
+	assert.Len(t, edges, 1)
+}

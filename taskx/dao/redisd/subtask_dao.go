@@ -192,6 +192,7 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 	fields := map[string]interface{}{
 		"rollback":      rollback,
 		"output":        output,
+		"state":         rollback,
 		"last_run_time": nowTime(),
 	}
 	if pipe != nil {

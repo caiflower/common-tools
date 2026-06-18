@@ -18,7 +18,6 @@ package taskx
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,13 +27,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caiflower/common-tools/web/common/json"
+
 	"github.com/caiflower/common-tools/cluster"
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/executor"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/assert"

@@ -1,10 +1,11 @@
 package redisd
 
 import (
-	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 
+	"github.com/caiflower/common-tools/pkg/json"
 	v2 "github.com/caiflower/common-tools/redis/v2"
 )
 
@@ -106,23 +107,103 @@ func toHash(v interface{}) (map[string]string, error) {
 }
 
 // fromHash reconstructs a struct from a Redis HGETALL result map.
-// String values that aren't valid JSON literals are auto-quoted for unmarshalling.
+// Uses struct field types to determine how to interpret Redis string values.
 func fromHash(m map[string]string, v interface{}) error {
+	// Build JSON tag → field kind map from struct type
+	tagMap := buildTagMap(v)
+
 	raw := make(map[string]json.RawMessage, len(m))
 	for k, val := range m {
-		if isValidJSONLiteral(val) {
-			raw[k] = json.RawMessage(val)
-		} else {
-			// Auto-quote plain strings for JSON unmarshal compatibility
-			quoted, _ := json.Marshal(val)
-			raw[k] = quoted
-		}
+		kind := tagMap[k]
+		raw[k] = valueToJSON(val, kind)
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return fmt.Errorf("fromHash marshal raw: %w", err)
 	}
 	return json.Unmarshal(data, v)
+}
+
+// buildTagMap returns a map of json tag name → reflect.Kind for the struct type.
+func buildTagMap(v interface{}) map[string]reflect.Kind {
+	result := make(map[string]reflect.Kind)
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return result
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		// Handle json:"name,omitempty"
+		name := tag
+		for j := 0; j < len(tag); j++ {
+			if tag[j] == ',' {
+				name = tag[:j]
+				break
+			}
+		}
+		result[name] = f.Type.Kind()
+	}
+	return result
+}
+
+// valueToJSON converts a Redis string value to a json.RawMessage based on the target kind.
+func valueToJSON(val string, kind reflect.Kind) json.RawMessage {
+	if val == "" {
+		// Empty string → null for non-string types, empty string for string
+		if kind == reflect.String || kind == reflect.Invalid {
+			return json.RawMessage(`""`)
+		}
+		return json.RawMessage(`null`)
+	}
+
+	switch kind {
+	case reflect.String:
+		// Always quote as JSON string
+		quoted, _ := json.Marshal(val)
+		return quoted
+	case reflect.Bool:
+		if val == "true" || val == "false" {
+			return json.RawMessage(val)
+		}
+		return json.RawMessage(`false`)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if _, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return json.RawMessage(val)
+		}
+		return json.RawMessage(`0`)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if _, err := strconv.ParseUint(val, 10, 64); err == nil {
+			return json.RawMessage(val)
+		}
+		return json.RawMessage(`0`)
+	case reflect.Float32, reflect.Float64:
+		if _, err := strconv.ParseFloat(val, 64); err == nil {
+			return json.RawMessage(val)
+		}
+		return json.RawMessage(`0`)
+	case reflect.Struct:
+		// For struct types (like basic.Time), check if it's a valid JSON literal
+		if isValidJSONLiteral(val) {
+			return json.RawMessage(val)
+		}
+		// Quote as string (e.g. time format strings)
+		quoted, _ := json.Marshal(val)
+		return quoted
+	default:
+		// Unknown kind: try as JSON literal, fallback to quoted string
+		if isValidJSONLiteral(val) {
+			return json.RawMessage(val)
+		}
+		quoted, _ := json.Marshal(val)
+		return quoted
+	}
 }
 
 // isValidJSONLiteral checks if s is a valid JSON value (number, bool, null, object, array, or quoted string).
