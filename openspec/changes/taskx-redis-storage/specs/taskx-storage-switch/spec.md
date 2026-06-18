@@ -39,7 +39,7 @@ The `taskDispatcher` SHALL not directly depend on `dbv1.DB` when using Redis sto
 
 #### Scenario: SubmitTask with SQL backend
 - **WHEN** `SubmitTask` is called with SQL storage backend
-- **THEN** the system SHALL continue to use `dbv1.NewBatchTx` as before
+- **THEN** the system SHALL use `sqld.Store.RunInTx`（封装 bun.Tx）for transactional writes
 
 #### Scenario: handleTaskImmediately with Redis backend
 - **WHEN** `handleTaskImmediately` queries tasks with Redis storage backend

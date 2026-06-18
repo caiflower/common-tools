@@ -141,7 +141,7 @@ func TestSubtaskDAO_CustomTableName(t *testing.T) {
 
 	dao := NewSubtaskDAOWithConfig(client, "subtask_custom")
 	bean := &model.Subtask{ID: "s-custom", TaskID: "t1", TaskName: "demo", State: "pending", Status: 1}
-	_, err := dao.Insert(ctx, bean)
+	_, err := dao.(*subtaskDAO).Insert(ctx, bean)
 	assert.NoError(t, err)
 
 	got, err := dao.GetByID(ctx, "s-custom")
@@ -178,7 +178,7 @@ func TestTaskEdgeDAO_CustomTableName(t *testing.T) {
 		ToSubtaskID:   "b",
 		EdgeType:      "control+data",
 	}
-	_, err := dao.Insert(ctx, bean)
+	_, err := dao.(*taskEdgeDAO).Insert(ctx, bean)
 	assert.NoError(t, err)
 
 	edges, err := dao.GetByTaskID(ctx, "t1")

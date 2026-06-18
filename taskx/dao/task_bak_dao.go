@@ -7,11 +7,7 @@ import (
 )
 
 // TaskBakDAO defines the storage-agnostic interface for task backup persistence.
+// Only methods actually called by the dispatcher/receiver are included.
 type TaskBakDAO interface {
-	GetStore() Store
-	Insert(ctx context.Context, data *model.TaskBak) (int64, error)
-	QueryPage(ctx context.Context, filter *model.TaskBakFilter) (res []model.TaskBak, cnt int, err error)
 	GetByID(ctx context.Context, id string) (*model.TaskBak, error)
-	DeleteByID(ctx context.Context, id string) (int64, error)
-	SoftDeleteByID(ctx context.Context, id string) (int64, error)
 }

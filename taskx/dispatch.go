@@ -35,7 +35,9 @@ import (
 	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	v2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/caiflower/common-tools/taskx/dao"
+	"github.com/caiflower/common-tools/taskx/dao/redisd"
 	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/dao/model"
 	"github.com/caiflower/common-tools/taskx/executor"
@@ -81,11 +83,17 @@ type Config struct {
 	SubtaskRollbackQueueSize int           `yaml:"subtaskRollbackQueueSize" default:"100"`
 	RemoteCallTimeout        time.Duration `yaml:"remoteCallTimeout" default:"3s"`
 	BackupTaskAge            time.Duration `yaml:"backupTaskAge" default:"168h"`
+	// StorageBackend selects the persistence backend: "sql" (default) or "redis".
+	StorageBackend string `yaml:"storageBackend" default:"sql"`
+	// RedisClient is required when StorageBackend is "redis".
+	RedisClient v2.RedisClient `yaml:"-" json:"-"`
 	// Tables overrides the physical table names used by the taskx DAO
 	// models. Any field left empty falls back to the default value
 	// (the same name used in the model's bun:"table:..." tag). When nil,
-	// all five tables use their default names.
+	// all five tables use their default names. Only used when StorageBackend is "sql".
 	Tables *sqld.TableConfig `yaml:"tables" json:"tables"`
+	// RedisKeys configures the key prefix for Redis storage. Only used when StorageBackend is "redis".
+	RedisKeys *redisd.KeyConfig `yaml:"redisKeys" json:"redisKeys"`
 }
 
 type affinity struct {
@@ -101,6 +109,19 @@ const masterCallMinInterval = 5 * time.Second
 func InitTaskDispatcher(cfg *Config) {
 	initOnce.Do(func() {
 		_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+
+		// Validate StorageBackend
+		switch cfg.StorageBackend {
+		case "sql", "":
+			cfg.StorageBackend = "sql"
+		case "redis":
+			if cfg.RedisClient == nil {
+				panic("taskx: StorageBackend=redis requires Config.RedisClient to be set")
+			}
+		default:
+			panic(fmt.Sprintf("taskx: invalid StorageBackend %q, valid values: sql, redis", cfg.StorageBackend))
+		}
+
 		_tr.subtaskWorker = cfg.SubtaskWorker
 		_tr.taskWorker = cfg.TaskWorker
 		_tr.subtaskRollbackWorker = cfg.SubtaskRollbackWorker
@@ -115,22 +136,33 @@ func InitTaskDispatcher(cfg *Config) {
 		SingletonTaskDispatcher.randSource = rand.New(rand.NewSource(time.Now().UnixNano()))
 		SingletonTaskDispatcher.allocateWorkerInflight = inflight.NewInFlight()
 		SingletonTaskDispatcher.taskCache = gocache.New(30*time.Second, 60*time.Second)
-		// Resolve table config (with defaults) and register DAOs. The
-		// autowired DAO fields on _tr / SingletonTaskDispatcher are filled
-		// in here so the dispatcher and receiver share the same configured
-		// DAOs.
-		tables := cfg.Tables
-		if tables == nil {
-			tables = sqld.DefaultTableConfig()
+
+		// Register DAOs based on storage backend
+		if cfg.StorageBackend == "redis" {
+			keyCfg := cfg.RedisKeys
+			if keyCfg == nil {
+				keyCfg = redisd.DefaultKeyConfig()
+			}
+			bean.AddBean(redisd.NewTaskDAOWithConfig(cfg.RedisClient, keyCfg))
+			bean.AddBean(redisd.NewTaskBakDAOWithConfig(cfg.RedisClient, keyCfg))
+			bean.AddBean(redisd.NewSubtaskDAOWithConfig(cfg.RedisClient, keyCfg))
+			bean.AddBean(redisd.NewSubtaskBakDAOWithConfig(cfg.RedisClient, keyCfg))
+			bean.AddBean(redisd.NewTaskEdgeDAOWithConfig(cfg.RedisClient, keyCfg))
 		} else {
-			tables = tables.Normalize()
-			cfg.Tables = tables
+			tables := cfg.Tables
+			if tables == nil {
+				tables = sqld.DefaultTableConfig()
+			} else {
+				tables = tables.Normalize()
+				cfg.Tables = tables
+			}
+			bean.AddBean(sqld.NewTaskDAOWithConfig(nil, tables.Task))
+			bean.AddBean(sqld.NewTaskBakDAOWithConfig(nil, tables.TaskBak))
+			bean.AddBean(sqld.NewSubtaskDAOWithConfig(nil, tables.Subtask))
+			bean.AddBean(sqld.NewSubtaskBakDAOWithConfig(nil, tables.SubtaskBak))
+			bean.AddBean(sqld.NewTaskEdgeDAOWithConfig(nil, tables.TaskEdge))
 		}
-		bean.AddBean(sqld.NewTaskDAOWithConfig(nil, tables.Task))
-		bean.AddBean(sqld.NewTaskBakDAOWithConfig(nil, tables.TaskBak))
-		bean.AddBean(sqld.NewSubtaskDAOWithConfig(nil, tables.Subtask))
-		bean.AddBean(sqld.NewSubtaskBakDAOWithConfig(nil, tables.SubtaskBak))
-		bean.AddBean(sqld.NewTaskEdgeDAOWithConfig(nil, tables.TaskEdge))
+
 		bean.AddBean(SingletonTaskDispatcher)
 		bean.AddBean(_tr)
 	})
@@ -277,7 +309,25 @@ func (t *taskDispatcher) SubmitTaskWithTx(ctx context.Context, task *Task, tx *b
 		}
 	}
 
-	// Use context-based tx: the external tx is stored in context so DAO methods pick it up
+	// Redis backend: ignore external tx, use Store.RunInTx for atomicity
+	if t.cfg.StorageBackend == "redis" {
+		return t.TaskDao.GetStore().RunInTx(ctx, func(ctx context.Context) error {
+			if _, err := t.TaskDao.Insert(ctx, taskBean); err != nil {
+				return err
+			}
+			if _, err := t.SubtaskDao.BatchInsert(ctx, subtaskBeans); err != nil {
+				return err
+			}
+			if len(edgeBeans) > 0 {
+				if _, err := t.TaskEdgeDao.BatchInsert(ctx, edgeBeans); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	// SQL backend: use context-based tx propagation
 	txCtx := dao.WithTxContext(ctx, tx)
 
 	_, err := t.TaskDao.Insert(txCtx, taskBean)

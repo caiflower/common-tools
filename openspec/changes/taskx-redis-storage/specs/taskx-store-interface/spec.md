@@ -26,16 +26,32 @@ All 5 DAO interfaces (TaskDAO, SubtaskDAO, TaskEdgeDAO, TaskBakDAO, SubtaskBakDA
 - **WHEN** existing SQL DAO implementations are used with the new interface
 - **THEN** all existing functionality SHALL continue to work without behavioral changes
 
-### Requirement: GetClient returns Store instead of dbv1.DB
-The `GetClient()` method on DAO interfaces SHALL return the `Store` interface instead of `dbv1.DB`, allowing storage-backend-agnostic access to the underlying store.
+### Requirement: GetStore returns Store interface
+The `GetStore()` method on DAO interfaces SHALL return the `Store` interface, allowing storage-backend-agnostic access to the underlying store.
 
-#### Scenario: GetClient on SQL DAO
-- **WHEN** `GetClient()` is called on a SQL-backed DAO
+#### Scenario: GetStore on SQL DAO
+- **WHEN** `GetStore()` is called on a SQL-backed DAO
 - **THEN** it SHALL return a Store implementation that wraps the bun DB client
 
-#### Scenario: GetClient on Redis DAO
-- **WHEN** `GetClient()` is called on a Redis-backed DAO
+#### Scenario: GetStore on Redis DAO
+- **WHEN** `GetStore()` is called on a Redis-backed DAO
 - **THEN** it SHALL return a Store implementation that wraps the Redis client
+
+### Requirement: Context-based transaction propagation
+When a caller needs to execute multiple DAO operations within a single transaction, the system SHALL use context-based transaction propagation via `dao.WithTxContext(ctx, tx)` and `dao.TxFromContext(ctx)`. The DAO's internal `db(ctx)` helper SHALL automatically detect the transaction from context.
+
+#### Scenario: Multi-DAO transaction via Store.RunInTx
+- **WHEN** `Store.RunInTx(ctx, fn)` is called
+- **THEN** the system SHALL begin a transaction, store it in the context via `WithTxContext`, and pass the enriched context to `fn`
+- **AND** all DAO operations within `fn` SHALL automatically use the same transaction via `TxFromContext`
+
+#### Scenario: SQL backend tx extraction
+- **WHEN** a SQL DAO's `db(ctx)` is called with a context containing a `*bun.Tx`
+- **THEN** it SHALL return the `*bun.Tx` as `bun.IDB` instead of the default `db.GetDB()`
+
+#### Scenario: Redis backend tx extraction
+- **WHEN** a Redis DAO's operation is called within a `Store.RunInTx` context
+- **THEN** it SHALL use the pipeline or Lua script context stored in the context for atomic execution
 
 ### Requirement: QueryPage abstraction
 The `QueryPage` method SHALL accept a storage-agnostic filter interface instead of relying on `bun.IDB` for query building. Each storage backend SHALL implement its own query translation.

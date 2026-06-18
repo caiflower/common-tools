@@ -1,6 +1,11 @@
 ## Context
 
-taskx 是一个 DAG 任务调度框架，当前所有持久化操作通过 bun ORM 直接依赖 SQL 数据库。DAO 层定义了 5 个接口（TaskDAO、SubtaskDAO、TaskEdgeDAO、TaskBakDAO、SubtaskBakDAO），但接口签名与 `*bun.Tx` 强耦合，调度层（dispatcher/receiver）直接依赖 `dbv1.DB` 执行事务和 SQL 查询。
+taskx 是一个 DAG 任务调度框架，当前所有持久化操作通过 bun ORM 直接依赖 SQL 数据库。Phase 1 已完成 Store 接口抽象和 DAO 层对称分层重构：
+
+- **接口层** `dao/` — 定义 5 个存储无关的 DAO 接口（TaskDAO、SubtaskDAO、TaskEdgeDAO、TaskBakDAO、SubtaskBakDAO），方法签名不含任何存储后端类型
+- **SQL 实现** `dao/sqld/` — 所有 SQL DAO 实现，通过 `db(ctx)` helper 和 `dao.TxFromContext` 实现 context-based 事务传播
+- **Redis 实现** `dao/redisd/`（待实现）— 计划实现 Redis DAO
+- **Store 抽象** `dao/store.go` — `RunInTx(ctx, fn)` 封装事务语义，SQL 用 `bun.Tx`，Redis 用 Lua 脚本
 
 项目已有成熟的 `redis/v2` 客户端（基于 go-redis v9），支持 standalone 和 cluster 模式，提供 `Cmdable` 接口封装和 KeyPrefix 管理。
 
@@ -64,7 +69,7 @@ type Store interface {
 
 ### Decision 3: CAS 操作使用 Lua 脚本实现
 
-**选择**: `SetWorkerAndTaskStateWithOldWorker` 等 CAS 操作用 Lua 脚本实现原子性：
+**选择**: `CASWorkerAndState`、`CASWorkerAndRollback` 等 CAS 操作用 Lua 脚本实现原子性：
 
 ```lua
 -- KEYS[1] = task hash key, ARGV[1] = oldWorker, ARGV[2] = newWorker, ARGV[3] = newState
@@ -109,8 +114,11 @@ return 0
 
 ## Migration Plan
 
-1. **Phase 1**: 重构 DAO 接口（去 bun.Tx），SQL 实现适配新接口 — 此阶段无功能变更
-2. **Phase 2**: 实现 Redis DAO，新增 Redis 存储后端
+1. **Phase 1**: ~~重构 DAO 接口（去 bun.Tx），SQL 实现适配新接口~~ **已完成**
+   - 提取 5 个 DAO 接口到 `dao/` 级别，SQL 实现迁移到 `dao/sqld/`
+   - Store 接口 + context-based 事务传播（`WithTxContext`/`TxFromContext`）
+   - CAS 方法重命名（`CASWorkerAndState`、`CASWorkerAndRollback`）
+2. **Phase 2**: 实现 Redis DAO（`dao/redisd/`），新增 Redis 存储后端
 3. **Phase 3**: 添加配置切换机制，集成测试
 4. **回滚策略**: 配置 `storageBackend: sql` 即可回退到 SQL 后端，零停机
 
@@ -118,3 +126,20 @@ return 0
 
 - 是否需要支持 Redis 数据 TTL（自动过期清理已完成任务）？
 - Redis Cluster 模式下 hash tag 策略是否满足所有查询模式？
+
+## Decision 6: DAO 接口最小化 — 仅保留实际调用方法
+
+**选择**: 移除调度层（dispatch.go、receiver.go、receiver_internal.go）未实际调用的 DAO 方法，保留 22 个核心方法。
+
+**移除的方法** (23 个)：
+- TaskDAO: QueryPage、DeleteByID、SoftDeleteByID、SetOutputAndState、SetRetry
+- SubtaskDAO: GetStore、Insert、QueryPage、DeleteByID、SoftDeleteByID
+- TaskEdgeDAO: GetStore、Insert、QueryPage、DeleteByID、DeleteByTaskID
+- TaskBakDAO: GetStore、Insert、QueryPage、DeleteByID、SoftDeleteByID
+- SubtaskBakDAO: GetStore、Insert、GetByID、QueryPage、DeleteByID、SoftDeleteByID
+
+**理由**:
+- 减少 Redis DAO 实现工作量（从 45 个方法降至 22 个）
+- QueryPage 等管理接口可通过独立服务层实现，不属调度核心路径
+- backup.go 直接走原始 SQL，未使用 DAO 接口
+- 后续如有需求可重新添加，不影响架构

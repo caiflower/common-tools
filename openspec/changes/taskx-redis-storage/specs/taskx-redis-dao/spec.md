@@ -37,20 +37,20 @@ The system SHALL maintain a Sorted Set `taskx:todo` indexed by execute_time for 
 ### Requirement: Redis Lua scripts for CAS operations
 All CAS (Compare-And-Swap) operations SHALL be implemented as Redis Lua scripts to ensure atomicity. The scripts MUST compare the old value and conditionally update, returning 1 for success and 0 for failure.
 
-#### Scenario: SetWorkerAndTaskStateWithOldWorker CAS success
-- **WHEN** the task's current worker matches oldWorker
+#### Scenario: CASWorkerAndState CAS success for task
+- **WHEN** `TaskDAO.CASWorkerAndState(ctx, taskID, worker, state, oldWorker)` is called and the task's current worker matches oldWorker
 - **THEN** the Lua script SHALL atomically update worker and state fields, and return 1
 
-#### Scenario: SetWorkerAndTaskStateWithOldWorker CAS failure
-- **WHEN** the task's current worker does NOT match oldWorker
+#### Scenario: CASWorkerAndState CAS failure for task
+- **WHEN** `TaskDAO.CASWorkerAndState(ctx, taskID, worker, state, oldWorker)` is called and the task's current worker does NOT match oldWorker
 - **THEN** the Lua script SHALL NOT modify any fields, and return 0
 
-#### Scenario: SetWorkerAndStateWithOldWorker for subtask
-- **WHEN** the subtask's current worker matches oldWorker
+#### Scenario: CASWorkerAndState CAS success for subtask
+- **WHEN** `SubtaskDAO.CASWorkerAndState(ctx, id, worker, state, oldWorker)` is called and the subtask's current worker matches oldWorker
 - **THEN** the Lua script SHALL atomically update the subtask's worker and state, and return 1
 
-#### Scenario: SetWorkerAndRollbackWithOldWorker for subtask rollback
-- **WHEN** the subtask's current worker matches oldWorker
+#### Scenario: CASWorkerAndRollback CAS success for subtask
+- **WHEN** `SubtaskDAO.CASWorkerAndRollback(ctx, id, worker, rollback, oldWorker)` is called and the subtask's current worker matches oldWorker
 - **THEN** the Lua script SHALL atomically update the subtask's worker and rollback fields, and return 1
 
 ### Requirement: Redis field-level partial updates
