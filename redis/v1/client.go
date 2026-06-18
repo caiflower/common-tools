@@ -143,10 +143,10 @@ func NewRedisClient(config Config) (RedisClient, error) {
 			WriteTimeout: config.WriteTimeout,
 			PoolSize:     config.PoolSize,
 			MinIdleConns: config.MinIdleConns,
-			IdleTimeout:  config.IdleTimeout,
+			IdleTimeout:  idleTimeout(config),
 		}
-		if config.MaxConnAge > 0 {
-			opts.MaxConnAge = config.MaxConnAge
+		if maxConnAge := maxConnAge(config); maxConnAge > 0 {
+			opts.MaxConnAge = maxConnAge
 		}
 		cc := redis.NewClusterClient(opts)
 		c.redis = cc
@@ -160,10 +160,10 @@ func NewRedisClient(config Config) (RedisClient, error) {
 			WriteTimeout: config.WriteTimeout,
 			PoolSize:     config.PoolSize,
 			MinIdleConns: config.MinIdleConns,
-			IdleTimeout:  config.IdleTimeout,
+			IdleTimeout:  idleTimeout(config),
 		}
-		if config.MaxConnAge > 0 {
-			opts.MaxConnAge = config.MaxConnAge
+		if maxConnAge := maxConnAge(config); maxConnAge > 0 {
+			opts.MaxConnAge = maxConnAge
 		}
 		sc := redis.NewClient(opts)
 		c.redis = sc
@@ -195,6 +195,24 @@ func maskPassword(pwd string) string {
 		return "****"
 	}
 	return string(runes[:2]) + strings.Repeat("*", len(runes)-4) + string(runes[len(runes)-2:])
+}
+
+// idleTimeout resolves the idle timeout from v8 (IdleTimeout) or v9 (ConnMaxIdleTime) alias.
+// Prefers v9 alias, falls back to v8 name.
+func idleTimeout(c Config) time.Duration {
+	if c.ConnMaxIdleTime > 0 {
+		return c.ConnMaxIdleTime
+	}
+	return c.IdleTimeout
+}
+
+// maxConnAge resolves the max connection age from v8 (MaxConnAge) or v9 (ConnMaxLifetime) alias.
+// Prefers v9 alias, falls back to v8 name.
+func maxConnAge(c Config) time.Duration {
+	if c.ConnMaxLifetime > 0 {
+		return c.ConnMaxLifetime
+	}
+	return c.MaxConnAge
 }
 
 func encodingObject(v interface{}) (interface{}, error) {

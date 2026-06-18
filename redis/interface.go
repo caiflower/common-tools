@@ -34,10 +34,10 @@ type Config struct {
 	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s" json:"writeTimeout"`
 	PoolSize              int           `yaml:"poolSize" json:"poolSize"`
 	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
-	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"1800s" json:"maxConnAge"`           // v8 name, use ConnMaxLifetime for new configs
-	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"`          // v8 name, use ConnMaxIdleTime for new configs
-	ConnMaxLifetime       time.Duration `yaml:"connMaxLifetime" default:"1800s" json:"connMaxLifetime"` // v9 alias for MaxConnAge
-	ConnMaxIdleTime       time.Duration `yaml:"connMaxIdleTime" default:"300s" json:"connMaxIdleTime"`  // v9 alias for IdleTimeout
+	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"1800s" json:"maxConnAge"`  // v8 name, use ConnMaxLifetime for new configs
+	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"` // v8 name, use ConnMaxIdleTime for new configs
+	ConnMaxLifetime       time.Duration `yaml:"connMaxLifetime" json:"connMaxLifetime"`        // v9 alias for MaxConnAge, no default: zero sentinel enables fallback to MaxConnAge
+	ConnMaxIdleTime       time.Duration `yaml:"connMaxIdleTime" json:"connMaxIdleTime"`        // v9 alias for IdleTimeout, no default: zero sentinel enables fallback to IdleTimeout
 	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
 	EnableMetrics         string        `yaml:"enableMetrics" default:"true" json:"enableMetrics"`
 }
