@@ -5,8 +5,8 @@ import (
 	_ "embed"
 	"fmt"
 
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
-	"github.com/go-redis/redis/v8"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 //go:embed lua/rate_limit.lua
@@ -14,7 +14,7 @@ var rateLimitScript string
 
 type RedisLimiter struct {
 	client           redis.Cmdable
-	scriptManager    *redisv1.ScriptManager
+	scriptManager    *redisv2.ScriptManager
 	defaultCapacity  int64
 	defaultRate      int64
 	defaultRequested int64
@@ -54,8 +54,10 @@ func NewRedisLimiter(ctx context.Context, r redis.Cmdable, opts ...LimiterOption
 		return nil, fmt.Errorf("invalid limiter config: %w", err)
 	}
 
-	rl.scriptManager = redisv1.NewScriptManager(r)
-	rl.scriptManager.Register("rate_limit", rateLimitScript)
+	rl.scriptManager = redisv2.NewScriptManager(r)
+	if err := rl.scriptManager.Register("rate_limit", rateLimitScript); err != nil {
+		return nil, fmt.Errorf("failed to register rate limit script: %w", err)
+	}
 
 	if err := rl.scriptManager.LoadScripts(ctx); err != nil {
 		return nil, fmt.Errorf("failed to load rate limit script: %w", err)

@@ -26,8 +26,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/crontab"
 	"github.com/caiflower/common-tools/pkg/logger"
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // redisKeyNodes 返回节点注册 key 的前缀
@@ -85,7 +84,7 @@ func (c *Cluster) redisRegisterNode() {
 
 	// 退出时删除节点注册信息
 	// 注意：此时 c.ctx 已被 cancel，使用 context.TODO() 确保删除操作能执行完成，避免注册信息残留
-	if err := c.Redis.Del(context.TODO(), key); err != nil {
+	if err := c.Redis.Cmd().Del(context.TODO(), c.Redis.Cmd().Key(key)).Err(); err != nil {
 		c.logger.Warn("[cluster-redis] delete node registration failed: %v", err)
 	}
 }
@@ -103,8 +102,8 @@ func (c *Cluster) doRegisterNode(key string) error {
 		return fmt.Errorf("marshal node info failed: %w", err)
 	}
 
-	// 使用 SetExPeriod 实现注册和续约（带过期时间）
-	if err = c.Redis.SetExPeriod(c.ctx, key, string(data), c.config.RedisDiscovery.NodeRegisterTTL); err != nil {
+	// Use SET with TTL for registration and renewal
+	if err := c.Redis.Cmd().Set(c.ctx, c.Redis.Cmd().Key(key), string(data), c.config.RedisDiscovery.NodeRegisterTTL).Err(); err != nil {
 		return fmt.Errorf("set node info failed: %w", err)
 	}
 
@@ -132,7 +131,9 @@ func (c *Cluster) redisSyncNodes() {
 
 // doSyncNodes 执行节点同步
 func (c *Cluster) doSyncNodes(pattern string) error {
-	// 使用 GetRedis() 获取原生的 redis.Cmdable 来执行 SCAN
+	// Use GetRedis() to get the raw redis.Cmdable for SCAN operations.
+	// Keys returned by SCAN already include the KeyPrefix, so we use the raw
+	// client directly to avoid double-prefixing when reading values.
 	redisCmd := c.Redis.GetRedis()
 
 	// SCAN 是游标迭代器，需循环直到 cursor 归零才能获取所有 key
@@ -156,9 +157,9 @@ func (c *Cluster) doSyncNodes(pattern string) error {
 		return nil
 	}
 
-	// 构建新的节点映射
-	// 注意：SCAN 返回的 key 已经包含 KeyPrefix，因此必须用原始 Redis 客户端直接 GET，
-	// 不能使用 c.Redis.GetString（会通过 GetKey 再次添加 KeyPrefix，导致双重前缀）
+	// Build new node mapping.
+	// Note: SCAN returns keys that already include KeyPrefix, so we use the raw
+	// redisCmd (from GetRedis()) for GET to avoid double-prefixing via Cmd().Key().
 	newNodes := make(map[string]*Node)
 	for _, key := range keys {
 		data, err := redisCmd.Get(c.ctx, key).Result()
@@ -244,7 +245,7 @@ func (c *Cluster) redisFighting() {
 func (c *Cluster) redisFightingWithRetry(key string, retryCount int) error {
 	const maxRetries = 3
 
-	ok, err := c.Redis.SetNXPeriod(c.ctx, key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod)
+	ok, err := c.Redis.Cmd().SetNX(c.ctx, c.Redis.Cmd().Key(key), c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod).Result()
 	if err != nil {
 		if retryCount < maxRetries {
 			backoff := time.Duration(retryCount+1) * time.Second
@@ -264,9 +265,9 @@ func (c *Cluster) redisSyncLeader() {
 	key := c.redisKeyElection()
 
 	fn := func() {
-		leaderName, err := c.Redis.GetString(c.ctx, key)
+		leaderName, err := c.Redis.Cmd().Get(c.ctx, c.Redis.Cmd().Key(key)).Result()
 		if err != nil {
-			if errors.Is(err, redis.Nil) || errors.Is(err, redisv1.ErrNil) {
+			if errors.Is(err, redis.Nil) {
 				c.releaseLeader()
 				// 重新开始选举
 				go c.redisFighting()
@@ -319,7 +320,7 @@ func (c *Cluster) redisWatchDog() {
 	defer cancel() // 确保退出时取消 context
 
 	fn := func() {
-		leaderName, err := c.Redis.GetString(ctx, key)
+		leaderName, err := c.Redis.Cmd().Get(ctx, c.Redis.Cmd().Key(key)).Result()
 		if err != nil {
 			logger.Error("[cluster-redis] get lease failed. Error: %v", err)
 			c.releaseLeader()
@@ -333,7 +334,7 @@ func (c *Cluster) redisWatchDog() {
 			return
 		}
 
-		err = c.Redis.SetPeriod(ctx, key, leaderName, c.config.RedisDiscovery.ElectionPeriod)
+		err = c.Redis.Cmd().Set(ctx, c.Redis.Cmd().Key(key), leaderName, c.config.RedisDiscovery.ElectionPeriod).Err()
 		if err != nil {
 			logger.Error("[cluster-redis] set lease failed. Error: %v", err)
 		}

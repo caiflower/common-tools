@@ -28,11 +28,8 @@ import (
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	xredis "github.com/caiflower/common-tools/redis"
 	"github.com/go-redis/redis/v8"
-)
-
-const (
-	ClusterMode = "cluster"
 )
 
 var (
@@ -103,22 +100,8 @@ type RedisClient interface {
 	ZRevRank(ctx context.Context, k string, member string) (int64, error)
 }
 
-type Config struct {
-	Name                  string        `yaml:"name" json:"name"`
-	Mode                  string        `yaml:"mode" json:"mode"`
-	Addrs                 []string      `yaml:"addrs" json:"addrs"`
-	Password              string        `yaml:"password" json:"password"`
-	EnablePasswordEncrypt bool          `yaml:"enablePasswordEncrypt" json:"enablePasswordEncrypt"`
-	DB                    int           `yaml:"db" json:"db"`
-	ReadTimeout           time.Duration `yaml:"readTimeout" default:"10s" json:"readTimeout"`
-	WriteTimeout          time.Duration `yaml:"writeTimeout" default:"20s" json:"writeTimeout"`
-	PoolSize              int           `yaml:"poolSize" json:"poolSize"`
-	MinIdleConns          int           `yaml:"minIdleConns" default:"20" json:"minIdleConns"`
-	MaxConnAge            time.Duration `yaml:"maxConnAge" default:"1800s" json:"maxConnAge"`
-	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"`
-	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
-	EnableMetrics         *bool         `yaml:"enableMetrics" default:"true" json:"enableMetrics"`
-}
+// Config is a type alias to the shared xredis.Config for backward compatibility.
+type Config = xredis.Config
 
 type redisClient struct {
 	config    *Config
@@ -152,7 +135,7 @@ func NewRedisClient(config Config) (RedisClient, error) {
 		password = decrypted
 	}
 	switch config.Mode {
-	case ClusterMode:
+	case xredis.ClusterMode:
 		opts := &redis.ClusterOptions{
 			Addrs:        config.Addrs,
 			Password:     password,
@@ -193,7 +176,7 @@ func NewRedisClient(config Config) (RedisClient, error) {
 		return nil, fmt.Errorf("connect redis failed: %w", ping.Err())
 	}
 
-	if config.EnableMetrics != nil && *config.EnableMetrics {
+	if strings.ToLower(config.EnableMetrics) == "true" {
 		c.AddHook(newMetricsHook(c.config))
 		c.ctx, c.cancel = context.WithCancel(context.Background())
 		startPoolMetrics(c.ctx, c)

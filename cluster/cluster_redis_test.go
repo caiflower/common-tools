@@ -25,14 +25,14 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/caiflower/common-tools/pkg/logger"
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/stretchr/testify/assert"
 )
 
 // newMiniredisClient 创建一个基于 miniredis 的 RedisClient（内存 Redis，适合集成测试）
-func newMiniredisClient(t *testing.T, addr string) redisv1.RedisClient {
+func newMiniredisClient(t *testing.T, addr string) redisv2.RedisClient {
 	t.Helper()
-	client, err := redisv1.NewRedisClient(redisv1.Config{
+	client, err := redisv2.NewRedisClient(redisv2.Config{
 		Addrs: []string{addr},
 	})
 	if err != nil {
@@ -43,7 +43,7 @@ func newMiniredisClient(t *testing.T, addr string) redisv1.RedisClient {
 
 // createTestRedisCluster 创建一个测试用的 Redis 模式 Cluster 实例
 // 通过覆盖 curNode 来模拟不同节点身份，避免多节点测试时名称冲突
-func createTestRedisCluster(t *testing.T, redisClient redisv1.RedisClient, name string, port int) *Cluster {
+func createTestRedisCluster(t *testing.T, redisClient redisv2.RedisClient, name string, port int) *Cluster {
 	t.Helper()
 
 	cfg := Config{
@@ -330,7 +330,7 @@ func TestRedisFightingDirect(t *testing.T) {
 
 	// 验证选举 key 已设置
 	key := cluster.redisKeyElection()
-	leaderName, err := cluster.Redis.GetString(cluster.ctx, key)
+	leaderName, err := cluster.Redis.Cmd().Get(cluster.ctx, cluster.Redis.Cmd().Key(key)).Result()
 	assert.NoError(t, err)
 	assert.Equal(t, "direct-test", leaderName)
 
@@ -369,7 +369,7 @@ func TestRedisFightingOnlyOneWins(t *testing.T) {
 
 	// 验证只有一个获胜
 	key := cluster1.redisKeyElection()
-	leaderName, err := cluster1.Redis.GetString(cluster1.ctx, key)
+	leaderName, err := cluster1.Redis.Cmd().Get(cluster1.ctx, cluster1.Redis.Cmd().Key(key)).Result()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, leaderName)
 

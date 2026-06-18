@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	xredis "github.com/caiflower/common-tools/redis"
 	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -28,39 +29,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newIsolatedHook creates a MetricsHook backed by its own Prometheus registry so
-// that tests do not conflict with the global registry or with each other.
-func newIsolatedHook(t *testing.T, addr string) (*MetricsHook, *prometheus.Registry) {
+// swapTestMetrics replaces the global xredis metric vectors with fresh ones
+// backed by an isolated registry, returning a teardown function that restores
+// the originals.
+func swapTestMetrics(t *testing.T) (*prometheus.Registry, func()) {
 	t.Helper()
+
+	// Save originals.
+	origCmdTotal := xredis.CmdTotal
+	origCmdDuration := xredis.CmdDuration
+	origPipTotal := xredis.PipTotal
+	origPipDuration := xredis.PipDuration
 
 	reg := prometheus.NewRegistry()
 
-	cmdTotal := prometheus.NewCounterVec(
+	xredis.CmdTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "redis_commands_total", Help: "test"},
 		[]string{"addr", "command", "status"},
 	)
-	cmdDur := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{Name: "redis_command_duration_seconds", Help: "test", Buckets: durationBuckets},
+	xredis.CmdDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "redis_command_duration_seconds", Help: "test", Buckets: xredis.DurationBuckets},
 		[]string{"addr", "command"},
 	)
-	pipTotal := prometheus.NewCounterVec(
+	xredis.PipTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "redis_pipeline_commands_total", Help: "test"},
 		[]string{"addr", "status"},
 	)
-	pipDur := prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{Name: "redis_pipeline_duration_seconds", Help: "test", Buckets: durationBuckets},
+	xredis.PipDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "redis_pipeline_duration_seconds", Help: "test", Buckets: xredis.DurationBuckets},
 		[]string{"addr"},
 	)
 
-	reg.MustRegister(cmdTotal, cmdDur, pipTotal, pipDur)
+	reg.MustRegister(xredis.CmdTotal, xredis.CmdDuration, xredis.PipTotal, xredis.PipDuration)
 
-	return &MetricsHook{
-		addr:          addr,
-		cmdTotal:      cmdTotal,
-		cmdDuration:   cmdDur,
-		pipelineTotal: pipTotal,
-		pipelineDur:   pipDur,
-	}, reg
+	teardown := func() {
+		xredis.CmdTotal = origCmdTotal
+		xredis.CmdDuration = origCmdDuration
+		xredis.PipTotal = origPipTotal
+		xredis.PipDuration = origPipDuration
+	}
+	return reg, teardown
 }
 
 func TestStatusLabel(t *testing.T) {
@@ -74,7 +82,10 @@ func TestMetricsHook_ImplementsHookInterface(t *testing.T) {
 }
 
 func TestMetricsHook_BeforeProcess_InjectsStartTime(t *testing.T) {
-	hook, _ := newIsolatedHook(t, "127.0.0.1:6379")
+	_, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmd := redis.NewStatusCmd(ctx, "ping")
@@ -86,7 +97,10 @@ func TestMetricsHook_BeforeProcess_InjectsStartTime(t *testing.T) {
 }
 
 func TestMetricsHook_AfterProcess_OkCommand(t *testing.T) {
-	hook, reg := newIsolatedHook(t, "127.0.0.1:6379")
+	reg, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmd := redis.NewStatusCmd(ctx, "get", "key")
@@ -94,7 +108,7 @@ func TestMetricsHook_AfterProcess_OkCommand(t *testing.T) {
 	// cmd.Err() is nil by default → status="ok"
 	require.NoError(t, hook.AfterProcess(ctx, cmd))
 
-	count := testutil.ToFloat64(hook.cmdTotal.WithLabelValues("127.0.0.1:6379", "get", "ok"))
+	count := testutil.ToFloat64(xredis.CmdTotal.WithLabelValues("127.0.0.1:6379", "get", "ok"))
 	tassert.Equal(t, float64(1), count)
 
 	mfs, err := reg.Gather()
@@ -110,7 +124,10 @@ func TestMetricsHook_AfterProcess_OkCommand(t *testing.T) {
 }
 
 func TestMetricsHook_AfterProcess_ErrorCommand(t *testing.T) {
-	hook, _ := newIsolatedHook(t, "127.0.0.1:6379")
+	_, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmd := redis.NewStatusCmd(ctx, "set", "key", "value")
@@ -118,12 +135,15 @@ func TestMetricsHook_AfterProcess_ErrorCommand(t *testing.T) {
 	ctx, _ = hook.BeforeProcess(ctx, cmd)
 	require.NoError(t, hook.AfterProcess(ctx, cmd))
 
-	count := testutil.ToFloat64(hook.cmdTotal.WithLabelValues("127.0.0.1:6379", "set", "error"))
+	count := testutil.ToFloat64(xredis.CmdTotal.WithLabelValues("127.0.0.1:6379", "set", "error"))
 	tassert.Equal(t, float64(1), count)
 }
 
 func TestMetricsHook_AfterProcess_RedisNilIsOk(t *testing.T) {
-	hook, _ := newIsolatedHook(t, "127.0.0.1:6379")
+	_, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmd := redis.NewStatusCmd(ctx, "get", "missing")
@@ -131,12 +151,15 @@ func TestMetricsHook_AfterProcess_RedisNilIsOk(t *testing.T) {
 	ctx, _ = hook.BeforeProcess(ctx, cmd)
 	require.NoError(t, hook.AfterProcess(ctx, cmd))
 
-	count := testutil.ToFloat64(hook.cmdTotal.WithLabelValues("127.0.0.1:6379", "get", "ok"))
+	count := testutil.ToFloat64(xredis.CmdTotal.WithLabelValues("127.0.0.1:6379", "get", "ok"))
 	tassert.Equal(t, float64(1), count)
 }
 
 func TestMetricsHook_Pipeline_OkPath(t *testing.T) {
-	hook, _ := newIsolatedHook(t, "127.0.0.1:6379")
+	_, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmds := []redis.Cmder{
@@ -148,12 +171,15 @@ func TestMetricsHook_Pipeline_OkPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, hook.AfterProcessPipeline(ctx, cmds))
 
-	count := testutil.ToFloat64(hook.pipelineTotal.WithLabelValues("127.0.0.1:6379", "ok"))
+	count := testutil.ToFloat64(xredis.PipTotal.WithLabelValues("127.0.0.1:6379", "ok"))
 	tassert.Equal(t, float64(2), count, "pipeline should count all commands")
 }
 
 func TestMetricsHook_Pipeline_ErrorPath(t *testing.T) {
-	hook, _ := newIsolatedHook(t, "127.0.0.1:6379")
+	_, teardown := swapTestMetrics(t)
+	defer teardown()
+
+	hook := &MetricsHook{addr: "127.0.0.1:6379"}
 	ctx := context.Background()
 
 	cmd1 := redis.NewStatusCmd(ctx, "set", "k1", "v1")
@@ -165,6 +191,6 @@ func TestMetricsHook_Pipeline_ErrorPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, hook.AfterProcessPipeline(ctx, cmds))
 
-	count := testutil.ToFloat64(hook.pipelineTotal.WithLabelValues("127.0.0.1:6379", "error"))
+	count := testutil.ToFloat64(xredis.PipTotal.WithLabelValues("127.0.0.1:6379", "error"))
 	tassert.Equal(t, float64(2), count)
 }

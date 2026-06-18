@@ -25,7 +25,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/http"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
-	redisv1 "github.com/caiflower/common-tools/redis/v1"
+	"github.com/caiflower/common-tools/redis"
 	"github.com/caiflower/common-tools/telemetry"
 )
 
@@ -42,7 +42,7 @@ type DefaultConfig struct {
 	ClusterConfig    cluster.Config   `yaml:"cluster" json:"cluster"`
 	DatabaseConfig   []dbv1.Config    `yaml:"database" json:"database"`
 	HttpClientConfig http.Config      `yaml:"http_client" json:"http_client"`
-	RedisConfig      []redisv1.Config `yaml:"redis" json:"redis"`
+	RedisConfig      []redis.Config   `yaml:"redis" json:"redis"`
 	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
 	KafkaConfig      []xkafka.Config  `yaml:"kafka" json:"kafka"`
 	WebConfig        []WebConfig      `yaml:"web" json:"web"`
@@ -57,7 +57,7 @@ func (c *DefaultConfig) GetDatabaseConfigByName(name string) *dbv1.Config {
 	return nil
 }
 
-func (c *DefaultConfig) GetRedisConfigByName(name string) *redisv1.Config {
+func (c *DefaultConfig) GetRedisConfigByName(name string) *redis.Config {
 	for i := range c.RedisConfig {
 		if c.RedisConfig[i].Name == name {
 			return &c.RedisConfig[i]

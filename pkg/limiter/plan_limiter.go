@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/redis/v1"
-	"github.com/go-redis/redis/v8"
+	"github.com/caiflower/common-tools/redis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 //go:embed lua/plan_sliding_window.lua
@@ -23,7 +23,7 @@ var planUsageScript string
 
 type PlanLimiter struct {
 	client            redis.Cmdable
-	scriptManager     *redisv1.ScriptManager
+	scriptManager     *v2.ScriptManager
 	defaultBudget     int64
 	defaultWindow     time.Duration
 	defaultBucketSize time.Duration
@@ -57,10 +57,16 @@ func NewPlanLimiter(ctx context.Context, r redis.Cmdable, opts ...PlanOption) (*
 		return nil, fmt.Errorf("invalid plan limiter config: %w", err)
 	}
 
-	pl.scriptManager = redisv1.NewScriptManager(r)
-	pl.scriptManager.Register("allow", planSlidingWindowScript)
-	pl.scriptManager.Register("refund", planRefundScript)
-	pl.scriptManager.Register("usage", planUsageScript)
+	pl.scriptManager = v2.NewScriptManager(r)
+	if err := pl.scriptManager.Register("allow", planSlidingWindowScript); err != nil {
+		return nil, fmt.Errorf("failed to register allow script: %w", err)
+	}
+	if err := pl.scriptManager.Register("refund", planRefundScript); err != nil {
+		return nil, fmt.Errorf("failed to register refund script: %w", err)
+	}
+	if err := pl.scriptManager.Register("usage", planUsageScript); err != nil {
+		return nil, fmt.Errorf("failed to register usage script: %w", err)
+	}
 
 	if err := pl.scriptManager.LoadScripts(ctx); err != nil {
 		return nil, fmt.Errorf("failed to load plan limiter scripts: %w", err)
