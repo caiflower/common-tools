@@ -121,23 +121,35 @@ engine := web.Default(
     config.WithName("myapp"),
 )
 
-// 注册路由，handler 类型自动识别
-engine.POST("/users", CreateUser)
-engine.GET("/users/:userId", GetUserReq{}, func(ctx context.Context, req *GetUserReq) (*User, error) {
-    return &User{ID: 1, Name: "John"}, nil
+// 方式1：app.HandlerFunc 中间件风格（ctx 控制链执行）
+engine.GET("/ping", func(ctx context.Context, reqCtx *app.RequestContext) {
+    reqCtx.JSON(200, map[string]string{"msg": "pong"})
 })
-engine.DELETE("/users/:userId", DeleteUser)
 
-// 使用 app.HandlerFunc 风格
-engine.GET("/users", ListUsers)
+// 方式2：普通函数风格（自动绑定参数、校验、序列化响应）
+engine.POST("/users", func(req *CreateUserReq) (*User, error) {
+    return &User{ID: 1, Name: req.Name}, nil
+})
+
+// 方式3：结构体方法值（推荐，避免反射）
+uc := &UserController{}
+engine.POST("/users", uc.CreateUser)
+engine.GET("/users/:userId", uc.GetUser)
 
 // 使用路由组
 api := engine.Group("/api/v1")
-api.POST("/users", CreateUser)
-api.GET("/users/:userId", GetUserReq{}, handler.GetUser)
+api.POST("/users", uc.CreateUser)
+api.GET("/users/:userId", uc.GetUser)
+
+// 使用 Handle 指定自定义 HTTP 方法
+engine.Handle("GET", "/custom", func(ctx context.Context, reqCtx *app.RequestContext) {
+    reqCtx.JSON(200, map[string]string{"custom": "true"})
+})
 ```
 
-### 4. 注册GRPC服务
+### 4. 注册 GRPC 服务（推荐）
+
+> **推荐使用 GRPC 注册方式**：相比普通函数注册，GRPC 方式直接使用 proto 生成的 Handler，减少一次反射调用，性能更优。
 
 框架支持将 GRPC 服务直接注册为 HTTP 路由：
 
@@ -156,9 +168,10 @@ func (s *HelloServiceImpl) SayHello(ctx context.Context, req *pb.HelloRequest) (
     return &pb.HelloReply{Message: "Hello " + req.Name}, nil
 }
 
-// 注册 GRPC 路由
+// 注册 GRPC 路由（支持 GET/POST/PUT/PATCH 等 HTTP 方法）
 helloService := &HelloServiceImpl{}
 engine.GRPC("POST", "/v1/hello", pb.HelloService_SayHello_Handler, helloService)
+engine.GRPC("GET", "/v1/search", pb.HelloService_Search_Handler, helloService)
 ```
 
 ### 5. 使用HTTP客户端
@@ -240,7 +253,7 @@ engine.HEAD(relativePath string, handlers ...interface{}) IRoutes
 engine.Any(relativePath string, handlers ...interface{}) IRoutes
 engine.Handle(httpMethod, relativePath string, handlers ...interface{}) IRoutes
 
-// GRPC 路由注册
+// GRPC 路由注册（推荐：直接使用 proto Handler，减少一次反射）
 engine.GRPC(httpMethod, relativePath string, handler grpc.MethodHandler, srv interface{}) IRoutes
 
 // 获取根路由组
