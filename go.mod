@@ -11,7 +11,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cloudwego/netpoll v0.7.0
 	github.com/confluentinc/confluent-kafka-go/v2 v2.2.0
-	github.com/dominikbraun/graph v0.23.0
 	github.com/fsnotify/fsnotify v1.5.4
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-sql-driver/mysql v1.7.1
