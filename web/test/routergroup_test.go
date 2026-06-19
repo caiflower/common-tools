@@ -29,6 +29,7 @@ import (
 	"github.com/caiflower/common-tools/web/common/resp"
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 )
 
 // TestRouterGroupBasic tests basic RouterGroup functionality
@@ -1107,4 +1108,75 @@ func TestRouterGroupMethodValueInGroup(t *testing.T) {
 
 	assert.Equal(t, 200, w2.Code)
 	assert.Equal(t, "v1", w2.Header().Get("X-API"))
+}
+
+// ===== Wrapper handler for testing XxxServiceYyyHandler naming pattern =====
+
+// IServiceSearchHandler is a wrapper that exports the unexported protoc-generated
+// _IService_Search_Handler. This simulates the pattern used in dagflow/backend/internal/proto/handlers.go
+// where internal proto handlers are wrapped with exported functions.
+func IServiceSearchHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	return _IService_Search_Handler(srv, ctx, dec, interceptor)
+}
+
+// TestRouterGroupGRPCWithWrapperHandler tests gRPC route registration using wrapper
+// functions that follow the XxxServiceYyyHandler naming convention.
+// This verifies that extractGRPCMethodName correctly parses method names from
+// wrapper functions like "IServiceSearchHandler" → "Search".
+func TestRouterGroupGRPCWithWrapperHandler(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-wrapper"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register using wrapper handler (XxxServiceYyyHandler pattern)
+	engine.GRPC("POST", "/grpc/wrapper-search", IServiceSearchHandler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	// Verify route is registered and handler executes correctly
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+	req := httptest.NewRequest("POST", "/grpc/wrapper-search", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.NotEqual(t, 404, w.Code, "wrapper handler route should be registered")
+	assert.Equal(t, 200, w.Code)
+}
+
+// TestRouterGroupGRPCWrapperAndProtocCoexist tests that wrapper handlers and
+// direct protoc handlers can coexist in the same engine.
+func TestRouterGroupGRPCWrapperAndProtocCoexist(t *testing.T) {
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-coexist"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	// Register with protoc-generated handler (underscore pattern)
+	engine.GRPC("POST", "/grpc/protoc-search", _IService_Search_Handler, &HelloImpl{})
+	// Register with wrapper handler (XxxServiceYyyHandler pattern)
+	engine.GRPC("POST", "/grpc/wrapper-search", IServiceSearchHandler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+
+	// Test protoc route
+	req1 := httptest.NewRequest("POST", "/grpc/protoc-search", bytes.NewReader([]byte(reqBody)))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	assert.Equal(t, 200, w1.Code, "protoc handler route should work")
+
+	// Test wrapper route
+	req2 := httptest.NewRequest("POST", "/grpc/wrapper-search", bytes.NewReader([]byte(reqBody)))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	assert.Equal(t, 200, w2.Code, "wrapper handler route should work")
 }

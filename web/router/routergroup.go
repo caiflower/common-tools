@@ -285,18 +285,32 @@ func (group *RouterGroup) GRPC(httpMethod string, relativePath string, handler f
 	return group.returnObj()
 }
 
-// extractGRPCMethodName extracts the method name from a protoc-generated handler function name.
-// e.g. "proto._IService_Search_Handler" → "Search"
+// extractGRPCMethodName extracts the method name from a gRPC handler function name.
+// Supports two naming patterns:
+//  1. Protoc-generated: "proto._IService_Search_Handler" → "Search"
+//  2. Wrapper functions: "proto.ExecutionServiceGetHandler" → "Get"
+//     (wrapper naming convention: XxxServiceYyyHandler, where XxxService is the
+//     service name ending with "Service" and Yyy is the method name)
 func extractGRPCMethodName(funcName string) string {
-	// Match pattern like _ServiceName_MethodName_Handler
+	// Pattern 1: Protoc-generated handler with underscores
+	// e.g. "_IService_Search_Handler" → capture "IService_Search" → last part = "Search"
 	re := regexp.MustCompile(`_([^_]+)_Handler`)
 	matches := re.FindStringSubmatch(funcName)
 	if len(matches) >= 2 {
-		// Extract method name: the part between last _ and _Handler
 		parts := regexp.MustCompile(`_`).Split(matches[1], -1)
 		return parts[len(parts)-1]
 	}
-	// Fallback: use tools regex
+
+	// Pattern 2: Wrapper functions ending with "Handler"
+	// e.g. "ExecutionServiceGetHandler" → service="ExecutionService", method="Get"
+	// The service name must end with "Service" (gRPC convention)
+	reWrapper := regexp.MustCompile(`([A-Z][a-zA-Z]*Service)([A-Z][a-zA-Z]*)Handler`)
+	wrapperMatches := reWrapper.FindStringSubmatch(funcName)
+	if len(wrapperMatches) >= 3 {
+		return wrapperMatches[2]
+	}
+
+	// Fallback: strip package path and type suffix
 	name := tools.RegReplace(funcName, ".*/", "")
 	name = tools.RegReplace(name, `\..*`, "")
 	return name
