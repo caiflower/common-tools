@@ -625,12 +625,6 @@ func (oai *OpenApiV3) Validate(arg any) error {
 		return nil
 	}
 
-	// Hold write lock for the entire validation to protect concurrent access
-	// to the Schemas map. Concurrent Validate calls may lazily add schemas
-	// (write) while validateStructWithSchema reads from the same map.
-	oai.mu.Lock()
-	defer oai.mu.Unlock()
-
 	schemaName := oai.golangTypeToSchemaName(val.Type())
 
 	// Fast path: read lock — sufficient when schema is already registered.
