@@ -118,9 +118,8 @@ func TestHttpServerIntegration(t *testing.T) {
 
 	// 启动服务器
 	go func() {
-		err = server.Start()
-		if err != nil && !strings.Contains(err.Error(), "closed") {
-			t.Logf("Server start error: %v", err)
+		if startErr := server.Start(); startErr != nil && !strings.Contains(startErr.Error(), "closed") {
+			t.Logf("Server start error: %v", startErr)
 		}
 	}()
 

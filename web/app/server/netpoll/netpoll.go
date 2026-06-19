@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -123,14 +124,24 @@ func (s *HttpServer) Start() error {
 	}
 
 	s.Handler.SortInterceptors()
-	var err error
+
+	errCh := make(chan error, 1)
 	go func() {
-		if err = s.transporter.ListenAndServe(s.OnReq); err != nil {
-			s.logger.Error("ListenAndServe failed. Error: %s", err.Error())
-		}
+		errCh <- s.transporter.ListenAndServe(s.OnReq)
 	}()
 
-	return err
+	// Wait briefly for immediate startup errors (e.g. bind failure)
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			s.logger.Error("ListenAndServe failed. Error: %s", err.Error())
+		}
+		return err
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *HttpServer) Close() {
