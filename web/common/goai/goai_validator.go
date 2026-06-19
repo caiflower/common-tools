@@ -632,10 +632,24 @@ func (oai *OpenApiV3) Validate(arg any) error {
 	defer oai.mu.Unlock()
 
 	schemaName := oai.golangTypeToSchemaName(val.Type())
-	if oai.Components.Schemas.Get(schemaName) == nil {
-		_ = oai.addSchema(val.Interface())
+
+	// Fast path: read lock — sufficient when schema is already registered.
+	oai.mu.RLock()
+	exists := oai.Components.Schemas.Get(schemaName) != nil
+	oai.mu.RUnlock()
+
+	if !exists {
+		// Slow path: write lock — lazily register the schema.
+		oai.mu.Lock()
+		if oai.Components.Schemas.Get(schemaName) == nil {
+			_ = oai.addSchema(val.Interface())
+		}
+		oai.mu.Unlock()
 	}
 
+	// Validation only reads from Schemas, so a read lock is enough.
+	oai.mu.RLock()
+	defer oai.mu.RUnlock()
 	return oai.validateStructWithSchema(val, schemaName, val.Type().Name())
 }
 
