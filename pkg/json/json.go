@@ -17,6 +17,8 @@
 package json
 
 import (
+	"encoding/json"
+
 	"github.com/caiflower/common-tools/pkg/tools"
 )
 
@@ -32,4 +34,8 @@ var (
 	NewDecoder = tools.NewDecoder
 	// NewEncoder delegates to tools.NewEncoder.
 	NewEncoder = tools.NewEncoder
+	// Valid delegates to tools.Valid.
+	Valid = tools.Valid
 )
+
+type RawMessage = json.RawMessage

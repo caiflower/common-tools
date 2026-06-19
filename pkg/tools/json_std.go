@@ -33,6 +33,8 @@ var (
 	NewDecoder = json.NewDecoder
 	// NewEncoder is standard library implementation.
 	NewEncoder = json.NewEncoder
+	// Valid is standard library implementation.
+	Valid = json.Valid
 )
 
 func ToJson(v interface{}) string {

@@ -32,6 +32,8 @@ var (
 	NewDecoder = json.NewDecoder
 	// NewEncoder is jsoniter implementation.
 	NewEncoder = json.NewEncoder
+	// Valid is jsoniter implementation.
+	Valid = json.Valid
 )
 
 func ToJson(v interface{}) string {

@@ -35,6 +35,8 @@ var (
 	NewDecoder = json.NewDecoder
 	// NewEncoder is sonic implementation exported by hertz.
 	NewEncoder = json.NewEncoder
+	// Valid is sonic implementation exported by hertz.
+	Valid = json.Valid
 )
 
 func ToJson(v interface{}) string {
