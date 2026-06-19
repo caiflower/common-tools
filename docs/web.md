@@ -174,6 +174,34 @@ engine.GRPC("POST", "/v1/hello", pb.HelloService_SayHello_Handler, helloService)
 engine.GRPC("GET", "/v1/search", pb.HelloService_Search_Handler, helloService)
 ```
 
+#### 导出 Wrapper 函数（internal 包场景）
+
+当 proto 生成的代码位于 `internal` 包中时，`_XxxService_Yyy_Handler` 函数无法直接导出。
+此时需要创建导出 wrapper 函数，框架支持自动解析 `XxxServiceYyyHandler` 命名模式：
+
+```go
+// internal/proto/handlers.go
+
+// Wrapper 函数命名规则：{ServiceName}Service{MethodName}Handler
+// 框架会自动从函数名中提取方法名（如 "Get"、"Search"）
+func ExecutionServiceGetHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+    return _ExecutionService_Get_Handler(srv, ctx, dec, interceptor)
+}
+
+func FlowServiceCreateHandler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+    return _FlowService_Create_Handler(srv, ctx, dec, interceptor)
+}
+```
+
+注册时使用 wrapper 函数即可，用法与直接注册 protoc handler 完全一致：
+
+```go
+import "your-project/internal/proto"
+
+engine.GRPC("GET", "/v1/executions/:id", proto.ExecutionServiceGetHandler, &executionServiceImpl{})
+engine.GRPC("POST", "/v1/flows", proto.FlowServiceCreateHandler, &flowServiceImpl{})
+```
+
 ### 5. 使用HTTP客户端
 
 框架内置高性能 HTTP 客户端：
