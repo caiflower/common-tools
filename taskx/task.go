@@ -446,13 +446,83 @@ func (t *Task) AddEdge(src, dst *Subtask, mappings ...*FieldMapping) error {
 }
 
 // AddBranch 添加条件分支
-// 如果 Branch 使用 ConditionProvider，会自动注册到全局注册表以便 DB 恢复
+// EndNodes 和 Condition/ConditionProvider 返回值同时支持子任务 name 或 ID。
+// 内部自动将 name 解析为 ID，对 DAG 层透明。
+// 如果 Branch 使用 ConditionProvider，会自动注册到全局注册表以便 DB 恢复。
 func (t *Task) AddBranch(node *Subtask, branch *Branch) error {
+	// 解析 EndNodes：name → ID（已经是 ID 的保持不变）
+	resolvedEndNodes := make(map[string]bool, len(branch.EndNodes))
+	for key := range branch.EndNodes {
+		resolvedEndNodes[t.resolveSubtaskKey(key)] = true
+	}
+	branch.EndNodes = resolvedEndNodes
+
+	// 包装 Condition：将返回的 name 翻译为 ID
+	if branch.Condition != nil {
+		origCond := branch.Condition
+		branch.Condition = func(ctx interface{}, input any) (string, error) {
+			selected, err := origCond(ctx, input)
+			if err != nil {
+				return "", err
+			}
+			return t.resolveSubtaskKey(selected), nil
+		}
+	}
+
+	// 包装 ConditionProvider：将返回的 name 翻译为 ID
+	if branch.ConditionProvider != nil {
+		origProvider := branch.ConditionProvider
+		branch.ConditionProvider = &nameResolvingProvider{
+			inner: origProvider,
+			resolve: func(nameOrID string) string {
+				return t.resolveSubtaskKey(nameOrID)
+			},
+		}
+	}
+
 	registerBranch(t.task.TaskName, node.GetID(), branch)
 	if branch.ConditionProvider != nil {
 		registerBranchConditionProvider(t.task.TaskName, node.GetID(), branch.ConditionProvider)
 	}
 	return t.dag.AddBranch(node.GetID(), branch)
+}
+
+// resolveSubtaskKey 将 name 或 ID 解析为 DAG 内部使用的 ID。
+// 如果 key 已是某个子任务的 ID，直接返回；否则按 name 查找对应子任务的 ID。
+// 未找到时原样返回（由调用方后续校验报错）。
+func (t *Task) resolveSubtaskKey(key string) string {
+	// 先检查是否已经是 ID
+	if _, exists := t.subtaskMap[key]; exists {
+		return key
+	}
+	// 按 name 查找
+	for id, s := range t.subtaskMap {
+		if s.GetName() == key {
+			return id
+		}
+	}
+	return key
+}
+
+// nameResolvingProvider 包装 ExecutorProvider，将 Execute 返回的 name 翻译为 ID
+type nameResolvingProvider struct {
+	inner   executor.ExecutorProvider
+	resolve func(string) string
+}
+
+func (p *nameResolvingProvider) Execute(ctx context.Context, data *executor.TaskData) (any, error) {
+	result, err := p.inner.Execute(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := result.(string); ok {
+		return p.resolve(s), nil
+	}
+	return result, nil
+}
+
+func (p *nameResolvingProvider) Protocol() executor.ExecutorProtocol {
+	return p.inner.Protocol()
 }
 
 // addSubtaskGraph 添加子图节点（内部使用）

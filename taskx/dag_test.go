@@ -495,6 +495,130 @@ func TestTask_Branch(t *testing.T) {
 	assert.Equal(t, "end", next[0].GetName())
 }
 
+// TestTask_BranchWithNames 验证分支选择支持使用子任务 name（而非 ID）
+// EndNodes 和 Condition 返回值都使用 name，内部自动解析为 ID
+func TestTask_BranchWithNames(t *testing.T) {
+	task := NewTask("branch-name-test")
+
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	end := NewSubtask("end", noopExec)
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddSubtask(end)
+
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+	_ = task.AddEdge(pathA, end)
+	_ = task.AddEdge(pathB, end)
+
+	// 使用 name（而非 GetID()）设置分支
+	_ = task.AddBranch(start, &Branch{
+		Condition: func(ctx interface{}, input any) (string, error) {
+			return "pathA", nil // return name instead of ID
+		},
+		EndNodes: map[string]bool{"pathA": true, "pathB": true}, // use names
+	})
+
+	_, err := task.Compile()
+	assert.Nil(t, err)
+
+	// start 先执行
+	next := task.NextSubTasks()
+	assert.Equal(t, 1, len(next))
+	assert.Equal(t, "start", next[0].GetName())
+
+	// start 完成
+	_ = task.UpdateSubtaskState(start.GetID(), NodeSucceeded)
+
+	// 手动跳过 pathB（模拟分支选择逻辑）
+	_ = task.SkipSubtask(pathB.GetID())
+
+	// pathA 可执行
+	next = task.NextSubTasks()
+	assert.Equal(t, 1, len(next))
+	assert.Equal(t, "pathA", next[0].GetName())
+
+	// pathA 完成后，end 可执行
+	_ = task.UpdateSubtaskState(pathA.GetID(), NodeSucceeded)
+	next = task.NextSubTasks()
+	assert.Equal(t, 1, len(next))
+	assert.Equal(t, "end", next[0].GetName())
+}
+
+// TestTask_BranchMixedNameAndID 验证分支选择同时支持 name 和 ID 混用
+func TestTask_BranchMixedNameAndID(t *testing.T) {
+	task := NewTask("branch-mixed-test")
+
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	end := NewSubtask("end", noopExec)
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddSubtask(end)
+
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+	_ = task.AddEdge(pathA, end)
+	_ = task.AddEdge(pathB, end)
+
+	// 混合使用：EndNodes 用 name，Condition 返回 ID
+	_ = task.AddBranch(start, &Branch{
+		Condition: func(ctx interface{}, input any) (string, error) {
+			return pathA.GetID(), nil // return ID
+		},
+		EndNodes: map[string]bool{"pathA": true, pathB.GetID(): true}, // mix name and ID
+	})
+
+	_, err := task.Compile()
+	assert.Nil(t, err)
+
+	// start 先执行
+	next := task.NextSubTasks()
+	assert.Equal(t, 1, len(next))
+	assert.Equal(t, "start", next[0].GetName())
+}
+
+// TestTask_BranchConditionProviderWithName 验证 ConditionProvider 返回 name 时自动解析为 ID
+func TestTask_BranchConditionProviderWithName(t *testing.T) {
+	task := NewTask("branch-provider-name-test")
+
+	start := NewSubtask("start", noopExec)
+	pathA := NewSubtask("pathA", noopExec)
+	pathB := NewSubtask("pathB", noopExec)
+	end := NewSubtask("end", noopExec)
+
+	_ = task.AddSubtask(start)
+	_ = task.AddSubtask(pathA)
+	_ = task.AddSubtask(pathB)
+	_ = task.AddSubtask(end)
+
+	_ = task.AddEdge(start, pathA)
+	_ = task.AddEdge(start, pathB)
+	_ = task.AddEdge(pathA, end)
+	_ = task.AddEdge(pathB, end)
+
+	// ConditionProvider 返回 name（而非 ID）
+	branchProvider := executor.NewLocalExecutor(func(ctx context.Context, input map[string]any) (string, error) {
+		return "pathA", nil // return name instead of ID
+	})
+	_ = task.AddBranch(start, NewBranch(branchProvider, map[string]bool{"pathA": true, "pathB": true}))
+
+	_, err := task.Compile()
+	assert.Nil(t, err)
+
+	// start 先执行
+	next := task.NextSubTasks()
+	assert.Equal(t, 1, len(next))
+	assert.Equal(t, "start", next[0].GetName())
+}
+
 // ===== Skip 传播集成测试 =====
 
 func TestTask_SkipPropagation(t *testing.T) {
