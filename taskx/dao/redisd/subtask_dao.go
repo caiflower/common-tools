@@ -175,7 +175,7 @@ func (d *subtaskDAO) SetOutputAndState(ctx context.Context, id string, output, s
 	fields := map[string]interface{}{
 		"output":        output,
 		"state":         state,
-		"last_run_time": nowTime(),
+		"lastRunTime": nowTime(),
 	}
 	if pipe != nil {
 		pipe.HSet(ctx, key, fields)
@@ -192,8 +192,7 @@ func (d *subtaskDAO) SetRollbackAndState(ctx context.Context, id, rollback, outp
 	fields := map[string]interface{}{
 		"rollback":      rollback,
 		"output":        output,
-		"state":         rollback,
-		"last_run_time": nowTime(),
+		"lastRunTime": nowTime(),
 	}
 	if pipe != nil {
 		pipe.HSet(ctx, key, fields)
@@ -222,7 +221,7 @@ func (d *subtaskDAO) SetRetry(ctx context.Context, id string, retry int8) error 
 	fields := map[string]interface{}{
 		"retry":         retry,
 		"state":         "pending",
-		"last_run_time": nowTime(),
+		"lastRunTime": nowTime(),
 	}
 	if pipe != nil {
 		pipe.HSet(ctx, key, fields)

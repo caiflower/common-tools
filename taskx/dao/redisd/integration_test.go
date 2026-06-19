@@ -146,7 +146,7 @@ func TestIntegration_RedisRollbackLifecycle(t *testing.T) {
 	// Verify final state
 	got, _ = subDao.GetByID(ctx, "rb-1")
 	require.NotNil(t, got)
-	assert.Equal(t, "rollback_succeeded", got.State)
+	assert.Equal(t, "rollback_succeeded", got.Rollback)
 }
 
 // TestIntegration_StorageSwitchInjection verifies that both DAO implementations
@@ -190,9 +190,20 @@ func TestIntegration_GetTaskOutput(t *testing.T) {
 	rc, mr := createTestRedis(t)
 	ctx := context.Background()
 
+	subDao := NewSubtaskDAOWithClient(rc)
+
+	// Verify SetOutputAndState correctly stores lastRunTime
+	_, _ = subDao.BatchInsert(ctx, []model.Subtask{
+		{ID: "dbg-1", TaskID: "t-dbg", TaskName: "debug", State: "running", Status: 1},
+	})
+	_ = subDao.SetOutputAndState(ctx, "dbg-1", "ok", "succeeded")
+	got, _ := subDao.GetByID(ctx, "dbg-1")
+	require.NotNil(t, got)
+	assert.False(t, got.LastRunTime.IsZero(), "lastRunTime should be set after SetOutputAndState")
+	assert.Equal(t, "succeeded", got.State)
+
 	taskDao := NewTaskDAOWithClient(rc)
 	taskBakDao := NewTaskBakDAOWithClient(rc)
-	subDao := NewSubtaskDAOWithClient(rc)
 	subBakDao := NewSubtaskBakDAOWithClient(rc)
 
 	// Insert active task with output

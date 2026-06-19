@@ -195,7 +195,5 @@ func taskScore(t *model.Task) float64 {
 
 // nowTime returns the current time formatted for last_run_time field.
 func nowTime() string {
-	t := basic.NewFromTime(time.Now())
-	b, _ := t.MarshalJSON()
-	return string(b)
+	return time.Now().Format("2006-01-02 15:04:05")
 }

@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/caiflower/common-tools/web/common/json"
 
 	"github.com/caiflower/common-tools/cluster"
@@ -34,10 +35,13 @@ import (
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/inflight"
 	"github.com/caiflower/common-tools/pkg/logger"
+	v2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/caiflower/common-tools/taskx/dao/model"
+	"github.com/caiflower/common-tools/taskx/dao/redisd"
 	"github.com/caiflower/common-tools/taskx/dao/sqld"
 	"github.com/caiflower/common-tools/taskx/executor"
 	gocache "github.com/patrickmn/go-cache"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -282,9 +286,14 @@ func commonTaskx(cluster1, cluster2, cluster3 cluster.ICluster) (dispatcher1, di
 
 // submitAndWait 提交任务并等待完成，返回 DB 中的 Task、子任务列表和按 TaskName 索引的子任务 Map
 func submitAndWait(t *testing.T, dispatcher *taskDispatcher, task *Task) (*model.Task, []model.Subtask, map[string]*model.Subtask) {
+	t.Helper()
 	waitForTask(task, dispatcher)
 
+	deadline := time.Now().Add(30 * time.Second)
 	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("submitAndWait: task %s timed out after 30s", task.GetID())
+		}
 		dbTask, err := dispatcher.TaskDao.GetByID(context.TODO(), task.GetID())
 		if err != nil || dbTask == nil {
 			time.Sleep(time.Second * 2)
@@ -540,7 +549,7 @@ func submitAffinityTaskAndCheck(t *testing.T, dispatcher *taskDispatcher, done c
 
 func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- struct{}) {
 	task := NewTask(taskDemoName)
-	executeTime := time.Now().Add(10 * time.Second)
+	executeTime := time.Now().Add(10 * time.Second).Truncate(time.Second)
 	task.SetExecuteTime(executeTime)
 
 	subtask := NewSubtask(stepOne, executor.NewLocalExecutor(echoInput)).SetInput(map[string]any{"name": "scheduled"})
@@ -551,8 +560,8 @@ func submitScheduleTask(t *testing.T, dispatcher *taskDispatcher, done chan<- st
 	assert.Equal(t, string(TaskSucceeded), dbTask.State, "check task state failed")
 	for _, subTask := range dbSubTasks {
 		assert.Equal(t, true, isFinished(subTask.State), "check subtask finished failed")
-		assert.Equal(t, true, subTask.LastRunTime.Time().After(executeTime),
-			fmt.Sprintf("must after ExecuteTime, executeTime = %v, lastTime = %v", executeTime.Format("2006-01-02 15:04:05"), subTask.LastRunTime.Time().Format("2006-01-02 15:04:05")))
+		assert.Equal(t, true, !subTask.LastRunTime.Time().Before(executeTime),
+			fmt.Sprintf("must not be before ExecuteTime, executeTime = %v, lastTime = %v", executeTime.Format("2006-01-02 15:04:05"), subTask.LastRunTime.Time().Format("2006-01-02 15:04:05")))
 	}
 
 	done <- struct{}{}
@@ -938,7 +947,158 @@ func submitEdgeTypeDataFlowTask(t *testing.T, dispatcher *taskDispatcher, done c
 	done <- struct{}{}
 }
 
+// ===== Redis test adapter =====
+
+// miniredisRedisClient adapts miniredis to the v2.RedisClient interface for testing.
+type miniredisRedisClient struct {
+	client *goredis.Client
+	mr     *miniredis.Miniredis
+}
+
+type miniredisCmd struct {
+	goredis.Cmdable
+}
+
+func (c *miniredisCmd) Key(key string) string { return key } // no prefix in tests
+
+func newMiniredisClient(t *testing.T) v2.RedisClient {
+	t.Helper()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis.Run failed: %v", err)
+	}
+	t.Cleanup(func() { mr.Close() })
+	client := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { client.Close() })
+	return &miniredisRedisClient{client: client, mr: mr}
+}
+
+func (c *miniredisRedisClient) Cmd() v2.Cmdable           { return &miniredisCmd{Cmdable: c.client} }
+func (c *miniredisRedisClient) GetRedis() goredis.Cmdable { return c.client }
+func (c *miniredisRedisClient) AddHook(hook goredis.Hook) {}
+func (c *miniredisRedisClient) Close()                    { c.client.Close(); c.mr.Close() }
+
+// ===== Redis backend test =====
+
+func commonTaskxRedis(cluster1, cluster2, cluster3 cluster.ICluster, rc v2.RedisClient) (dispatcher1, dispatcher2, dispatcher3 *taskDispatcher, receiver1, receiver2, receiver3 *taskReceiver, err error) {
+	taskDao := redisd.NewTaskDAOWithConfig(rc, nil)
+	taskBakDao := redisd.NewTaskBakDAOWithConfig(rc, nil)
+	subtaskDao := redisd.NewSubtaskDAOWithConfig(rc, nil)
+	subtaskBakDao := redisd.NewSubtaskBakDAOWithConfig(rc, nil)
+	taskEdgeDao := redisd.NewTaskEdgeDAOWithConfig(rc, nil)
+
+	cfg := &Config{
+		RemoteCallTimeout: time.Second * 3,
+		StorageBackend:    "redis",
+		RedisClient:       rc,
+	}
+
+	newReceiver := func(c cluster.ICluster) *taskReceiver {
+		return &taskReceiver{
+			Cluster:                  c,
+			TaskDao:                  taskDao,
+			SubtaskDao:               subtaskDao,
+			subtaskInflight:          inflight.NewInFlight(),
+			taskInflight:             inflight.NewInFlight(),
+			subtaskWorker:            50,
+			taskWorker:               5,
+			subtaskRollbackWorker:    10,
+			taskQueueSize:            1000,
+			subtaskQueueSize:         1000,
+			subtaskRollbackQueueSize: 200,
+			cfg:                      cfg,
+		}
+	}
+	newDispatcher := func(c cluster.ICluster, r *taskReceiver) *taskDispatcher {
+		return &taskDispatcher{
+			Cluster:                c,
+			TaskDao:                taskDao,
+			TaskBakDao:             taskBakDao,
+			SubtaskDao:             subtaskDao,
+			SubtaskBakDao:          subtaskBakDao,
+			TaskEdgeDao:            taskEdgeDao,
+			cfg:                    cfg,
+			TaskReceiver:           r,
+			allocateWorkerInflight: inflight.NewInFlight(),
+			delayQueue:             basic.NewDelayQueue(),
+			randSource:             rand.New(rand.NewSource(time.Now().UnixNano())),
+			taskCache:              gocache.New(30*time.Second, 60*time.Second),
+		}
+	}
+
+	receiver1 = newReceiver(cluster1)
+	receiver2 = newReceiver(cluster2)
+	receiver3 = newReceiver(cluster3)
+	dispatcher1 = newDispatcher(cluster1, receiver1)
+	dispatcher2 = newDispatcher(cluster2, receiver2)
+	dispatcher3 = newDispatcher(cluster3, receiver3)
+	receiver1.TaskDispatcher = dispatcher1
+	receiver2.TaskDispatcher = dispatcher2
+	receiver3.TaskDispatcher = dispatcher3
+
+	return
+}
+
+func TestDisPatchRedis(t *testing.T) {
+	ClearAllProviders()
+	cluster1, cluster2, cluster3 := commonCluster(t)
+	rc := newMiniredisClient(t)
+	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3, err := commonTaskxRedis(cluster1, cluster2, cluster3, rc)
+	if err != nil {
+		logger.Info("test TestDisPatchRedis skip. %v", err)
+		return
+	}
+
+	_ = receiver1.Start()
+	_ = receiver2.Start()
+	_ = receiver3.Start()
+	defer receiver1.Close()
+	defer receiver2.Close()
+	defer receiver3.Close()
+
+	tracker1 := cluster.NewDefaultJobTracker(5, dispatcher1)
+	tracker2 := cluster.NewDefaultJobTracker(5, dispatcher2)
+	tracker3 := cluster.NewDefaultJobTracker(5, dispatcher3)
+
+	_ = cluster1.AddJobTracker(tracker1)
+	_ = cluster2.AddJobTracker(tracker2)
+	_ = cluster3.AddJobTracker(tracker3)
+	_ = cluster1.Start()
+	_ = cluster2.Start()
+	_ = cluster3.Start()
+	defer cluster1.Close()
+	defer cluster2.Close()
+	defer cluster3.Close()
+	for {
+		time.Sleep(time.Second * 2)
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
+			break
+		}
+	}
+
+	size := 12
+	done := make(chan struct{}, size)
+
+	go submitDemoTaskAndCheck(t, dispatcher1, done)
+	go submitRollbackTaskAndCheck(t, dispatcher1, done)
+	go submitRollbackFailedTaskAndCheck(t, dispatcher1, done)
+	go submitRollbackCustomTaskAndCheck(t, dispatcher1, done)
+	go submitNonRetryTaskAndCheck(t, dispatcher1, done)
+	go submitScheduleTask(t, dispatcher1, done)
+	go submitPanicTaskAndCheck(t, dispatcher1, done)
+	go submitAffinityTaskAndCheck(t, dispatcher1, done)
+	go submitBranchTaskAndCheck(t, dispatcher1, done)
+	go submitNestedBranchTaskAndCheck(t, dispatcher1, done)
+	go submitBranchProviderTaskAndCheck(t, dispatcher1, done)
+	go submitEdgeTypeDataFlowTask(t, dispatcher1, done)
+
+	for i := 0; i < size; i++ {
+		<-done
+	}
+}
+
 func TestDisPatch(t *testing.T) {
+	ClearAllProviders()
 	cluster1, cluster2, cluster3 := commonCluster(t)
 	dispatcher1, dispatcher2, dispatcher3, receiver1, receiver2, receiver3, err := commonTaskx(cluster1, cluster2, cluster3)
 	if err != nil {
