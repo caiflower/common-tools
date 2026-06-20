@@ -281,7 +281,12 @@ func (group *RouterGroup) GRPC(httpMethod string, relativePath string, handler f
 	// Create GrpcTypeOfMethod
 	m := method.NewGrpcTypeMethod(methodDesc, srv, targetMethod)
 
-	group.engine.addRoute(httpMethod, absolutePath, HandlersChain{*m})
+	methodHandlers := make(HandlersChain, 0, 1+len(group.middleware))
+	for _, mw := range group.middleware {
+		methodHandlers = append(methodHandlers, *method.NewHandlerFuncTypeMethod(mw))
+	}
+	methodHandlers = append(methodHandlers, *m)
+	group.engine.addRoute(httpMethod, absolutePath, methodHandlers)
 	return group.returnObj()
 }
 

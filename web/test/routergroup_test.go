@@ -1180,3 +1180,171 @@ func TestRouterGroupGRPCWrapperAndProtocCoexist(t *testing.T) {
 	handler.ServeHTTP(w2, req2)
 	assert.Equal(t, 200, w2.Code, "wrapper handler route should work")
 }
+
+// TestRouterGroupGRPCWithEngineMiddleware tests that engine.Use() middleware is
+// applied to gRPC routes registered on the engine directly.
+func TestRouterGroupGRPCWithEngineMiddleware(t *testing.T) {
+	var middlewareCalled bool
+	var middlewareCtxAction string
+
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-engine-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		middlewareCalled = true
+		middlewareCtxAction = reqCtx.GetAction()
+		reqCtx.SetHeader("X-Engine-MW", "applied")
+		reqCtx.Next(ctx)
+	})
+
+	engine.GRPC("POST", "/grpc/engine-mw-search", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+	req := httptest.NewRequest("POST", "/grpc/engine-mw-search", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code, "gRPC route should return 200")
+	assert.True(t, middlewareCalled, "engine.Use middleware should have been called for gRPC route")
+	assert.Equal(t, "applied", w.Header().Get("X-Engine-MW"), "middleware header should be set")
+	assert.NotEmpty(t, middlewareCtxAction, "ctx action should not be empty when middleware runs")
+}
+
+// TestRouterGroupGRPCWithGroupMiddleware tests that group.Use() middleware is
+// applied to gRPC routes registered on that group.
+func TestRouterGroupGRPCWithGroupMiddleware(t *testing.T) {
+	var middlewareCalled bool
+
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-group-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	v1 := engine.Group("/api/v1")
+	v1.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		middlewareCalled = true
+		reqCtx.SetHeader("X-Group-MW", "applied")
+		reqCtx.Next(ctx)
+	})
+
+	v1.GRPC("POST", "/flows", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+	req := httptest.NewRequest("POST", "/api/v1/flows", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code, "gRPC route should return 200")
+	assert.True(t, middlewareCalled, "group.Use middleware should have been called for gRPC route")
+	assert.Equal(t, "applied", w.Header().Get("X-Group-MW"), "middleware header should be set")
+}
+
+// TestRouterGroupGRPCWithNestedGroupMiddleware tests that middleware from
+// engine.Use flows through nested groups to gRPC routes.
+func TestRouterGroupGRPCWithNestedGroupMiddleware(t *testing.T) {
+	var engineMwCalled bool
+	var groupMwCalled bool
+	var routeMwCalled bool
+	var callOrder []string
+
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-nested-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		engineMwCalled = true
+		callOrder = append(callOrder, "engine-before")
+		reqCtx.Next(ctx)
+		callOrder = append(callOrder, "engine-after")
+	})
+
+	v1 := engine.Group("/api/v1")
+	v1.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		groupMwCalled = true
+		callOrder = append(callOrder, "group-before")
+		reqCtx.Next(ctx)
+		callOrder = append(callOrder, "group-after")
+	})
+
+	v2 := v1.Group("/flows")
+	v2.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		routeMwCalled = true
+		callOrder = append(callOrder, "route-before")
+		reqCtx.Next(ctx)
+		callOrder = append(callOrder, "route-after")
+	})
+
+	v2.GRPC("POST", "/search", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+	req := httptest.NewRequest("POST", "/api/v1/flows/search", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.True(t, engineMwCalled, "engine middleware should be called")
+	assert.True(t, groupMwCalled, "group middleware should be called")
+	assert.True(t, routeMwCalled, "route middleware should be called")
+
+	// Verify middleware execution order: engine → group → route (before)
+	assert.Equal(t, "engine-before", callOrder[0])
+	assert.Equal(t, "group-before", callOrder[1])
+	assert.Equal(t, "route-before", callOrder[2])
+	// After: reverse order (stack unwind)
+	assert.Equal(t, "route-after", callOrder[3])
+	assert.Equal(t, "group-after", callOrder[4])
+	assert.Equal(t, "engine-after", callOrder[5])
+}
+
+// TestRouterGroupGRPCWithAbortMiddleware tests that calling Abort() in
+// middleware stops execution and prevents the gRPC handler from running.
+func TestRouterGroupGRPCWithAbortMiddleware(t *testing.T) {
+	var grpcHandlerCalled bool
+
+	engine := web.Default(
+		config.WithAddr(":0"),
+		config.WithName("test-grpc-abort-mw"),
+		config.WithRootPath(""),
+		config.WithControllerRootPkgName("webtest"),
+	)
+
+	engine.Use(func(ctx context.Context, reqCtx *app.RequestContext) {
+		reqCtx.Abort()
+		reqCtx.SetHeader("X-Aborted", "true")
+		// Do NOT call reqCtx.Next(ctx) - simulates auth failure / abort
+	})
+
+	// Use a handler that would set a flag if executed
+	engine.GRPC("POST", "/grpc/abort-search", _IService_Search_Handler, &HelloImpl{})
+
+	handler := engine.Handler()
+
+	reqBody := `{"query":"2","hobby":["go","rust"]}`
+	req := httptest.NewRequest("POST", "/grpc/abort-search", bytes.NewReader([]byte(reqBody)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	// When aborted, the gRPC handler should not be invoked,
+	// but the route exists so we shouldn't get 404
+	assert.False(t, grpcHandlerCalled, "gRPC handler should not be called when middleware aborts")
+	assert.Equal(t, "true", w.Header().Get("X-Aborted"), "abort header should be set")
+}
