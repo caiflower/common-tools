@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/pkg/tools/bytesconv"
@@ -381,11 +382,39 @@ func (ctx *RequestCtx) AbortWithMsg(msg string, statusCode int) {
 	ctx.SetStatusCode(statusCode)
 	ctx.Response.Header.SetContentTypeBytes(bytestr.DefaultContentType)
 	ctx.Response.SetBodyString(msg)
+	if !ctx.IsNetpoll() {
+		ctx.writer.Header().Set("Content-Type", string(bytestr.DefaultContentType))
+		ctx.writer.Write([]byte(msg))
+	}
 	ctx.Abort()
 }
 
 func (ctx *RequestCtx) Abort() {
+	if !ctx.IsNetpoll() {
+		ctx.flushResponseToWriter()
+	}
 	ctx.special = -1
+}
+
+// flushResponseToWriter copies ctx.Response to the HTTP writer for standard HTTP mode.
+func (ctx *RequestCtx) flushResponseToWriter() {
+	if ctx.writer == nil {
+		return
+	}
+	// Copy headers
+	ctx.Response.Header.VisitAll(func(key, value []byte) {
+		ctx.writer.Header().Add(string(key), string(value))
+	})
+	// Write body if available
+	if body := ctx.Response.Body(); len(body) > 0 {
+		ctx.writer.Write(body)
+	}
+	if bs := ctx.Response.BodyStream(); bs != nil {
+		io.Copy(ctx.writer, bs)
+		if closer, ok := bs.(io.Closer); ok {
+			closer.Close()
+		}
+	}
 }
 
 // Next increments the handler index and executes the next handler in the chain.
@@ -616,4 +645,76 @@ func GetHandlerName(handler HandlerFunc) string {
 
 func getFuncAddr(v interface{}) uintptr {
 	return reflect.ValueOf(reflect.ValueOf(v)).Field(1).Pointer()
+}
+
+// File writes the specified file into the body stream in an efficient way.
+func (ctx *RequestContext) File(filepath string) {
+	ServeFile(ctx, filepath)
+}
+
+// IsHead returns true if the request method is HEAD.
+func (ctx *RequestCtx) IsHead() bool {
+	if ctx.IsNetpoll() {
+		return string(ctx.Request.Header.Method()) == consts.MethodHead
+	}
+	return string(ctx.method) == consts.MethodHead
+}
+
+// Path returns requested path.
+//
+// The path is valid until returning from RequestHandler.
+func (ctx *RequestContext) Path() []byte {
+	if !ctx.IsNetpoll() {
+		return ctx.path
+	}
+	return ctx.URI().Path()
+}
+
+// NotModified resets response and sets '304 Not Modified' response status code.
+func (ctx *RequestContext) NotModified() {
+	ctx.Response.Reset()
+	ctx.SetStatusCode(consts.StatusNotModified)
+}
+
+// IfModifiedSince returns true if lastModified exceeds 'If-Modified-Since'
+// value from the request header.
+//
+// The function returns true also 'If-Modified-Since' request header is missing.
+func (ctx *RequestContext) IfModifiedSince(lastModified time.Time) bool {
+	ifModStr := ctx.Request.Header.PeekIfModifiedSinceBytes()
+	if len(ifModStr) == 0 {
+		return true
+	}
+	ifMod, err := bytesconv.ParseHTTPDate(ifModStr)
+	if err != nil {
+		return true
+	}
+	lastModified = lastModified.Truncate(time.Second)
+	return ifMod.Before(lastModified)
+}
+
+// SetBodyStream sets response body stream and, optionally body size.
+//
+// bodyStream.Close() is called after finishing reading all body data
+// if it implements io.Closer.
+//
+// If bodySize is >= 0, then bodySize bytes must be provided by bodyStream
+// before returning io.EOF.
+//
+// If bodySize < 0, then bodyStream is read until io.EOF.
+//
+// See also SetBodyStreamWriter.
+func (ctx *RequestContext) SetBodyStream(bodyStream io.Reader, bodySize int) {
+	ctx.Response.SetBodyStream(bodyStream, bodySize)
+}
+
+// WriteString appends s to response body.
+func (ctx *RequestContext) WriteString(s string) (int, error) {
+	ctx.Response.AppendBodyString(s)
+	return len(s), nil
+}
+
+// SetContentType sets response Content-Type.
+func (ctx *RequestContext) SetContentType(contentType string) {
+	ctx.Response.Header.SetContentType(contentType)
 }

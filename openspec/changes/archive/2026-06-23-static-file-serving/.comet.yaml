@@ -1,0 +1,20 @@
+workflow: full
+phase: archive
+build_mode: direct
+build_pause: null
+isolation: branch
+verify_mode: full
+base_ref: 279ce8fa318dfe24909eb014a81230f20f399f27
+design_doc: docs/superpowers/specs/2026-06-23-static-file-serving-design.md
+plan: null
+verify_result: pass
+verification_report: docs/superpowers/reports/2026-06-23-static-file-serving-verify.md
+branch_status: handled
+created_at: 2026-06-23
+verified_at: 2026-06-23
+archived: true
+handoff_context: openspec/changes/static-file-serving/.comet/handoff/design-context.json
+handoff_hash: 3653ffda8efc4dec47bfec0b7ff2e6277b83b26771266967eea0c89df75b7eac
+direct_override: true
+build_command: go build ./...
+verify_command: go test ./web/...

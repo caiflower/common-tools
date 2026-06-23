@@ -44,9 +44,11 @@ import (
 	"context"
 	"math"
 	"path"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/tools"
@@ -81,6 +83,9 @@ type IRoutes interface {
 	PUT(string, ...interface{}) IRoutes
 	OPTIONS(string, ...interface{}) IRoutes
 	HEAD(string, ...interface{}) IRoutes
+	StaticFile(string, string) IRoutes
+	Static(string, string) IRoutes
+	StaticFS(string, *app.FS) IRoutes
 }
 
 // RouterGroup is used internally to configure router, a RouterGroup is associated with
@@ -321,6 +326,61 @@ func extractGRPCMethodName(funcName string) string {
 	return name
 }
 
+// StaticFile registers a single route to serve a single file from the local filesystem.
+// router.StaticFile("favicon.ico", "./resources/favicon.ico")
+func (group *RouterGroup) StaticFile(relativePath, filepath string) IRoutes {
+	if strings.Contains(relativePath, ":") || strings.Contains(relativePath, "*") {
+		panic("URL parameters can not be used when serving a static file")
+	}
+	handler := func(c context.Context, ctx *app.RequestContext) {
+		ctx.File(filepath)
+	}
+	group.GET(relativePath, handler)
+	group.HEAD(relativePath, handler)
+	return group.returnObj()
+}
+
+// Static serves files from the given file system root.
+// To use the operating system's file system implementation,
+// use:
+//
+//	router.Static("/static", "/var/www")
+func (group *RouterGroup) Static(relativePath, root string) IRoutes {
+	return group.StaticFS(relativePath, &app.FS{Root: root})
+}
+
+// StaticFS works just like Static() but a custom FS can be used instead.
+func (group *RouterGroup) StaticFS(relativePath string, fs *app.FS) IRoutes {
+	if strings.Contains(relativePath, ":") || strings.Contains(relativePath, "*") {
+		panic("URL parameters can not be used when serving a static folder")
+	}
+	fsHandler := fs.NewRequestHandler()
+	urlPattern := path.Join(relativePath, "/*filepath")
+
+	// Use the full absolute path (including group prefix) for prefix stripping
+	absolutePrefix := group.calculateAbsolutePath(relativePath)
+
+	// Wrap handler to strip the URL prefix before passing to FS handler
+	handler := func(c context.Context, ctx *app.RequestContext) {
+		origPath := ctx.GetPath()
+		if strings.HasPrefix(origPath, absolutePrefix) {
+			// Strip the prefix, preserving the leading "/"
+			newPath := origPath[len(absolutePrefix):]
+			if newPath == "" {
+				newPath = "/"
+			}
+			// Clean the path to prevent directory traversal
+			newPath = filepath.Clean(newPath)
+			ctx.SetPath([]byte(newPath))
+		}
+		fsHandler(c, ctx)
+	}
+
+	// Register GET and HEAD handlers
+	group.GET(urlPattern, handler)
+	group.HEAD(urlPattern, handler)
+	return group.returnObj()
+}
 func (group *RouterGroup) combineMiddleware(handlers app.HandlersChain) app.HandlersChain {
 	finalSize := len(group.middleware) + len(handlers)
 	if finalSize >= int(abortIndex) {

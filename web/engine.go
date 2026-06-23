@@ -147,6 +147,21 @@ func (e *Engine) HEAD(relativePath string, handlers ...interface{}) router.IRout
 	return e.routerGroup.HEAD(relativePath, handlers...)
 }
 
+// StaticFile registers a single route to serve a single file from the local filesystem.
+func (e *Engine) StaticFile(relativePath, filepath string) router.IRoutes {
+	return e.routerGroup.StaticFile(relativePath, filepath)
+}
+
+// Static serves files from the given file system root.
+func (e *Engine) Static(relativePath, root string) router.IRoutes {
+	return e.routerGroup.Static(relativePath, root)
+}
+
+// StaticFS works just like Static() but a custom FS can be used instead.
+func (e *Engine) StaticFS(relativePath string, fs *app.FS) router.IRoutes {
+	return e.routerGroup.StaticFS(relativePath, fs)
+}
+
 // Any registers a route for all HTTP methods with auto-detected handler type.
 func (e *Engine) Any(relativePath string, handlers ...interface{}) router.IRoutes {
 	return e.routerGroup.Any(relativePath, handlers...)
