@@ -250,6 +250,10 @@ func (lh *LoggerHandler) Printf(text string, v ...interface{}) {
 	lh.log(InfoLevel, text, v...)
 }
 
+func (lh *LoggerHandler) Order() int {
+	return 1000000000
+}
+
 func getLevel(level string) int {
 	switch level {
 	case TraceLevel:

@@ -85,7 +85,7 @@ type resourceManger struct {
 var DefaultResourceManger = &resourceManger{lock: syncx.NewSpinLock()}
 
 func (rm *resourceManger) Add(resource Resource) {
-	rm.AddWithOrder(resource, 1000000000)
+	rm.AddWithOrder(resource, 1)
 }
 
 // AddWithOrder adds a resource with a specific close order.
@@ -93,7 +93,7 @@ func (rm *resourceManger) Add(resource Resource) {
 // Recommended order values:
 //   - Kafka consumers: 100 (close first to stop consuming)
 //   - Redis/DB clients: 1000 (close last, after consumers and servers)
-//   - Default: 1000000000
+//   - Default(Add): 1
 func (rm *resourceManger) AddWithOrder(resource Resource, order int) {
 	rm.lock.Lock()
 	defer rm.lock.Unlock()
