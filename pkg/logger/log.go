@@ -67,6 +67,13 @@ type ILog interface {
 	Warn(text string, v ...interface{})
 	Error(text string, v ...interface{})
 	Fatal(text string, v ...interface{})
+
+	Tracef(format string, v ...interface{})
+	Debugf(format string, v ...interface{})
+	Infof(format string, v ...interface{})
+	Warnf(format string, v ...interface{})
+	Errorf(format string, v ...interface{})
+	Fatalf(format string, v ...interface{})
 }
 
 type data struct {
@@ -80,23 +87,45 @@ type data struct {
 var defaultLogger = newLoggerHandler(&Config{})
 
 func Trace(text string, v ...interface{}) {
-	defaultLogger.log(TraceLevel, text, v...)
+	defaultLogger.log(TraceLevel, formatLogText(text, v))
 }
 func Debug(text string, v ...interface{}) {
-	defaultLogger.log(DebugLevel, text, v...)
+	defaultLogger.log(DebugLevel, formatLogText(text, v))
 }
 func Info(text string, v ...interface{}) {
-	defaultLogger.log(InfoLevel, text, v...)
+	defaultLogger.log(InfoLevel, formatLogText(text, v))
 }
 func Warn(text string, v ...interface{}) {
-	defaultLogger.log(WarnLevel, text, v...)
+	defaultLogger.log(WarnLevel, formatLogText(text, v))
 }
 func Error(text string, v ...interface{}) {
-	defaultLogger.log(ErrorLevel, text, v...)
+	defaultLogger.log(ErrorLevel, formatLogText(text, v))
 }
 func Fatal(text string, v ...interface{}) {
-	defaultLogger.log(FatalLevel, text, v...)
-	panic(fmt.Sprintf("get Fatal log. Exit: Error: %s", fmt.Sprintf(text, v...)))
+	msg := formatLogText(text, v)
+	defaultLogger.log(FatalLevel, msg)
+	panic(fmt.Sprintf("get Fatal log. Exit: Error: %s", msg))
+}
+
+func Tracef(format string, v ...interface{}) {
+	defaultLogger.log(TraceLevel, fmt.Sprintf(format, v...))
+}
+func Debugf(format string, v ...interface{}) {
+	defaultLogger.log(DebugLevel, fmt.Sprintf(format, v...))
+}
+func Infof(format string, v ...interface{}) {
+	defaultLogger.log(InfoLevel, fmt.Sprintf(format, v...))
+}
+func Warnf(format string, v ...interface{}) {
+	defaultLogger.log(WarnLevel, fmt.Sprintf(format, v...))
+}
+func Errorf(format string, v ...interface{}) {
+	defaultLogger.log(ErrorLevel, fmt.Sprintf(format, v...))
+}
+func Fatalf(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	defaultLogger.log(FatalLevel, msg)
+	panic(fmt.Sprintf("get Fatal log. Exit: Error: %s", msg))
 }
 
 type LoggerHandler struct {
@@ -223,31 +252,55 @@ func newLoggerHandler(config *Config) *LoggerHandler {
 }
 
 func (lh *LoggerHandler) Trace(text string, v ...interface{}) {
-	lh.log(TraceLevel, text, v...)
+	lh.log(TraceLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Debug(text string, v ...interface{}) {
-	lh.log(DebugLevel, text, v...)
+	lh.log(DebugLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Info(text string, v ...interface{}) {
-	lh.log(InfoLevel, text, v...)
+	lh.log(InfoLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Warn(text string, v ...interface{}) {
-	lh.log(WarnLevel, text, v...)
+	lh.log(WarnLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Error(text string, v ...interface{}) {
-	lh.log(ErrorLevel, text, v...)
+	lh.log(ErrorLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Fatal(text string, v ...interface{}) {
-	lh.log(FatalLevel, text, v...)
+	lh.log(FatalLevel, formatLogText(text, v))
 }
 
 func (lh *LoggerHandler) Printf(text string, v ...interface{}) {
-	lh.log(InfoLevel, text, v...)
+	lh.log(InfoLevel, fmt.Sprintf(text, v...))
+}
+
+func (lh *LoggerHandler) Tracef(format string, v ...interface{}) {
+	lh.log(TraceLevel, fmt.Sprintf(format, v...))
+}
+
+func (lh *LoggerHandler) Debugf(format string, v ...interface{}) {
+	lh.log(DebugLevel, fmt.Sprintf(format, v...))
+}
+
+func (lh *LoggerHandler) Infof(format string, v ...interface{}) {
+	lh.log(InfoLevel, fmt.Sprintf(format, v...))
+}
+
+func (lh *LoggerHandler) Warnf(format string, v ...interface{}) {
+	lh.log(WarnLevel, fmt.Sprintf(format, v...))
+}
+
+func (lh *LoggerHandler) Errorf(format string, v ...interface{}) {
+	lh.log(ErrorLevel, fmt.Sprintf(format, v...))
+}
+
+func (lh *LoggerHandler) Fatalf(format string, v ...interface{}) {
+	lh.log(FatalLevel, fmt.Sprintf(format, v...))
 }
 
 func (lh *LoggerHandler) Order() int {
@@ -292,7 +345,14 @@ func getLevelColor(level string) string {
 	}
 }
 
-func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
+func formatLogText(text string, v []interface{}) string {
+	if len(v) > 0 {
+		return fmt.Sprintf(text, v...)
+	}
+	return text
+}
+
+func (lh *LoggerHandler) log(level string, text string) {
 	if lh.level > getLevel(level) {
 		return
 	}
@@ -335,7 +395,7 @@ func (lh *LoggerHandler) log(level string, text string, v ...interface{}) {
 		lh.dataQueue <- data{
 			timestamp: time.Now(),
 			level:     level,
-			content:   fmt.Sprintf(text, v...),
+			content:   text,
 			traceID:   golocalv1.GetTraceID(),
 			position:  fmt.Sprintf("%s:%d", relativePath, line),
 		}
