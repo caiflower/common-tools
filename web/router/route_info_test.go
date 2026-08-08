@@ -17,12 +17,17 @@
 package router
 
 import (
+	"context"
+	"reflect"
 	"testing"
 
 	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/logger"
+	"github.com/caiflower/common-tools/web/app"
 	"github.com/caiflower/common-tools/web/router/method"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 type cliTestReq struct {
@@ -39,6 +44,16 @@ func cliTestGet(req *cliTestReq) (*cliTestResp, error) {
 }
 
 func cliTestPost(req *cliTestReq) (*cliTestResp, error) {
+	return &cliTestResp{}, nil
+}
+
+func cliTestCtxFirstGet(_ *app.RequestCtx, req *cliTestReq) (*cliTestResp, error) {
+	return &cliTestResp{}, nil
+}
+
+type cliGrpcService struct{}
+
+func (s *cliGrpcService) Get(_ context.Context, req *cliTestReq) (*cliTestResp, error) {
 	return &cliTestResp{}, nil
 }
 
@@ -98,6 +113,35 @@ func TestExtractParams(t *testing.T) {
 	assert.Equal(t, "body", postByName["note"].Source)
 }
 
+func TestExtractParamsCtxFirstHandler(t *testing.T) {
+	target := basic.NewMethod(nil, cliTestCtxFirstGet)
+	params := extractParams(method.NewDefaultTypeMethod(target), "GET")
+
+	byName := make(map[string]ParamInfo)
+	for _, p := range params {
+		byName[p.Name] = p
+	}
+	assert.Equal(t, "path", byName["id"].Source)
+	assert.Equal(t, "query", byName["name"].Source)
+	assert.Equal(t, "query", byName["note"].Source)
+}
+
+func TestExtractParamsGrpcHandler(t *testing.T) {
+	service := &cliGrpcService{}
+	cls := basic.NewClass(service)
+	methodValue, _ := reflect.TypeOf(service).MethodByName("Get")
+	target := basic.NewMethod(cls, methodValue)
+	m := method.NewGrpcTypeMethod(&grpc.MethodDesc{MethodName: "Get"}, service, target)
+
+	params := extractParams(m, "GET")
+	byName := make(map[string]ParamInfo)
+	for _, p := range params {
+		byName[p.Name] = p
+	}
+	assert.Equal(t, "path", byName["id"].Source)
+	assert.Equal(t, "query", byName["name"].Source)
+}
+
 func TestRoutesAndOverride(t *testing.T) {
 	handler := NewHandler(HandlerCfg{
 		Name:                   "cli-test",
@@ -121,4 +165,20 @@ func TestRoutesAndOverride(t *testing.T) {
 	route = handler.Routes()[0]
 	assert.Equal(t, "customers", route.Resource)
 	assert.Equal(t, "list", route.Verb)
+}
+
+func TestPathParamsFilteredByRouteTemplate(t *testing.T) {
+	handler := NewHandler(HandlerCfg{
+		Name:                   "cli-test",
+		DisableOptimization:    true,
+		EnableActionController: false,
+	}, logger.DefaultLogger())
+	group := NewRouterGroup(handler)
+	group.GET("/users", cliTestGet)
+
+	routes := handler.Routes()
+	require.Len(t, routes, 1)
+	for _, param := range routes[0].Params {
+		assert.NotEqual(t, "path", param.Source)
+	}
 }

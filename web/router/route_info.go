@@ -17,6 +17,7 @@
 package router
 
 import (
+	"context"
 	"reflect"
 	"strings"
 
@@ -114,7 +115,25 @@ func extractParams(m *method.Method, httpMethod string) []ParamInfo {
 	if target == nil || !target.HasArgs() {
 		return nil
 	}
-	return extractParamsFromArg(target.GetArgInfo(0), httpMethod, "")
+	argIndex := requestArgIndex(m, target)
+	if argIndex < 0 {
+		return nil
+	}
+	return extractParamsFromArg(target.GetArgInfo(argIndex), httpMethod, "")
+}
+
+func requestArgIndex(m *method.Method, target *basic.Method) int {
+	args := target.GetArgs()
+	if len(args) == 0 {
+		return -1
+	}
+	if len(args) > 1 {
+		return len(args) - 1
+	}
+	if args[0].Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
+		return -1
+	}
+	return 0
 }
 
 func extractParamsFromArg(arg *basic.ArgInfo, httpMethod string, prefix string) []ParamInfo {
@@ -198,7 +217,7 @@ func (h *Handler) recordRoute(httpMethod string, path string, handlers HandlersC
 
 	var params []ParamInfo
 	if target.GetType() == method.DefaultTypeOfMethod || target.GetType() == method.GrpcTypeOfMethod {
-		params = extractParams(&target, httpMethod)
+		params = filterPathParams(extractParams(&target, httpMethod), path)
 	}
 
 	resource := deriveResourceFromName(operationID)
@@ -224,6 +243,29 @@ func (h *Handler) recordRoute(httpMethod string, path string, handlers HandlersC
 	}
 	h.routeInfos = append(h.routeInfos, info)
 	h.routeMu.Unlock()
+}
+
+func filterPathParams(params []ParamInfo, path string) []ParamInfo {
+	filtered := make([]ParamInfo, 0, len(params))
+	for _, param := range params {
+		if param.Source == "path" && !pathHasParam(path, param.Name) {
+			continue
+		}
+		filtered = append(filtered, param)
+	}
+	return filtered
+}
+
+func pathHasParam(path, name string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if strings.HasPrefix(segment, ":") && segment[1:] == name {
+			return true
+		}
+		if strings.HasPrefix(segment, "*") && segment[1:] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Routes returns a snapshot of all route metadata.

@@ -102,3 +102,42 @@ func TestBodyCommandAddsDataFlags(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("data"))
 	assert.NotNil(t, cmd.Flags().Lookup("file"))
 }
+
+func TestMultipleResourcesUnderSameVerb(t *testing.T) {
+	engine := newCLIEngine()
+	engine.GET("/users/:id", cliCmdGet)
+	engine.GET("/orders/:id", cliCmdGet)
+	root := New(engine, WithName("myapp"), WithRunner(&fakeRunner{}))
+
+	users, _, err := root.Find([]string{"get", "users"})
+	assert.NoError(t, err)
+	assert.Equal(t, "users", users.Name())
+
+	orders, _, err := root.Find([]string{"get", "orders"})
+	assert.NoError(t, err)
+	assert.Equal(t, "orders", orders.Name())
+}
+
+func TestSelectRoutePrefersItemRoute(t *testing.T) {
+	engine := newCLIEngine()
+	engine.GET("/users", cliCmdGet)
+	engine.GET("/users/:id", cliCmdGet)
+	runner := &fakeRunner{}
+	root := New(engine, WithName("myapp"), WithRunner(runner))
+	root.SetArgs([]string{"get", "users", "--id=5"})
+
+	assert.NoError(t, root.Execute())
+	assert.Equal(t, "/users/:id", runner.route.Path)
+}
+
+func TestResourceCommandDoesNotRequireRouteSpecificFlags(t *testing.T) {
+	engine := newCLIEngine()
+	engine.GET("/users", cliCmdGet)
+	engine.GET("/users/:id", cliCmdGet)
+	runner := &fakeRunner{}
+	root := New(engine, WithName("myapp"), WithRunner(runner))
+	root.SetArgs([]string{"get", "users"})
+
+	assert.NoError(t, root.Execute())
+	assert.Equal(t, "/users", runner.route.Path)
+}

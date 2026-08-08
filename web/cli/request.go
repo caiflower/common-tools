@@ -85,11 +85,20 @@ func (c *Client) Execute(ctx context.Context, route router.RouteInfo, values map
 }
 
 func (c *Client) requestURL(route router.RouteInfo, values map[string]string) string {
-	path := route.Path
-	for name, value := range values {
-		path = strings.ReplaceAll(path, ":"+name, url.PathEscape(value))
-		path = strings.ReplaceAll(path, "*"+name, value)
+	segments := strings.Split(route.Path, "/")
+	for i, segment := range segments {
+		switch {
+		case strings.HasPrefix(segment, ":"):
+			if value, ok := values[segment[1:]]; ok {
+				segments[i] = url.PathEscape(value)
+			}
+		case strings.HasPrefix(segment, "*"):
+			if value, ok := values[segment[1:]]; ok {
+				segments[i] = value
+			}
+		}
 	}
+	path := strings.Join(segments, "/")
 
 	query := make(url.Values)
 	for _, param := range route.Params {

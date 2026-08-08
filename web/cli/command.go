@@ -30,10 +30,9 @@ type commandRunner interface {
 	Execute(ctx context.Context, route router.RouteInfo, values map[string]string, body []byte) ([]byte, error)
 }
 
-type routeGroup struct {
-	verb     string
-	resource string
-	routes   []router.RouteInfo
+type verbGroup struct {
+	verb      string
+	resources map[string][]router.RouteInfo
 }
 
 type paramFlag struct {
@@ -42,21 +41,20 @@ type paramFlag struct {
 }
 
 func addDynamicCommands(root *cobra.Command, routes []router.RouteInfo, runner commandRunner) {
-	groups := make(map[string]*routeGroup)
+	groups := make(map[string]*verbGroup)
 	call := &cobra.Command{
 		Use:   "call",
 		Short: "Call a route by operationID",
 	}
 
 	for _, route := range routes {
-		if route.Resource != "" && route.Verb != "" {
-			key := route.Verb + "\x00" + route.Resource
-			group := groups[key]
+		if route.Resource != "" && route.Verb != "" && route.Verb != "call" {
+			group := groups[route.Verb]
 			if group == nil {
-				group = &routeGroup{verb: route.Verb, resource: route.Resource}
-				groups[key] = group
+				group = &verbGroup{verb: route.Verb, resources: make(map[string][]router.RouteInfo)}
+				groups[route.Verb] = group
 			}
-			group.routes = append(group.routes, route)
+			group.resources[route.Resource] = append(group.resources[route.Resource], route)
 		}
 		if runner != nil {
 			call.AddCommand(buildCallCommand(route, runner))
@@ -73,14 +71,13 @@ func addDynamicCommands(root *cobra.Command, routes []router.RouteInfo, runner c
 	}
 }
 
-func buildVerbCommand(group *routeGroup, runner commandRunner) *cobra.Command {
+func buildVerbCommand(group *verbGroup, runner commandRunner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   group.verb,
 		Short: "Run " + group.verb + " commands",
 	}
-	for range group.routes {
-		cmd.AddCommand(buildResourceCommand(group.resource, group.routes, runner))
-		break
+	for resource, routes := range group.resources {
+		cmd.AddCommand(buildResourceCommand(resource, routes, runner))
 	}
 	return cmd
 }
@@ -90,7 +87,7 @@ func buildResourceCommand(resource string, routes []router.RouteInfo, runner com
 		Use:   resource,
 		Short: "Call " + resource + " routes",
 	}
-	paramFlags := addParamFlags(cmd, routes)
+	paramFlags := addParamFlags(cmd, routes, len(routes) == 1)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runRoute(cmd, routes, paramFlags, runner)
 	}
@@ -102,14 +99,14 @@ func buildCallCommand(route router.RouteInfo, runner commandRunner) *cobra.Comma
 		Use:   route.OperationID,
 		Short: "Call " + route.OperationID,
 	}
-	paramFlags := addParamFlags(cmd, []router.RouteInfo{route})
+	paramFlags := addParamFlags(cmd, []router.RouteInfo{route}, true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		return runRoute(cmd, []router.RouteInfo{route}, paramFlags, runner)
 	}
 	return cmd
 }
 
-func addParamFlags(cmd *cobra.Command, routes []router.RouteInfo) []paramFlag {
+func addParamFlags(cmd *cobra.Command, routes []router.RouteInfo, enforceRequired bool) []paramFlag {
 	var paramFlags []paramFlag
 	hasBody := false
 	for _, route := range routes {
@@ -119,9 +116,12 @@ func addParamFlags(cmd *cobra.Command, routes []router.RouteInfo) []paramFlag {
 				continue
 			}
 			name := flagName(param.Name)
+			if cmd.Flags().Lookup(name) != nil {
+				continue
+			}
 			paramFlags = append(paramFlags, paramFlag{flag: name, param: param.Name})
 			cmd.Flags().String(name, "", "Request "+param.Source+" parameter "+param.Name)
-			if param.Required {
+			if enforceRequired && param.Required {
 				_ = cmd.MarkFlagRequired(name)
 			}
 		}
@@ -166,19 +166,32 @@ func selectRoute(routes []router.RouteInfo, values map[string]string) router.Rou
 	if len(routes) == 1 {
 		return routes[0]
 	}
-	for _, route := range routes {
-		allPresent := true
-		for _, param := range route.Params {
-			if param.Source == "path" && param.Required && values[param.Name] == "" {
-				allPresent = false
-				break
-			}
-		}
-		if allPresent {
-			return route
+	best := routes[0]
+	bestSatisfied, bestTotal := pathParamCount(best, values)
+	for _, route := range routes[1:] {
+		satisfied, total := pathParamCount(route, values)
+		if satisfied > bestSatisfied || (satisfied == bestSatisfied && total < bestTotal) {
+			best = route
+			bestSatisfied = satisfied
+			bestTotal = total
 		}
 	}
-	return routes[0]
+	return best
+}
+
+func pathParamCount(route router.RouteInfo, values map[string]string) (int, int) {
+	satisfied := 0
+	total := 0
+	for _, param := range route.Params {
+		if param.Source != "path" {
+			continue
+		}
+		total++
+		if values[param.Name] != "" {
+			satisfied++
+		}
+	}
+	return satisfied, total
 }
 
 func flagName(name string) string {

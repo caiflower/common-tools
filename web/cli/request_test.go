@@ -88,6 +88,19 @@ func TestClientExecuteReturnsErrorOnBadStatus(t *testing.T) {
 	assert.Contains(t, err.Error(), "bad request")
 }
 
+func TestRequestURLReplacesPathParamsWithoutPrefixCollision(t *testing.T) {
+	client := &Client{Server: "http://example.com"}
+	route := router.RouteInfo{
+		Path: "/users/:userID/orders/:user",
+		Params: []router.ParamInfo{
+			{Name: "userID", Source: "path"},
+			{Name: "user", Source: "path"},
+		},
+	}
+	url := client.requestURL(route, map[string]string{"userID": "abc", "user": "def"})
+	assert.Equal(t, "http://example.com/users/abc/orders/def", url)
+}
+
 func readBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""
