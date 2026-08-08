@@ -5,7 +5,7 @@ build_mode: executing-plans
 build_pause: null
 subagent_dispatch: null
 tdd_mode: tdd
-review_mode: null
+review_mode: standard
 isolation: branch
 verify_mode: null
 auto_transition: true

@@ -34,13 +34,13 @@ base-ref: 3f40e230fd05b8502f6669748f755e29d1448d2a
 - Consumes: 无
 - Produces: cobra 可用
 
-- [ ] **Step 1: 添加依赖**
+- [x] **Step 1: 添加依赖**
 
 ```bash
 go get github.com/spf13/cobra@latest
 ```
 
-- [ ] **Step 2: 验证编译**
+- [x] **Step 2: 验证编译**
 
 ```bash
 go build ./web/...
@@ -48,7 +48,7 @@ go build ./web/...
 
 Expected: 成功，无新错误。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add go.mod go.sum
@@ -74,7 +74,7 @@ git commit -m "chore: add cobra dependency for web cli"
   - `func (h *Handler) CLIRoute(method, path, resource, verb string)`
   - `func (e *Engine) CLIRoute(method, path, resource, verb string)`
 
-- [ ] **Step 1: 定义 DTO 与推导逻辑**
+- [x] **Step 1: 定义 DTO 与推导逻辑**
 
 `web/router/route_info.go` 内容：
 
@@ -125,7 +125,7 @@ func requiredFromVerf(verf string) bool
 - 否则按 HTTP method：GET/HEAD 时 `json` tag 或字段名映射 `query`，其他方法映射 `body`。
 - `Verf` 取 `Tags["verf"]`；包含 `required` 时 `Required=true`。
 
-- [ ] **Step 2: 注册表与 `addRoute` 钩子**
+- [x] **Step 2: 注册表与 `addRoute` 钩子**
 
 在 `Handler` 增加：
 
@@ -153,7 +153,7 @@ func (e *Engine) CLIRoute(method, path, resource, verb string) {
 }
 ```
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 `route_info_test.go` 覆盖：
 
@@ -171,7 +171,7 @@ go test ./web/router/... ./pkg/basic/...
 
 Expected: 全部通过。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add web/router/route_info.go web/router/route_info_test.go web/router/handler.go web/engine.go
@@ -195,11 +195,11 @@ git commit -m "feat: add route metadata registry and cli resource derivation"
   - `Options.EnableCLI bool`
   - `Options.CLIRoutesPath string`
 
-- [ ] **Step 1: 配置项**
+- [x] **Step 1: 配置项**
 
 在 `Options` 增加 `EnableCLI bool`、`CLIRoutesPath string`（默认 `/cli/routes`），新增 `WithEnableCLI` 和 `WithCLIRoutesPath`。
 
-- [ ] **Step 2: 特殊请求处理**
+- [x] **Step 2: 特殊请求处理**
 
 在 `getHandlerCfg` 传入 `EnableCLI` 和 `CLIRoutesPath`；`HandlerCfg` 增加同名字段。在 `specialRequest` 中处理：
 
@@ -224,7 +224,7 @@ if h.config.EnableCLI && h.config.CLIRoutesPath != "" && path == h.config.CLIRou
 
 `versionOfRoutes` 使用 SHA256 摘要；`etagMatch` 比较 `If-None-Match`。
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 `cli_routes_test.go`：
 
@@ -238,7 +238,7 @@ if h.config.EnableCLI && h.config.CLIRoutesPath != "" && path == h.config.CLIRou
 go test ./web/router/... -run TestCLIRoutes
 ```
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add web/app/server/config/options.go web/router/handler.go web/router/cli_routes_test.go
@@ -265,11 +265,11 @@ git commit -m "feat: expose cli route metadata endpoint with etag"
   - `func New(engine *web.Engine, opts ...Option) *cobra.Command`
   - `func Run(engine *web.Engine, opts ...Option) error`
 
-- [ ] **Step 1: options 与接口**
+- [x] **Step 1: options 与接口**
 
 `options.go` 定义 `ResourceManager`、`options` 默认值（name 取 engine.Name()，manager 取 `global.DefaultResourceManger`，serve order 500）。
 
-- [ ] **Step 2: root 与 serve**
+- [x] **Step 2: root 与 serve**
 
 `root.go`：
 
@@ -304,7 +304,7 @@ func serveCommand(engine *web.Engine, cfg *options) *cobra.Command {
 }
 ```
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 `root_test.go` 用 fake `ResourceManager` 验证 `serve` 调用了 `AddDaemonWithOrder` 和 `Signal`；验证 `Run` 返回 root command。
 
@@ -314,7 +314,7 @@ func serveCommand(engine *web.Engine, cfg *options) *cobra.Command {
 go test ./web/cli/...
 ```
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add web/cli
@@ -335,7 +335,7 @@ git commit -m "feat: add web cli root command and serve via resource manager"
 - Client 方法：
   - `func (c *Client) Execute(ctx context.Context, route router.RouteInfo, values map[string]string, body []byte) (*protocol.Response, error)`
 
-- [ ] **Step 1: 命令生成**
+- [x] **Step 1: 命令生成**
 
 `command.go`：
 
@@ -344,7 +344,7 @@ git commit -m "feat: add web cli root command and serve via resource manager"
 - 冲突资源命令通过 `routesCommand` 下的 `call <operationID>` 保留；`call` 命令接受 `--route` 定位具体路由。
 - RunE 中收集 flag 值，构造 `map[string]string` 和 body，调用 `Client.Execute`。
 
-- [ ] **Step 2: 测试**
+- [x] **Step 2: 测试**
 
 `command_test.go` 覆盖：
 
@@ -358,7 +358,7 @@ git commit -m "feat: add web cli root command and serve via resource manager"
 go test ./web/cli/... -run TestBuildCommand
 ```
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add web/cli/command.go web/cli/command_test.go
@@ -381,7 +381,7 @@ git commit -m "feat: generate dynamic cli commands from route metadata"
   - `func (c *Client) Execute(ctx context.Context, route router.RouteInfo, values map[string]string, body []byte) ([]byte, error)`
   - `func PrintOutput(w io.Writer, format string, body []byte) error`
 
-- [ ] **Step 1: 请求构造**
+- [x] **Step 1: 请求构造**
 
 `request.go`：
 
@@ -391,7 +391,7 @@ git commit -m "feat: generate dynamic cli commands from route metadata"
 - body 写入 `--data` 或 `-f` 内容。
 - 使用 `client.NewClient(client.WithClientReadTimeout(10*time.Second))`，`Do` 后返回 body。
 
-- [ ] **Step 2: 输出**
+- [x] **Step 2: 输出**
 
 `output.go`：
 
@@ -399,7 +399,7 @@ git commit -m "feat: generate dynamic cli commands from route metadata"
 - `yaml`：`yaml.Marshal` 后输出。
 - `table`：解析 `resp.Result`，单对象键值对，数组按首元素字段输出列。
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 `request_test.go` 用 `httptest.Server` 验证 path/query/header/body 正确；`output_test.go` 验证三种格式。
 
@@ -409,7 +409,7 @@ git commit -m "feat: generate dynamic cli commands from route metadata"
 go test ./web/cli/... -run 'TestExecute|TestPrintOutput'
 ```
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add web/cli/request.go web/cli/output.go web/cli/request_test.go
@@ -433,7 +433,7 @@ git commit -m "feat: execute cli requests and render output formats"
   - `func Discover(ctx context.Context, server string, opts CacheOptions) (Metadata, error)`
   - `func (c *Client) Server(server string)`
 
-- [ ] **Step 1: 缓存**
+- [x] **Step 1: 缓存**
 
 `cache.go`：
 
@@ -443,15 +443,15 @@ git commit -m "feat: execute cli requests and render output formats"
 - 命中 TTL 直接返回；过期请求携带 `If-None-Match: v1-<version>`。
 - 200 更新缓存；304 保留缓存并更新 `FetchedAt`；网络失败有缓存则降级返回并记录警告。
 
-- [ ] **Step 2: 发现**
+- [x] **Step 2: 发现**
 
 `discovery.go` 请求 `server + /cli/routes`，反序列化 `Metadata`，返回路由列表。
 
-- [ ] **Step 3: root 接入**
+- [x] **Step 3: root 接入**
 
 `root.go` 中 `--server` 非空时用 `Discover` 结果替代 `engine.Routes()` 生成命令；`routes` 命令支持 `--refresh`。
 
-- [ ] **Step 4: 测试**
+- [x] **Step 4: 测试**
 
 `discovery_test.go` 覆盖缓存命中、过期刷新、304、强制刷新、降级警告；用 `httptest.Server` 模拟 `/cli/routes`。
 
@@ -461,7 +461,7 @@ git commit -m "feat: execute cli requests and render output formats"
 go test ./web/cli/... -run 'TestDiscover|TestCache'
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add web/cli/discovery.go web/cli/cache.go web/cli/discovery_test.go web/cli/root.go
@@ -476,11 +476,11 @@ git commit -m "feat: add remote route discovery with local metadata cache"
 - Modify: `docs/web.md`
 - Modify: `openspec/changes/web-cli-dual-mode/tasks.md`
 
-- [ ] **Step 1: 更新文档**
+- [x] **Step 1: 更新文档**
 
 `docs/web.md` 增加“命令行双模式”章节，包含 `serve`、本地命令、`--server` 远程模式、`/cli/routes` 配置与安全说明。
 
-- [ ] **Step 2: 全量测试**
+- [x] **Step 2: 全量测试**
 
 ```bash
 go test ./web/...
@@ -488,11 +488,11 @@ go test ./web/...
 
 Expected: 全部通过。
 
-- [ ] **Step 3: 勾选 tasks.md**
+- [x] **Step 3: 勾选 tasks.md**
 
 将 `openspec/changes/web-cli-dual-mode/tasks.md` 中对应任务全部改为 `- [x]`。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add docs/web.md openspec/changes/web-cli-dual-mode/tasks.md
