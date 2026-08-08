@@ -163,6 +163,13 @@ func Run(engine *web.Engine, opts ...Option) error
 4. 200：更新缓存和 version；304：保留缓存并刷新时间戳。
 5. 网络失败但有缓存：使用旧缓存并输出警告；无缓存：返回明确错误。
 
+命令树来源遵循“远端优先、本地兜底”：
+
+1. 未指定 `--server`：直接使用本进程 `engine.Routes()` 生成命令。
+2. 指定 `--server` 且命令不是 `serve`/`routes`：先拉取或读缓存远端 `/cli/routes` 元数据，用远端元数据生成命令。
+3. 远端拉取失败且无缓存：输出警告，降级为本进程 `engine.Routes()` 生成命令。
+4. `serve`/`routes` 等静态命令不参与远端命令树预拉取，`routes --server` 仍按自身逻辑拉取并展示远端元数据。
+
 ## Data Flow
 
 ```text

@@ -285,7 +285,9 @@ myapp get users --userId=42 --output json
 myapp get users --userId=42 --output yaml
 ```
 
-动态命令从注册的路由元数据生成：`GET/POST/PUT/PATCH/DELETE` 分别映射为 `get/create/update/patch/delete`，资源名优先取 handler 方法名，取不到时用路径最后一段。每条路由同时保留 `call <operationID>` 兜底命令。
+动态命令默认从本进程注册的路由元数据生成：`GET/POST/PUT/PATCH/DELETE` 分别映射为 `get/create/update/patch/delete`，资源名优先取 handler 方法名，取不到时用路径最后一段。每条路由同时保留 `call <operationID>` 兜底命令。
+
+指定 `--server` 时命令树优先从该服务 `/cli/routes` 返回的元数据生成（含缓存命中场景），这样本进程未注册的路由也可通过远端元数据调用；远端拉取失败且无缓存时，CLI 会输出警告并降级为本进程本地元数据生成命令。
 
 参数生成规则：
 

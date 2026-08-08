@@ -37,6 +37,10 @@ When `--server` is specified, the CLI SHALL fetch route metadata from `GET /cli/
 - **WHEN** user runs `<binary> --server http://example.com get users`
 - **THEN** the CLI SHALL fetch `/cli/routes` from that server and generate the `get users` command from the response
 
+#### Scenario: Remote discovery failure fallback
+- **WHEN** user runs `<binary> --server http://example.com get users` and fetching `/cli/routes` fails
+- **THEN** the CLI SHALL print a warning and generate commands from local route metadata
+
 ### Requirement: Metadata cache and refresh
 The CLI SHALL cache remote metadata locally. Cache SHALL be keyed by server address, have a TTL (default 5 minutes), support `--refresh` force refresh, and send `If-None-Match` using the cached version. When remote fetch fails and a cache exists, the CLI SHALL use the stale cache and print a warning.
 

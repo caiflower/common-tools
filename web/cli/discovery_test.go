@@ -44,7 +44,16 @@ func discoveryMetadata() Metadata {
 		Version:   "v1",
 		Resources: []string{"users"},
 		Routes: []router.RouteInfo{
-			{Method: "GET", Path: "/users/:id", OperationID: "GetUser", Resource: "users", Verb: "get"},
+			{
+				Method:      "GET",
+				Path:        "/users/:id",
+				OperationID: "GetUser",
+				Resource:    "users",
+				Verb:        "get",
+				Params: []router.ParamInfo{
+					{Name: "id", Source: "path", Required: true},
+				},
+			},
 		},
 	}
 }
@@ -215,13 +224,32 @@ func TestRemoteServerGeneratesCommands(t *testing.T) {
 	})
 	defer server.Close()
 
+	// The local engine intentionally has no routes: the command must come
+	// from the remote /cli/routes metadata.
 	engine := newCLIEngine()
-	engine.GET("/users/:id", cliCmdGet)
 	var out bytes.Buffer
-	root := New(engine, WithName("myapp"))
+	args := []string{"get", "users", "--id=1", "--server", server.URL, "--output=json", "--cache-dir", t.TempDir()}
+	root := NewWithArgs(engine, args, WithName("myapp"))
+	root.SetArgs(args)
 	root.SetOut(&out)
 	root.SetErr(io.Discard)
-	root.SetArgs([]string{"get", "users", "--id=1", "--server", server.URL, "--output=json", "--cache-dir", t.TempDir()})
 	assert.NoError(t, root.Execute())
 	assert.Contains(t, out.String(), `"data":{"ok":true}`)
+}
+
+func TestRemoteDiscoveryFallsBackToLocal(t *testing.T) {
+	engine := newCLIEngine()
+	engine.GET("/users/:id", cliCmdGet)
+	var warnings bytes.Buffer
+	root := NewWithArgs(
+		engine,
+		[]string{"get", "users", "--server", "http://127.0.0.1:1", "--cache-dir", t.TempDir()},
+		WithName("myapp"),
+		WithStderr(&warnings),
+	)
+
+	cmd, _, err := root.Find([]string{"get", "users"})
+	assert.NoError(t, err)
+	assert.NotNil(t, cmd)
+	assert.Contains(t, warnings.String(), "falling back to local route metadata")
 }

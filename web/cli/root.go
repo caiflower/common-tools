@@ -17,13 +17,25 @@
 package cli
 
 import (
+	"os"
+
 	"github.com/caiflower/common-tools/web"
 	"github.com/spf13/cobra"
 )
 
-// New builds the dual-mode cobra root command for the engine.
+// New builds the dual-mode cobra root command for the engine using the
+// current process arguments. It prefers remote route metadata when --server
+// is present and falls back to local metadata when discovery fails.
 func New(engine *web.Engine, opts ...Option) *cobra.Command {
+	return NewWithArgs(engine, os.Args[1:], opts...)
+}
+
+// NewWithArgs builds the dual-mode cobra root command from explicit arguments.
+// When args contain --server, route metadata is fetched from that server first;
+// if fetching fails, local metadata is used with a warning.
+func NewWithArgs(engine *web.Engine, args []string, opts ...Option) *cobra.Command {
 	cfg := defaultOptions(engine, opts...)
+	routes := metadataRoutes(engine, args, cfg.stderr)
 	root := &cobra.Command{
 		Use: cfg.name,
 	}
@@ -47,7 +59,7 @@ func New(engine *web.Engine, opts ...Option) *cobra.Command {
 	}
 	root.AddCommand(serveCommand(engine, cfg))
 	root.AddCommand(routesCommand(engine, cfg))
-	addDynamicCommands(root, engine.Handler().Routes(), cfg.runner)
+	addDynamicCommands(root, routes, cfg.runner)
 	return root
 }
 

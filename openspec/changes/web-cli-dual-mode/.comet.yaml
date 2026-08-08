@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 context_compression: off
 build_mode: executing-plans
 build_pause: null
@@ -7,13 +7,13 @@ subagent_dispatch: null
 tdd_mode: tdd
 review_mode: standard
 isolation: branch
-verify_mode: null
+verify_mode: full
 auto_transition: true
 base_ref: 3f40e230fd05b8502f6669748f755e29d1448d2a
 design_doc: docs/superpowers/specs/2026-08-08-web-cli-dual-mode-design.md
 plan: docs/superpowers/plans/2026-08-08-web-cli-dual-mode.md
 verify_result: pending
-verification_report: null
+verification_report: docs/superpowers/reports/2026-08-08-web-cli-dual-mode-verify.md
 branch_status: pending
 created_at: 2026-08-08
 verified_at: null

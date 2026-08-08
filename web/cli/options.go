@@ -17,6 +17,8 @@
 package cli
 
 import (
+	"io"
+	"os"
 	"strings"
 
 	"github.com/caiflower/common-tools/global"
@@ -34,6 +36,7 @@ type options struct {
 	manager    ResourceManager
 	serveOrder int
 	runner     commandRunner
+	stderr     io.Writer
 }
 
 type Option func(*options)
@@ -62,11 +65,18 @@ func WithRunner(runner commandRunner) Option {
 	}
 }
 
+func WithStderr(stderr io.Writer) Option {
+	return func(o *options) {
+		o.stderr = stderr
+	}
+}
+
 func defaultOptions(engine *web.Engine, opts ...Option) *options {
 	o := &options{
 		name:       engine.Name(),
 		manager:    global.DefaultResourceManger,
 		serveOrder: 500,
+		stderr:     os.Stderr,
 	}
 	for _, opt := range opts {
 		opt(o)
