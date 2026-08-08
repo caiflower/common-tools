@@ -181,3 +181,8 @@ func (e *Engine) GRPC(httpMethod string, relativePath string, handler func(srv i
 func (e *Engine) RouterGroup() *router.RouterGroup {
 	return e.routerGroup
 }
+
+// CLIRoute overrides the resource and verb used by the CLI for a registered route.
+func (e *Engine) CLIRoute(method, path, resource, verb string) {
+	e.handler.CLIRoute(method, path, resource, verb)
+}

@@ -145,6 +145,10 @@ type Handler struct {
 	logger logger.ILog
 	metric *metric.HttpMetric
 
+	routeInfos   []RouteInfo
+	cliOverrides map[string]cliOverride
+	routeMu      sync.RWMutex
+
 	// qos call back
 	qosCallback                CallbackFunc
 	beforeDispatchCallbackFunc CallbackFunc
@@ -854,6 +858,7 @@ func (h *Handler) addRoute(httpMethod string, path string, handlers HandlersChai
 		h.trees = append(h.trees, methodRouter)
 	}
 	methodRouter.addRoute(path, handlers)
+	h.recordRoute(httpMethod, path, handlers)
 }
 
 func (h *Handler) recordMetric(ctx *app.RequestContext) {
