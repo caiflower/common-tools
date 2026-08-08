@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,9 +50,9 @@ func discoveryMetadata() Metadata {
 }
 
 func TestDiscoverFetchesAndCaches(t *testing.T) {
-	var requests int
+	var requests atomic.Int32
 	server := newDiscoveryServer(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		w.Header().Set("ETag", `"v1-v1"`)
 		_ = json.NewEncoder(w).Encode(discoveryMetadata())
 	})
@@ -62,7 +63,7 @@ func TestDiscoverFetchesAndCaches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "myapp", meta.Name)
 	assert.Len(t, meta.Routes, 1)
-	assert.Equal(t, 1, requests)
+	assert.Equal(t, int32(1), requests.Load())
 
 	path, err := cacheFilePath(server.URL, dir)
 	require.NoError(t, err)
@@ -71,9 +72,9 @@ func TestDiscoverFetchesAndCaches(t *testing.T) {
 }
 
 func TestDiscoverUsesFreshCache(t *testing.T) {
-	var requests int
+	var requests atomic.Int32
 	server := newDiscoveryServer(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		w.Header().Set("ETag", `"v1-v1"`)
 		_ = json.NewEncoder(w).Encode(discoveryMetadata())
 	})
@@ -85,14 +86,14 @@ func TestDiscoverUsesFreshCache(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Discover(context.Background(), server.URL, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 1, requests)
+	assert.Equal(t, int32(1), requests.Load())
 }
 
 func TestDiscoverExpiredRefreshesWithNotModified(t *testing.T) {
-	var requests int
+	var requests atomic.Int32
 	server := newDiscoveryServer(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if requests == 2 {
+		requests.Add(1)
+		if requests.Load() == 2 {
 			assert.Equal(t, `"v1-v1"`, r.Header.Get("If-None-Match"))
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -116,7 +117,7 @@ func TestDiscoverExpiredRefreshesWithNotModified(t *testing.T) {
 	meta, err := Discover(context.Background(), server.URL, CacheOptions{TTL: time.Minute, Dir: dir})
 	require.NoError(t, err)
 	assert.Equal(t, "myapp", meta.Name)
-	assert.Equal(t, 2, requests)
+	assert.Equal(t, int32(2), requests.Load())
 
 	fresh, err := readCacheFile(path)
 	require.NoError(t, err)
@@ -124,9 +125,9 @@ func TestDiscoverExpiredRefreshesWithNotModified(t *testing.T) {
 }
 
 func TestDiscoverRefreshIgnoresFreshCache(t *testing.T) {
-	var requests int
+	var requests atomic.Int32
 	server := newDiscoveryServer(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		w.Header().Set("ETag", `"v1-v1"`)
 		_ = json.NewEncoder(w).Encode(discoveryMetadata())
 	})
@@ -139,7 +140,7 @@ func TestDiscoverRefreshIgnoresFreshCache(t *testing.T) {
 	opts.Refresh = true
 	_, err = Discover(context.Background(), server.URL, opts)
 	require.NoError(t, err)
-	assert.Equal(t, 2, requests)
+	assert.Equal(t, int32(2), requests.Load())
 }
 
 func TestDiscoverFallsBackOnNetworkFailure(t *testing.T) {

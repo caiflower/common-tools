@@ -29,14 +29,13 @@ import (
 )
 
 func TestClientExecuteBuildsRequest(t *testing.T) {
-	var gotPath, gotQuery, gotBody, gotAuth, gotExtra, gotToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotQuery = r.URL.RawQuery
-		gotBody = readBody(r)
-		gotAuth = r.Header.Get("Authorization")
-		gotExtra = r.Header.Get("X-Extra")
-		gotToken = r.Header.Get("X-Token")
+		assert.Equal(t, "/users/42/orders/a/b", r.URL.Path)
+		assert.Equal(t, "name=alice", r.URL.RawQuery)
+		assert.Equal(t, "Bearer secret", r.Header.Get("Authorization"))
+		assert.Equal(t, "v", r.Header.Get("X-Extra"))
+		assert.Equal(t, "abc", r.Header.Get("X-Token"))
+		assert.Equal(t, `{"payload":"hello"}`, readBody(r))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"requestID":"r1","data":{"ok":true}}`))
 	}))
@@ -66,12 +65,6 @@ func TestClientExecuteBuildsRequest(t *testing.T) {
 	}, []byte(`{"payload":"hello"}`))
 	assert.NoError(t, err)
 	assert.Equal(t, `{"requestID":"r1","data":{"ok":true}}`, string(body))
-	assert.Equal(t, "/users/42/orders/a/b", gotPath)
-	assert.Equal(t, "name=alice", gotQuery)
-	assert.Equal(t, "Bearer secret", gotAuth)
-	assert.Equal(t, "v", gotExtra)
-	assert.Equal(t, "abc", gotToken)
-	assert.Equal(t, `{"payload":"hello"}`, gotBody)
 }
 
 func TestClientExecuteReturnsErrorOnBadStatus(t *testing.T) {
