@@ -101,6 +101,18 @@ func TestRequestURLReplacesPathParamsWithoutPrefixCollision(t *testing.T) {
 	assert.Equal(t, "http://example.com/users/abc/orders/def", url)
 }
 
+func TestRequestURLEscapesCatchAllSegments(t *testing.T) {
+	client := &Client{Server: "http://example.com"}
+	route := router.RouteInfo{
+		Path: "/files/*rest",
+		Params: []router.ParamInfo{
+			{Name: "rest", Source: "path"},
+		},
+	}
+	url := client.requestURL(route, map[string]string{"rest": "a b/c"})
+	assert.Equal(t, "http://example.com/files/a%20b/c", url)
+}
+
 func readBody(r *http.Request) string {
 	if r.Body == nil {
 		return ""

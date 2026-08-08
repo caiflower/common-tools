@@ -94,7 +94,11 @@ func (c *Client) requestURL(route router.RouteInfo, values map[string]string) st
 			}
 		case strings.HasPrefix(segment, "*"):
 			if value, ok := values[segment[1:]]; ok {
-				segments[i] = value
+				parts := strings.Split(value, "/")
+				for j := range parts {
+					parts[j] = url.PathEscape(parts[j])
+				}
+				segments[i] = strings.Join(parts, "/")
 			}
 		}
 	}
