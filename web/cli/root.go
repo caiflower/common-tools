@@ -27,6 +27,21 @@ func New(engine *web.Engine, opts ...Option) *cobra.Command {
 	root := &cobra.Command{
 		Use: cfg.name,
 	}
+	root.PersistentFlags().String("server", defaultServer(engine), "server address")
+	root.PersistentFlags().String("token", "", "bearer token")
+	root.PersistentFlags().StringArray("header", nil, "request header, repeatable key=value")
+	root.PersistentFlags().String("output", "table", "output format: table, json or yaml")
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if client, ok := cfg.runner.(*Client); ok {
+			server, _ := cmd.Flags().GetString("server")
+			if server != "" {
+				client.Server = server
+			}
+			client.Token, _ = cmd.Flags().GetString("token")
+			client.Headers, _ = cmd.Flags().GetStringArray("header")
+		}
+		return nil
+	}
 	root.AddCommand(serveCommand(engine, cfg))
 	addDynamicCommands(root, engine.Handler().Routes(), cfg.runner)
 	return root

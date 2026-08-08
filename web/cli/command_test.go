@@ -46,7 +46,7 @@ func (f *fakeRunner) Execute(_ context.Context, route router.RouteInfo, values m
 	f.route = route
 	f.values = values
 	f.body = body
-	return []byte("ok"), nil
+	return []byte(`{"data":"ok"}`), nil
 }
 
 func TestDynamicCommandsGenerateResourceFlag(t *testing.T) {

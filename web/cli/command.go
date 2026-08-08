@@ -158,8 +158,8 @@ func runRoute(cmd *cobra.Command, routes []router.RouteInfo, paramFlags []paramF
 	if err != nil {
 		return err
 	}
-	_, err = cmd.OutOrStdout().Write(out)
-	return err
+	format, _ := cmd.Flags().GetString("output")
+	return PrintOutput(cmd.OutOrStdout(), format, out)
 }
 
 func selectRoute(routes []router.RouteInfo, values map[string]string) router.RouteInfo {

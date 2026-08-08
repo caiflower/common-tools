@@ -104,6 +104,11 @@ func (e *Engine) Handler() *router.Handler {
 	return e.handler
 }
 
+// Addr returns the configured listening address.
+func (e *Engine) Addr() string {
+	return e.opts.Addr
+}
+
 // Group creates a new router group with the given path prefix and optional middleware.
 func (e *Engine) Group(relativePath string, handlers ...app.HandlerFunc) *router.RouterGroup {
 	return e.routerGroup.Group(relativePath, handlers...)

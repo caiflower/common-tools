@@ -17,6 +17,8 @@
 package cli
 
 import (
+	"strings"
+
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/web"
 )
@@ -69,5 +71,19 @@ func defaultOptions(engine *web.Engine, opts ...Option) *options {
 	for _, opt := range opts {
 		opt(o)
 	}
+	if o.runner == nil {
+		o.runner = &Client{Server: defaultServer(engine)}
+	}
 	return o
+}
+
+func defaultServer(engine *web.Engine) string {
+	addr := engine.Addr()
+	if addr == "" || strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	return "http://" + addr
 }
