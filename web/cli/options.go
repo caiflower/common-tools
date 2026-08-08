@@ -31,6 +31,7 @@ type options struct {
 	name       string
 	manager    ResourceManager
 	serveOrder int
+	runner     commandRunner
 }
 
 type Option func(*options)
@@ -50,6 +51,12 @@ func WithResourceManager(manager ResourceManager) Option {
 func WithServeOrder(order int) Option {
 	return func(o *options) {
 		o.serveOrder = order
+	}
+}
+
+func WithRunner(runner commandRunner) Option {
+	return func(o *options) {
+		o.runner = runner
 	}
 }
 

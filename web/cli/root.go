@@ -28,6 +28,7 @@ func New(engine *web.Engine, opts ...Option) *cobra.Command {
 		Use: cfg.name,
 	}
 	root.AddCommand(serveCommand(engine, cfg))
+	addDynamicCommands(root, engine.Handler().Routes(), cfg.runner)
 	return root
 }
 
