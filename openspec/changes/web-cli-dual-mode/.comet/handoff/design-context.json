@@ -1,0 +1,15 @@
+{
+  "change": "web-cli-dual-mode",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "cf09055a84ab79cf8d18d8918d8ec68396a68e783cd626ac51823ae9d4b68db2",
+  "files": [
+    { "path": "openspec/changes/web-cli-dual-mode/proposal.md", "sha256": "ff1db9ea7875ee25361661f8055b3fcac04c1c9538cda3ef096d28844ac4caca" },
+    { "path": "openspec/changes/web-cli-dual-mode/design.md", "sha256": "ff9971874017135c9991770aa2d0013120bb2deb6705792b99c52e876e0687d9" },
+    { "path": "openspec/changes/web-cli-dual-mode/tasks.md", "sha256": "5052f140dd092f5d42e25791723a499c63328d2f01b697a61036d584babd42db" },
+    { "path": "openspec/changes/web-cli-dual-mode/specs/route-metadata/spec.md", "sha256": "fce3a3ee03fc9fcd64fbb7ff85df395f762c1440593f9d8566b86d5dc39cd53f" },
+    { "path": "openspec/changes/web-cli-dual-mode/specs/web-cli/spec.md", "sha256": "87d460032e16d91607085aba02fc37fc30475aa63e3e681aa29012f4fefe6d80" }
+  ]
+}
