@@ -18,6 +18,8 @@ package router
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -87,12 +89,21 @@ type HandlerCfg struct {
 	DisableOptimization           bool          `yaml:"disableOptimization"`
 	EnableActionController        bool          `yaml:"enableActionController"`
 	EnableSwagger                 bool          `yaml:"enableSwagger"`
+	EnableCLI                     bool          `yaml:"enableCLI"`
+	CLIRoutesPath                 string        `yaml:"cliRoutesPath" default:"/cli/routes"`
 	DisableHeaderNamesNormalizing bool          `yaml:"disableHeaderNamesNormalizing"`
 }
 
 type LimiterConfig struct {
 	Enable bool `yaml:"enable"`
 	Qos    int  `yaml:"qos" default:"1000"`
+}
+
+type cliMetadata struct {
+	Name      string      `json:"name"`
+	Version   string      `json:"version"`
+	Resources []string    `json:"resources"`
+	Routes    []RouteInfo `json:"routes"`
 }
 
 func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
@@ -785,6 +796,22 @@ func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	} else if h.config.EnableSwagger && path == "/swagger/json" {
 		ctx.Write([]byte(h.oai.String()))
 		return true
+	} else if h.config.EnableCLI && h.config.CLIRoutesPath != "" && path == h.config.CLIRoutesPath {
+		routes := h.Routes()
+		version := versionOfRoutes(routes)
+		if etagMatches(ctx.HeaderGet("If-None-Match"), version) {
+			ctx.SetStatusCode(http.StatusNotModified)
+			return true
+		}
+		body, _ := hjson.Marshal(cliMetadata{
+			Name:      h.config.Name,
+			Version:   version,
+			Resources: resourceList(routes),
+			Routes:    routes,
+		})
+		ctx.SetHeader("ETag", `"v1-`+version+`"`)
+		ctx.Write(body)
+		return true
 	} else if h.config.EnablePprof {
 		handleName := strings.Replace(path, "/debug/pprof/", "", 1)
 		switch handleName {
@@ -818,6 +845,32 @@ func (h *Handler) specialRequest(ctx *app.RequestCtx) bool {
 	}
 
 	return false
+}
+
+func versionOfRoutes(routes []RouteInfo) string {
+	body, _ := hjson.Marshal(routes)
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func resourceList(routes []RouteInfo) []string {
+	seen := make(map[string]struct{})
+	var resources []string
+	for _, route := range routes {
+		if route.Resource == "" {
+			continue
+		}
+		if _, ok := seen[route.Resource]; ok {
+			continue
+		}
+		seen[route.Resource] = struct{}{}
+		resources = append(resources, route.Resource)
+	}
+	return resources
+}
+
+func etagMatches(ifNoneMatch, version string) bool {
+	return ifNoneMatch == `"v1-`+version+`"`
 }
 
 func (h *Handler) IsRunning() bool {

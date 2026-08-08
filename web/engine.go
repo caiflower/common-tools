@@ -93,6 +93,8 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 		DisableOptimization:           true,
 		EnableActionController:        options.EnableActionController,
 		EnableSwagger:                 options.EnableSwagger,
+		EnableCLI:                     options.EnableCLI,
+		CLIRoutesPath:                 options.CLIRoutesPath,
 		DisableHeaderNamesNormalizing: options.DisableHeaderNamesNormalizing,
 	}
 }
