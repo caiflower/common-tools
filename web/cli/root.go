@@ -27,15 +27,18 @@ func New(engine *web.Engine, opts ...Option) *cobra.Command {
 	root := &cobra.Command{
 		Use: cfg.name,
 	}
-	root.PersistentFlags().String("server", defaultServer(engine), "server address")
+	root.PersistentFlags().String("server", "", "server address")
 	root.PersistentFlags().String("token", "", "bearer token")
 	root.PersistentFlags().StringArray("header", nil, "request header, repeatable key=value")
 	root.PersistentFlags().String("output", "table", "output format: table, json or yaml")
+	root.PersistentFlags().Bool("refresh", false, "force refresh remote route metadata")
+	root.PersistentFlags().Duration("cache-ttl", defaultCacheTTL, "remote route metadata cache ttl")
+	root.PersistentFlags().String("cache-dir", "", "remote route metadata cache directory")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if client, ok := cfg.runner.(*Client); ok {
 			server, _ := cmd.Flags().GetString("server")
 			if server != "" {
-				client.Server = server
+				client.Server = normalizeServer(server)
 			}
 			client.Token, _ = cmd.Flags().GetString("token")
 			client.Headers, _ = cmd.Flags().GetStringArray("header")
@@ -43,6 +46,7 @@ func New(engine *web.Engine, opts ...Option) *cobra.Command {
 		return nil
 	}
 	root.AddCommand(serveCommand(engine, cfg))
+	root.AddCommand(routesCommand(engine, cfg))
 	addDynamicCommands(root, engine.Handler().Routes(), cfg.runner)
 	return root
 }
