@@ -38,6 +38,7 @@ import (
 )
 
 type Config struct {
+	Enabled        bool   `yaml:"enabled" json:"enabled"`
 	Endpoint       string `yaml:"endpoint" json:"endpoint"`
 	Protocol       string `yaml:"protocol" json:"protocol"`
 	ServiceName    string `yaml:"serviceName" json:"serviceName"`
@@ -72,6 +73,14 @@ type client struct {
 
 func Init(config Config) {
 	config = resolveConfig(config)
+	if !config.Enabled {
+		once.Do(func() {
+			DefaultClient = &client{config: config}
+			global.DefaultResourceManger.Add(DefaultClient)
+		})
+		return
+	}
+
 	protocol := normalizeProtocol(config.Protocol)
 	exporter, err := newTraceExporter(config.Endpoint, protocol)
 	if err != nil {
@@ -224,6 +233,10 @@ type Content struct {
 }
 
 func (c *client) Start(_traceID string, tracerName, spanName string, kind trace.SpanKind) trace.Span {
+	if c == nil || !c.config.Enabled {
+		return nil
+	}
+
 	_tracer := otel.Tracer(tracerName)
 	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {

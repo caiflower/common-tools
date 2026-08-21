@@ -28,6 +28,7 @@ Replace the existing `Config`:
 
 ```go
 type Config struct {
+    Enabled        bool   `yaml:"enabled" json:"enabled"`
     Endpoint       string `yaml:"endpoint" json:"endpoint"`
     Protocol       string `yaml:"protocol" json:"protocol"`
     ServiceName    string `yaml:"serviceName" json:"serviceName"`
@@ -40,6 +41,7 @@ type Config struct {
 - `Endpoint` accepts `host:port`, `http://host:port`, or `https://host:port`.
 - `http://` and bare `host:port` are treated as insecure.
 - `https://` enables TLS.
+- `Enabled=false` makes `Init` a no-op: hooks and web middleware remain safe to register and produce no spans.
 
 ## Initialization
 
@@ -102,6 +104,7 @@ to:
 
 ```yaml
 otel:
+  enabled: true
   endpoint: "tempo.monitor:4317"
   protocol: "grpc"
 ```

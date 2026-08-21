@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestResolveConfigPriority(t *testing.T) {
@@ -134,6 +135,11 @@ func TestNewTraceExporter(t *testing.T) {
 
 	_, err = newTraceExporter("localhost:4317", "bad")
 	assert.Error(t, err)
+}
+
+func TestClientStartDisabled(t *testing.T) {
+	c := &client{}
+	assert.Nil(t, c.Start("", "tracer", "span", trace.SpanKindServer))
 }
 
 func clearEnv(t *testing.T) {
