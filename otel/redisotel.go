@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package telemetry
+package otel
 
 import (
 	"context"
@@ -41,8 +41,8 @@ func NewTracingHook() *TracingHook {
 }
 
 func spanFromContext(ctx context.Context, name string) (context.Context, trace.Span) {
-	traceId := ctx.Value("traceId").(string)
-	traceID, err := trace.TraceIDFromHex(traceId)
+	_traceID := getTraceID(ctx)
+	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
 		logger.Error("trace.TraceIDFromHex failed. Error: %v", err)
 	}

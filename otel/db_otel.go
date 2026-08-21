@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
- package telemetry
+package otel
 
 import (
 	"context"
 	"database/sql"
+	"runtime"
+	"strings"
+
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect"
@@ -29,8 +32,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 	"go.opentelemetry.io/otel/trace"
-	"runtime"
-	"strings"
 )
 
 type QueryHook struct {
@@ -73,8 +74,8 @@ func NewQueryHook(opts ...Option) *QueryHook {
 //}
 
 func (h *QueryHook) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context.Context {
-	traceId := ctx.Value("traceId").(string)
-	traceID, err := trace.TraceIDFromHex(traceId)
+	_traceID := getTraceID(ctx)
+	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
 		logger.Error("trace.TraceIDFromHex failed. Error: %v", err)
 	}

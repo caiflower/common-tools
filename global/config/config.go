@@ -21,12 +21,12 @@ import (
 	dbv1 "github.com/caiflower/common-tools/db/v1"
 	"github.com/caiflower/common-tools/global/env"
 	xkafka "github.com/caiflower/common-tools/kafka"
+	"github.com/caiflower/common-tools/otel"
 	"github.com/caiflower/common-tools/pkg/bean"
 	"github.com/caiflower/common-tools/pkg/http"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/redis"
-	"github.com/caiflower/common-tools/telemetry"
 )
 
 type WebConfig struct {
@@ -38,14 +38,14 @@ type WebConfig struct {
 }
 
 type DefaultConfig struct {
-	LoggerConfig     logger.Config    `yaml:"logger" json:"logger"`
-	ClusterConfig    cluster.Config   `yaml:"cluster" json:"cluster"`
-	DatabaseConfig   []dbv1.Config    `yaml:"database" json:"database"`
-	HttpClientConfig http.Config      `yaml:"http_client" json:"http_client"`
-	RedisConfig      []redis.Config   `yaml:"redis" json:"redis"`
-	TelemetryConfig  telemetry.Config `yaml:"telemetry" json:"telemetry"`
-	KafkaConfig      []xkafka.Config  `yaml:"kafka" json:"kafka"`
-	WebConfig        []WebConfig      `yaml:"web" json:"web"`
+	LoggerConfig     logger.Config   `yaml:"logger" json:"logger"`
+	ClusterConfig    cluster.Config  `yaml:"cluster" json:"cluster"`
+	DatabaseConfig   []dbv1.Config   `yaml:"database" json:"database"`
+	HttpClientConfig http.Config     `yaml:"http_client" json:"http_client"`
+	RedisConfig      []redis.Config  `yaml:"redis" json:"redis"`
+	TelemetryConfig  otel.Config     `yaml:"otel" json:"otel"`
+	KafkaConfig      []xkafka.Config `yaml:"kafka" json:"kafka"`
+	WebConfig        []WebConfig     `yaml:"web" json:"web"`
 }
 
 func (c *DefaultConfig) GetDatabaseConfigByName(name string) *dbv1.Config {

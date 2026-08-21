@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package telemetry
+package otel
 
 import (
 	"github.com/uptrace/bun"

@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-package telemetry
+package otel
 
 import (
 	"context"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -32,10 +34,27 @@ import (
 
 type Config struct {
 	DNS            string `yaml:"dns" json:"dns"`
-	ServiceName    string `yaml:"serviceName" json:"serviceName" default:"unset"`
-	ServiceVersion string `yaml:"serviceVersion" json:"serviceVersion" default:"v1.0.0"`
-	DeploymentEnv  string `yaml:"deploymentEnv" json:"deploymentEnv" default:"prod"`
+	ServiceName    string `yaml:"serviceName" json:"serviceName"`
+	ServiceVersion string `yaml:"serviceVersion" json:"serviceVersion"`
+	DeploymentEnv  string `yaml:"deploymentEnv" json:"deploymentEnv"`
 }
+
+const (
+	envServiceName    = "OTEL_SERVICE_NAME"
+	envServiceVersion = "OTEL_SERVICE_VERSION"
+	envDeploymentEnv  = "OTEL_DEPLOYMENT_ENVIRONMENT"
+	envResourceAttrs  = "OTEL_RESOURCE_ATTRIBUTES"
+)
+
+var (
+	// These values can be replaced at build time with:
+	// go build -ldflags "-X github.com/caiflower/common-tools/otel.buildServiceName=..."
+	// go build -ldflags "-X github.com/caiflower/common-tools/otel.buildServiceVersion=..."
+	// go build -ldflags "-X github.com/caiflower/common-tools/otel.buildDeploymentEnv=..."
+	buildServiceName    = "unset"
+	buildServiceVersion = "v1.0.0"
+	buildDeploymentEnv  = "prod"
+)
 
 var once sync.Once
 var DefaultClient *client
@@ -45,7 +64,7 @@ type client struct {
 }
 
 func Init(config Config) {
-	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+	config = resolveConfig(config)
 	uptrace.SetLogger(logger.DefaultLogger())
 
 	options := make([]uptrace.Option, 0, 10)
@@ -68,14 +87,71 @@ func Init(config Config) {
 	})
 }
 
+// resolveConfig fills ServiceName, ServiceVersion and DeploymentEnv with the
+// following priority: environment variables, config values, build-time values.
+// Supported env vars are OTEL_SERVICE_NAME, OTEL_SERVICE_VERSION,
+// OTEL_DEPLOYMENT_ENVIRONMENT and OTEL_RESOURCE_ATTRIBUTES (service.name,
+// service.version, deployment.environment).
+func resolveConfig(config Config) Config {
+	attrs := resourceAttributes()
+	config.ServiceName = firstNonEmpty(
+		strings.TrimSpace(os.Getenv(envServiceName)),
+		attrs["service.name"],
+		config.ServiceName,
+		buildServiceName,
+	)
+	config.ServiceVersion = firstNonEmpty(
+		strings.TrimSpace(os.Getenv(envServiceVersion)),
+		attrs["service.version"],
+		config.ServiceVersion,
+		buildServiceVersion,
+	)
+	config.DeploymentEnv = firstNonEmpty(
+		strings.TrimSpace(os.Getenv(envDeploymentEnv)),
+		attrs["deployment.environment"],
+		config.DeploymentEnv,
+		buildDeploymentEnv,
+	)
+	return config
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func resourceAttributes() map[string]string {
+	attrs := make(map[string]string)
+	for _, pair := range strings.Split(os.Getenv(envResourceAttrs), ",") {
+		key, value, found := strings.Cut(pair, "=")
+		if !found {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if unescaped, err := url.PathUnescape(value); err == nil {
+			value = unescaped
+		}
+		attrs[key] = value
+	}
+	return attrs
+}
+
 type Content struct {
 	Attrs  []attribute.KeyValue
 	Failed error
 }
 
-func (c *client) Start(traceId string, tracerName, spanName string, kind trace.SpanKind) trace.Span {
+func (c *client) Start(_traceID string, tracerName, spanName string, kind trace.SpanKind) trace.Span {
 	_tracer := otel.Tracer(tracerName)
-	traceID, err := trace.TraceIDFromHex(traceId)
+	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
 		logger.Error("telemetry get traceId from hex failed. Error: %v", err)
 	}

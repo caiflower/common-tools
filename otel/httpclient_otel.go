@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
- package telemetry
+package otel
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/caiflower/common-tools/global/env"
-	golocalv1 "github.com/caiflower/common-tools/pkg/golocal/v1"
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
@@ -27,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 	"go.opentelemetry.io/otel/trace"
-	"net/http"
 )
 
 var httpclientTracer = otel.Tracer("github.com/caiflower/common-tools/http")
@@ -40,11 +40,8 @@ func NewHttpClientHook() *HttpClientHook {
 }
 
 func (h *HttpClientHook) BeforeRequest(ctx context.Context, request *http.Request) (context.Context, error) {
-	traceId := golocalv1.GetTraceID()
-	if traceId == "" {
-		traceId = ctx.Value("traceId").(string)
-	}
-	traceID, err := trace.TraceIDFromHex(traceId)
+	_traceID := getTraceID(ctx)
+	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
 		logger.Error("trace.TraceIDFromHex failed. Error: %v", err)
 	}

@@ -633,6 +633,11 @@ func (c *Client) Use(mws ...Middleware) {
 	c.mws = chain(middlewares...)
 }
 
+// UseDefault adds middleware to the package-level default client.
+func UseDefault(mws ...Middleware) {
+	defaultClient.Use(mws...)
+}
+
 // UseAsLast is used to add middleware to the end of the middleware chain.
 //
 // Will return an error if last middleware has been set before, to ensure all middleware has the change to work,
