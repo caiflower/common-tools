@@ -18,6 +18,7 @@ package otel
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -122,6 +123,41 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeProtocol(protocol string) string {
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	if protocol == "" {
+		return "grpc"
+	}
+	return protocol
+}
+
+func normalizeEndpoint(endpoint string) (string, bool, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return "", false, fmt.Errorf("otel endpoint is empty")
+	}
+	if !strings.Contains(endpoint, "://") {
+		return endpoint, false, nil
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", false, err
+	}
+	if u.Host == "" {
+		return "", false, fmt.Errorf("otel endpoint has no host")
+	}
+
+	switch u.Scheme {
+	case "http":
+		return u.Host, false, nil
+	case "https":
+		return u.Host, true, nil
+	default:
+		return "", false, fmt.Errorf("unsupported otel endpoint scheme %q", u.Scheme)
+	}
 }
 
 func resourceAttributes() map[string]string {

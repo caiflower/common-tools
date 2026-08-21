@@ -85,6 +85,41 @@ func TestFirstNonEmpty(t *testing.T) {
 	assert.Equal(t, "", firstNonEmpty("", ""))
 }
 
+func TestNormalizeProtocol(t *testing.T) {
+	assert.Equal(t, "grpc", normalizeProtocol(""))
+	assert.Equal(t, "grpc", normalizeProtocol("GRPC"))
+	assert.Equal(t, "http", normalizeProtocol("http"))
+}
+
+func TestNormalizeEndpoint(t *testing.T) {
+	tests := []struct {
+		name       string
+		endpoint   string
+		wantAddr   string
+		wantSecure bool
+		wantErr    bool
+	}{
+		{name: "bare host port", endpoint: "tempo.monitor:4317", wantAddr: "tempo.monitor:4317"},
+		{name: "http scheme", endpoint: "http://tempo.monitor:4317", wantAddr: "tempo.monitor:4317"},
+		{name: "https scheme", endpoint: "https://tempo.monitor:4317", wantAddr: "tempo.monitor:4317", wantSecure: true},
+		{name: "empty", endpoint: "", wantErr: true},
+		{name: "bad scheme", endpoint: "ftp://tempo.monitor:4317", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, secure, err := normalizeEndpoint(tt.endpoint)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantAddr, addr)
+			assert.Equal(t, tt.wantSecure, secure)
+		})
+	}
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{envServiceName, envServiceVersion, envDeploymentEnv, envResourceAttrs} {
