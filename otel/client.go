@@ -26,15 +26,20 @@ import (
 
 	"github.com/caiflower/common-tools/global"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type Config struct {
-	DNS            string `yaml:"dns" json:"dns"`
+	Endpoint       string `yaml:"endpoint" json:"endpoint"`
+	Protocol       string `yaml:"protocol" json:"protocol"`
 	ServiceName    string `yaml:"serviceName" json:"serviceName"`
 	ServiceVersion string `yaml:"serviceVersion" json:"serviceVersion"`
 	DeploymentEnv  string `yaml:"deploymentEnv" json:"deploymentEnv"`
@@ -61,31 +66,64 @@ var once sync.Once
 var DefaultClient *client
 
 type client struct {
-	config Config
+	config         Config
+	tracerProvider *sdktrace.TracerProvider
 }
 
 func Init(config Config) {
 	config = resolveConfig(config)
-	uptrace.SetLogger(logger.DefaultLogger())
-
-	options := make([]uptrace.Option, 0, 10)
-	if config.DNS != "" {
-		options = append(options, uptrace.WithDSN(config.DNS))
+	protocol := normalizeProtocol(config.Protocol)
+	exporter, err := newTraceExporter(config.Endpoint, protocol)
+	if err != nil {
+		panic(fmt.Sprintf("init otel failed. err: %v", err))
 	}
 
-	options = append(options, uptrace.WithServiceName(config.ServiceName))
-	options = append(options, uptrace.WithServiceVersion(config.ServiceVersion))
-	options = append(options, uptrace.WithDeploymentEnvironment(config.DeploymentEnv))
-
-	uptrace.ConfigureOpentelemetry(
-		// copy your project DSN here or use UPTRACE_DSN env var
-		options...,
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(newResource(config)),
 	)
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	once.Do(func() {
-		DefaultClient = &client{config: config}
+		DefaultClient = &client{config: config, tracerProvider: provider}
 		global.DefaultResourceManger.Add(DefaultClient)
 	})
+}
+
+func newTraceExporter(endpoint, protocol string) (sdktrace.SpanExporter, error) {
+	addr, secure, err := normalizeEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	switch protocol {
+	case "grpc":
+		opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(addr)}
+		if !secure {
+			opts = append(opts, otlptracegrpc.WithInsecure())
+		}
+		return otlptracegrpc.New(context.Background(), opts...)
+	case "http":
+		opts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(addr)}
+		if !secure {
+			opts = append(opts, otlptracehttp.WithInsecure())
+		}
+		return otlptracehttp.New(context.Background(), opts...)
+	default:
+		return nil, fmt.Errorf("unsupported otel protocol %q", protocol)
+	}
+}
+
+func newResource(config Config) *resource.Resource {
+	return resource.NewSchemaless(
+		attribute.String("service.name", config.ServiceName),
+		attribute.String("service.version", config.ServiceVersion),
+		attribute.String("deployment.environment", config.DeploymentEnv),
+	)
 }
 
 // resolveConfig fills ServiceName, ServiceVersion and DeploymentEnv with the
@@ -217,12 +255,14 @@ func (c *client) End(span trace.Span, content *Content) {
 		}
 	}
 
-	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 }
 
 func (c *client) Close() {
-	err := uptrace.Shutdown(context.Background())
-	if err != nil {
+	if c.tracerProvider == nil {
+		return
+	}
+	if err := c.tracerProvider.Shutdown(context.Background()); err != nil {
 		logger.Error("*** telemetry client shutdown failed. *** Error: %s", err)
 	}
 	logger.Info("*** telemetry client shutdown successfully. ***")

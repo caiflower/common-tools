@@ -17,6 +17,7 @@
 package otel
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -118,6 +119,21 @@ func TestNormalizeEndpoint(t *testing.T) {
 			assert.Equal(t, tt.wantSecure, secure)
 		})
 	}
+}
+
+func TestNewTraceExporter(t *testing.T) {
+	grpcExporter, err := newTraceExporter("localhost:4317", "grpc")
+	assert.NoError(t, err)
+	assert.NotNil(t, grpcExporter)
+	t.Cleanup(func() { _ = grpcExporter.Shutdown(context.Background()) })
+
+	httpExporter, err := newTraceExporter("localhost:4318", "http")
+	assert.NoError(t, err)
+	assert.NotNil(t, httpExporter)
+	t.Cleanup(func() { _ = httpExporter.Shutdown(context.Background()) })
+
+	_, err = newTraceExporter("localhost:4317", "bad")
+	assert.Error(t, err)
 }
 
 func clearEnv(t *testing.T) {
