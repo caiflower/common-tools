@@ -39,6 +39,10 @@ func NewHttpClientHook() *HttpClientHook {
 }
 
 func (h *HttpClientHook) BeforeRequest(ctx context.Context, request *http.Request) (context.Context, error) {
+	if !IsEnabled() {
+		return ctx, nil
+	}
+
 	_traceID := getTraceID(ctx)
 	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
@@ -68,6 +72,10 @@ func (h *HttpClientHook) BeforeRequest(ctx context.Context, request *http.Reques
 }
 
 func (h *HttpClientHook) AfterRequest(ctx context.Context, _ *http.Request, response *http.Response, err error) error {
+	if !IsEnabled() {
+		return nil
+	}
+
 	span := trace.SpanFromContext(ctx)
 	defer span.End()
 

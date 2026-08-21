@@ -62,6 +62,10 @@ func (TracingHook) DialHook(next redis.DialHook) redis.DialHook {
 // It creates a tracing span before the command executes and ends it after.
 func (TracingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
+		if !IsEnabled() {
+			return next(ctx, cmd)
+		}
+
 		ctx, span := spanFromContext(ctx, cmd.FullName())
 		defer span.End()
 
@@ -88,6 +92,10 @@ func (TracingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 // ProcessPipelineHook implements the v9 redis.Hook interface for pipeline commands.
 func (TracingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if !IsEnabled() {
+			return next(ctx, cmds)
+		}
+
 		summary := pipelineSummary(cmds)
 		ctx, span := spanFromContext(ctx, "pipeline "+summary)
 		defer span.End()

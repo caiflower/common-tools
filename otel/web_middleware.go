@@ -34,6 +34,11 @@ import (
 // logic, code after it is the "after" logic, and recover() handles panics.
 func NewWebMiddleware() app.HandlerFunc {
 	return func(ctx context.Context, reqCtx *app.RequestContext) {
+		if !IsEnabled() {
+			reqCtx.Next(ctx)
+			return
+		}
+
 		content := new(Content)
 		attrs := make([]attribute.KeyValue, 6, 10)
 		attrs[0] = attribute.String("http.request.action", reqCtx.GetAction())

@@ -66,6 +66,10 @@ var (
 var once sync.Once
 var DefaultClient *client
 
+func IsEnabled() bool {
+	return DefaultClient != nil && DefaultClient.config.Enabled
+}
+
 type client struct {
 	config         Config
 	tracerProvider *sdktrace.TracerProvider

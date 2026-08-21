@@ -40,6 +40,10 @@ var webClientTracer = otel.Tracer("github.com/caiflower/common-tools/web/client"
 func NewWebClientMiddleware() webclient.Middleware {
 	return func(next webclient.Endpoint) webclient.Endpoint {
 		return func(ctx context.Context, req *protocol.Request, resp *protocol.Response) (err error) {
+			if !IsEnabled() {
+				return next(ctx, req, resp)
+			}
+
 			_traceID := getTraceID(ctx)
 			traceID, traceErr := trace.TraceIDFromHex(_traceID)
 			if traceErr != nil {

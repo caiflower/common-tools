@@ -142,6 +142,20 @@ func TestClientStartDisabled(t *testing.T) {
 	assert.Nil(t, c.Start("", "tracer", "span", trace.SpanKindServer))
 }
 
+func TestIsEnabled(t *testing.T) {
+	oldClient := DefaultClient
+	defer func() { DefaultClient = oldClient }()
+
+	DefaultClient = &client{}
+	assert.False(t, IsEnabled())
+
+	DefaultClient = &client{config: Config{Enabled: true}}
+	assert.True(t, IsEnabled())
+
+	DefaultClient = nil
+	assert.False(t, IsEnabled())
+}
+
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{envServiceName, envServiceVersion, envDeploymentEnv, envResourceAttrs} {

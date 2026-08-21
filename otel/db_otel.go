@@ -73,6 +73,10 @@ func NewQueryHook(opts ...Option) *QueryHook {
 //}
 
 func (h *QueryHook) BeforeQuery(ctx context.Context, event *bun.QueryEvent) context.Context {
+	if !IsEnabled() {
+		return ctx
+	}
+
 	_traceID := getTraceID(ctx)
 	traceID, err := trace.TraceIDFromHex(_traceID)
 	if err != nil {
@@ -85,6 +89,10 @@ func (h *QueryHook) BeforeQuery(ctx context.Context, event *bun.QueryEvent) cont
 }
 
 func (h *QueryHook) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
+	if !IsEnabled() {
+		return
+	}
+
 	operation := event.Operation()
 	dbOperation := semconv.DBOperationKey.String(operation)
 
