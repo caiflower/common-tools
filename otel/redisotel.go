@@ -23,7 +23,6 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/redis/go-redis/v9"
-	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -79,7 +78,7 @@ func (TracingHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 			if cmdErr := cmd.Err(); cmdErr != nil && cmdErr != redis.Nil {
 				recordError(span, cmdErr)
 			}
-			logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+			logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 		}
 
 		return err
@@ -109,7 +108,7 @@ func (TracingHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 					recordError(span, cmdErr)
 				}
 			}
-			logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+			logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 		}
 
 		return err

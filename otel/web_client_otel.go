@@ -25,7 +25,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	webclient "github.com/caiflower/common-tools/web/app/client"
 	"github.com/caiflower/common-tools/web/protocol"
-	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
@@ -88,7 +87,7 @@ func NewWebClientMiddleware() webclient.Middleware {
 				span.SetAttributes(semconv.HTTPStatusCodeKey.Int(resp.StatusCode()))
 			}
 
-			logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+			logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 			return err
 		}
 	}

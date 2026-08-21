@@ -25,7 +25,6 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect"
-	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -146,7 +145,7 @@ func (h *QueryHook) AfterQuery(ctx context.Context, event *bun.QueryEvent) {
 	}
 
 	span.SetAttributes(attrs...)
-	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 }
 
 func funcFileLine(pkg string) (string, string, int) {

@@ -22,7 +22,6 @@ import (
 
 	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/logger"
-	"github.com/uptrace/uptrace-go/uptrace"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -87,6 +86,6 @@ func (h *HttpClientHook) AfterRequest(ctx context.Context, _ *http.Request, resp
 	}
 	span.SetAttributes(attrs...)
 
-	logger.Trace("uptrace: %s\n", uptrace.TraceURL(span))
+	logger.Trace("otel trace: %s", span.SpanContext().TraceID())
 	return nil
 }
