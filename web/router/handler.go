@@ -513,6 +513,7 @@ func (h *Handler) getTargetMethod(ctx *app.RequestCtx) (*method.Method, bool) {
 		if tree != nil {
 			res := tree.find(path, &ctx.Paths, false)
 			if res.handlers != nil {
+				ctx.SetRouteTemplate(res.fullPath)
 				// Convert method.Method chain to app.HandlersChain and store on ctx
 				// This enables ctx.Next() to drive the middleware chain execution
 				handlers := make(app.HandlersChain, len(res.handlers))

@@ -158,6 +158,7 @@ type RequestCtx struct {
 
 	method  []byte
 	action  string
+	route   string
 	restful bool
 
 	path  []byte
@@ -246,6 +247,14 @@ func (ctx *RequestCtx) GetAction() string {
 	return ctx.action
 }
 
+func (ctx *RequestCtx) SetRouteTemplate(route string) {
+	ctx.route = route
+}
+
+func (ctx *RequestCtx) GetRouteTemplate() string {
+	return ctx.route
+}
+
 func (ctx *RequestCtx) SetMethod(method []byte) {
 	ctx.method = method
 }
@@ -288,6 +297,7 @@ func (ctx *RequestCtx) IsRestful() bool {
 
 func (ctx *RequestCtx) Reset() {
 	ctx.special = 0
+	ctx.route = ""
 	ctx.Paths = ctx.Paths[:0]
 	ctx.writer = nil
 	ctx.err = nil
