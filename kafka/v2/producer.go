@@ -30,6 +30,8 @@ import (
 	"github.com/caiflower/common-tools/pkg/tools"
 )
 
+var _ xkafka.Producer = (*KafkaClient)(nil)
+
 func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
@@ -121,6 +123,22 @@ func NewProducerClient(cfg xkafka.Config) *KafkaClient {
 	return kafkaClient
 }
 
+// AddHook registers a producer hook on this client.
+func (c *KafkaClient) AddHook(hook xkafka.ProducerHook) {
+	if hook == nil {
+		return
+	}
+	c.hooksMu.Lock()
+	defer c.hooksMu.Unlock()
+	c.producerHooks = append(c.producerHooks, hook)
+}
+
+func (c *KafkaClient) producerHooksSnapshot() []xkafka.ProducerHook {
+	c.hooksMu.RLock()
+	defer c.hooksMu.RUnlock()
+	return append([]xkafka.ProducerHook(nil), c.producerHooks...)
+}
+
 func (c *KafkaClient) openSyncProducer() {
 	config := c.saramaConfig
 	var producer sarama.SyncProducer
@@ -183,11 +201,13 @@ label:
 					logger.Info("KafkaAsyncProducer %s chan errors is closed. exit.", c.cfg.Name)
 					break fe
 				}
+				err.Msg.Metadata = finishProducerMessage(err.Msg.Metadata, err.Err)
 				if err != nil {
 					xkafka.AddProducerErrCount(c.cfg, err.Msg.Topic, xkafka.AsyncErr)
 					logger.Error("KafkaAsyncProducer %s got error. %s", c.cfg.Name, err)
 				}
-			case <-success:
+			case msg := <-success:
+				msg.Metadata = finishProducerMessage(msg.Metadata, nil)
 			}
 		}
 	}(producer)
@@ -204,6 +224,13 @@ func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
 	if c.syncProducer == nil {
 		return errors.New("sync producer no connected yet")
 	}
+
+	hooks := c.producerHooksSnapshot()
+	contexts := beforeSend(hooks, topic, key, values)
+	var err error
+	defer func() {
+		completeProducerContexts(contexts, err)
+	}()
 
 	var msgs []*sarama.ProducerMessage
 	for _, v := range values {
@@ -222,18 +249,20 @@ func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
 	}
 
 	for i := 1; i <= 3; i++ {
-		err := c.syncProducer.SendMessages(msgs)
+		err = c.syncProducer.SendMessages(msgs)
 		if err == nil {
 			break
 		} else if i != 3 {
 			xkafka.AddProducerErrCount(c.cfg, topic, xkafka.SyncErr)
 			continue
 		} else {
+			reportSyncMessageResults(contexts, msgs, err)
 			xkafka.AddProducerErrCount(c.cfg, topic, xkafka.SyncErr)
 			return err
 		}
 	}
 
+	reportSyncMessageResults(contexts, msgs, nil)
 	return nil
 }
 
@@ -249,6 +278,12 @@ func (c *KafkaClient) AsyncSend(topic, key string, values ...interface{}) error 
 		return errors.New("async producer no connected yet")
 	}
 
+	hooks := c.producerHooksSnapshot()
+	contexts := beforeSend(hooks, topic, key, values)
+	defer func() {
+		completeProducerContexts(contexts, nil)
+	}()
+
 	for _, v := range values {
 
 		bytes, _ := tools.ToByte(v)
@@ -259,6 +294,7 @@ func (c *KafkaClient) AsyncSend(topic, key string, values ...interface{}) error 
 		if key != "" {
 			msg.Key = sarama.ByteEncoder(key)
 		}
+		msg.Metadata = wrapProducerMessage(contexts, msg.Metadata)
 
 		xkafka.CountProducer(c.cfg, topic)
 		c.asyncProducer.Input() <- msg
@@ -285,7 +321,7 @@ func (c *KafkaClient) getRetryVersion() sarama.KafkaVersion {
 	}
 
 	// 使用预置的版本进行偿试
-	for v, _ := range retryVersions {
+	for v := range retryVersions {
 		if _, ok := c.retryVersions[v]; !ok {
 			c.retryVersions[v] = struct{}{}
 			version, vErr := sarama.ParseKafkaVersion(v)
@@ -296,6 +332,76 @@ func (c *KafkaClient) getRetryVersion() sarama.KafkaVersion {
 		}
 	}
 	panic(errors.New("all version retry failed"))
+}
+
+func beforeSend(hooks []xkafka.ProducerHook, topic, key string, values []interface{}) []xkafka.ProducerContext {
+	contexts := make([]xkafka.ProducerContext, len(hooks))
+	for i, hook := range hooks {
+		if hook != nil {
+			contexts[i] = hook.BeforeSend(topic, key, values)
+		}
+	}
+	return contexts
+}
+
+type producerMessageMeta struct {
+	contexts []xkafka.ProducerContext
+	value    interface{}
+}
+
+func wrapProducerMessage(contexts []xkafka.ProducerContext, userValue interface{}) interface{} {
+	if len(contexts) == 0 {
+		return userValue
+	}
+	return &producerMessageMeta{contexts: contexts, value: userValue}
+}
+
+func finishProducerMessage(meta interface{}, err error) interface{} {
+	message, ok := meta.(*producerMessageMeta)
+	if !ok {
+		return meta
+	}
+	for _, ctx := range message.contexts {
+		if ctx != nil {
+			ctx.MessageDone(err)
+		}
+	}
+	return message.value
+}
+
+func completeProducerContexts(contexts []xkafka.ProducerContext, err error) {
+	for _, ctx := range contexts {
+		if ctx != nil {
+			ctx.Complete(err)
+		}
+	}
+}
+
+func messageDoneProducerContexts(contexts []xkafka.ProducerContext, err error) {
+	for _, ctx := range contexts {
+		if ctx != nil {
+			ctx.MessageDone(err)
+		}
+	}
+}
+
+func reportSyncMessageResults(contexts []xkafka.ProducerContext, msgs []*sarama.ProducerMessage, err error) {
+	failed := make(map[*sarama.ProducerMessage]error)
+	_, isProducerErrors := err.(sarama.ProducerErrors)
+	if producerErrors, ok := err.(sarama.ProducerErrors); ok {
+		for _, producerErr := range producerErrors {
+			if producerErr != nil {
+				failed[producerErr.Msg] = producerErr.Err
+			}
+		}
+	}
+	for _, msg := range msgs {
+		msgErr, ok := failed[msg]
+		if !ok && err != nil && !isProducerErrors {
+			msgErr = err
+		}
+		messageDoneProducerContexts(contexts, msgErr)
+	}
 }
 
 // 没有指定版本时，尝试使用以下版本

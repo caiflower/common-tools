@@ -57,6 +57,9 @@ type KafkaClient struct {
 	// 异步发送
 	asyncProducer sarama.AsyncProducer
 	retryVersions map[string]interface{}
+
+	producerHooks []xkafka.ProducerHook
+	hooksMu       sync.RWMutex
 }
 
 // Order returns the close order for graceful shutdown.

@@ -52,6 +52,25 @@ type Config struct {
 	SSLKeyFile                string        `yaml:"sslKeyFile"`
 }
 
+// ProducerContext is per-send state created by ProducerHook. Complete is
+// called once when Send or AsyncSend returns. MessageDone is called once per
+// message completion, including delivery results and messages rejected during
+// enqueue. Complete may be called with an error before every message has
+// reported when a send aborts partway through. Implementations must be safe
+// for concurrent MessageDone calls.
+type ProducerContext interface {
+	Complete(err error)
+	MessageDone(err error)
+}
+
+// ProducerHook lets callers observe producer sends without knowing the
+// concrete instrumentation implementation. BeforeSend returns per-send state;
+// the client calls Complete when the send method returns and MessageDone once
+// per message completion.
+type ProducerHook interface {
+	BeforeSend(topic, key string, values []interface{}) ProducerContext
+}
+
 // DeadLetterHandler is called when a message fails after all retries are exhausted.
 // The handler receives the original message and the last error from the callback.
 //
@@ -76,6 +95,10 @@ type Consumer interface {
 type Producer interface {
 	Send(topic string, key string, values ...interface{}) error
 	AsyncSend(topic string, key string, values ...interface{}) error
+	// AddHook registers a producer hook. Hooks run in registration order and
+	// let callers add tracing or other instrumentation without kafka depending
+	// on the concrete implementation.
+	AddHook(hook ProducerHook)
 	Close()
 }
 

@@ -61,6 +61,9 @@ type KafkaClient struct {
 	commitCycleCount int
 
 	Producer *kafka.Producer
+
+	producerHooks []xkafka.ProducerHook
+	hooksMu       sync.RWMutex
 }
 
 // Order returns the close order for graceful shutdown.

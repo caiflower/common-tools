@@ -34,6 +34,8 @@ type Producer interface {
 	GetProducer() *kafka.Producer
 }
 
+var _ xkafka.Producer = (*KafkaClient)(nil)
+
 func NewProducerClient(config xkafka.Config) *KafkaClient {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
@@ -101,6 +103,7 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 		for event := range producer.Events() {
 			switch ev := event.(type) {
 			case *kafka.Message:
+				ev.Opaque = finishProducerMessage(ev.Opaque, ev.TopicPartition.Error)
 				if ev.TopicPartition.Error != nil {
 					xkafka.AddProducerErrCount(kafkaClient.config, *ev.TopicPartition.Topic, xkafka.AsyncErr)
 					logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
@@ -118,6 +121,22 @@ func NewProducerClient(config xkafka.Config) *KafkaClient {
 	return kafkaClient
 }
 
+// AddHook registers a producer hook on this client.
+func (c *KafkaClient) AddHook(hook xkafka.ProducerHook) {
+	if hook == nil {
+		return
+	}
+	c.hooksMu.Lock()
+	defer c.hooksMu.Unlock()
+	c.producerHooks = append(c.producerHooks, hook)
+}
+
+func (c *KafkaClient) producerHooksSnapshot() []xkafka.ProducerHook {
+	c.hooksMu.RLock()
+	defer c.hooksMu.RUnlock()
+	return append([]xkafka.ProducerHook(nil), c.producerHooks...)
+}
+
 func (c *KafkaClient) Send(topic string, key string, values ...interface{}) error {
 	if strings.ToUpper(c.config.Enable) != "TRUE" || len(values) == 0 {
 		return nil
@@ -127,27 +146,46 @@ func (c *KafkaClient) Send(topic string, key string, values ...interface{}) erro
 		return errors.New("sync producer cannot send message without topic")
 	}
 
+	return c.sendMessages(topic, key, values, c.Producer.Produce)
+}
+
+type produceFunc func(message *kafka.Message, deliveryChan chan kafka.Event) error
+
+func (c *KafkaClient) sendMessages(topic string, key string, values []interface{}, produce produceFunc) error {
 	var err error
 	event := make(chan kafka.Event, len(values))
 	defer close(event)
+	hooks := c.producerHooksSnapshot()
+	contexts := beforeSend(hooks, topic, key, values)
+	defer func() {
+		completeProducerContexts(contexts, err)
+	}()
 
+	// Keep sending the rest of the batch after an enqueue failure and report
+	// every error instead of returning at the first one.
+	success := 0
 	for _, value := range values {
 		xkafka.CountProducer(c.config, topic)
 		message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Key: []byte(key), Value: []byte(tools.ToJson(value))}
-		err = c.Producer.Produce(message, event)
-		if err != nil {
+		produceErr := produce(message, event)
+		if produceErr != nil {
+			messageDoneProducerContexts(contexts, produceErr)
 			xkafka.AddProducerErrCount(c.config, topic, xkafka.SyncErr)
-			return err
+			logger.Errorf("[kafka-product] send message failed. error: %v", produceErr)
+			err = errors.Join(err, produceErr)
+		} else {
+			success++
 		}
 	}
 
-	for i := 0; i < len(values); i++ {
+	for i := 0; i < success; i++ {
 		evt := <-event
 		switch ev := evt.(type) {
 		case *kafka.Message:
+			messageDoneProducerContexts(contexts, ev.TopicPartition.Error)
 			if ev.TopicPartition.Error != nil {
 				logger.Error("[kafka-product]  producer delivery failed. Error: %v. topic %v", ev.TopicPartition.Error, ev.TopicPartition.Topic)
-				err = ev.TopicPartition.Error
+				err = errors.Join(err, ev.TopicPartition.Error)
 				xkafka.AddProducerErrCount(c.config, topic, xkafka.SyncErr)
 			} else {
 				logger.Debug("[kafka-product] producer message [key=%s] to %v success", getTopicPartitionKey(&ev.TopicPartition), ev.TopicPartition.Offset)
@@ -167,19 +205,86 @@ func (c *KafkaClient) AsyncSend(topic string, key string, values ...interface{})
 		return errors.New("async producer cannot send message without topic")
 	}
 
+	return c.asyncSendMessages(topic, key, values, c.Producer.Produce)
+}
+
+func (c *KafkaClient) asyncSendMessages(topic string, key string, values []interface{}, produce produceFunc) error {
+	hooks := c.producerHooksSnapshot()
+	contexts := beforeSend(hooks, topic, key, values)
+	var err error
+	defer func() {
+		completeProducerContexts(contexts, err)
+	}()
+
+	// Keep sending the rest of the batch after an enqueue failure and report
+	// every error instead of returning at the first one.
 	for _, value := range values {
 		xkafka.CountProducer(c.config, topic)
 		message := &kafka.Message{TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny}, Key: []byte(key), Value: []byte(tools.ToJson(value))}
-		err := c.Producer.Produce(message, nil)
-		if err != nil {
+		message.Opaque = wrapProducerMessage(contexts, message.Opaque)
+		produceErr := produce(message, nil)
+		if produceErr != nil {
+			messageDoneProducerContexts(contexts, produceErr)
 			xkafka.AddProducerErrCount(c.config, topic, xkafka.AsyncErr)
-			return err
+			logger.Errorf("[kafka-product] async send message failed. error: %v", produceErr)
+			err = errors.Join(err, produceErr)
 		}
 	}
 
-	return nil
+	return err
 }
 
 func (c *KafkaClient) GetProducer() *kafka.Producer {
 	return c.Producer
+}
+
+func beforeSend(hooks []xkafka.ProducerHook, topic, key string, values []interface{}) []xkafka.ProducerContext {
+	contexts := make([]xkafka.ProducerContext, len(hooks))
+	for i, hook := range hooks {
+		if hook != nil {
+			contexts[i] = hook.BeforeSend(topic, key, values)
+		}
+	}
+	return contexts
+}
+
+type producerMessageMeta struct {
+	contexts []xkafka.ProducerContext
+	value    interface{}
+}
+
+func wrapProducerMessage(contexts []xkafka.ProducerContext, userValue interface{}) interface{} {
+	if len(contexts) == 0 {
+		return userValue
+	}
+	return &producerMessageMeta{contexts: contexts, value: userValue}
+}
+
+func finishProducerMessage(meta interface{}, err error) interface{} {
+	message, ok := meta.(*producerMessageMeta)
+	if !ok {
+		return meta
+	}
+	for _, ctx := range message.contexts {
+		if ctx != nil {
+			ctx.MessageDone(err)
+		}
+	}
+	return message.value
+}
+
+func completeProducerContexts(contexts []xkafka.ProducerContext, err error) {
+	for _, ctx := range contexts {
+		if ctx != nil {
+			ctx.Complete(err)
+		}
+	}
+}
+
+func messageDoneProducerContexts(contexts []xkafka.ProducerContext, err error) {
+	for _, ctx := range contexts {
+		if ctx != nil {
+			ctx.MessageDone(err)
+		}
+	}
 }
