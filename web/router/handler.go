@@ -860,8 +860,12 @@ func (h *Handler) addRoute(httpMethod string, path string, handlers HandlersChai
 func (h *Handler) recordMetric(ctx *app.RequestContext) {
 	if h.config.EnableMetrics {
 		beginTime, _ := ctx.Get(dispatchBeginTime)
-		sub := time.Now().Sub(beginTime.(time.Time))
+		sub := time.Since(beginTime.(time.Time))
 		// fix: 关闭协程提升性能
-		metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.GetStatusCode()), ctx.GetMethod(), ctx.GetPath(), sub.Seconds())
+		route := ctx.GetRouteTemplate()
+		if route == "" {
+			route = ctx.GetPath()
+		}
+		metric.SaveMetric(h.config.Name, strconv.Itoa(ctx.GetStatusCode()), ctx.GetMethod(), route, sub.Seconds())
 	}
 }
