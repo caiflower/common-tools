@@ -91,6 +91,26 @@ func setupTestClient(t *testing.T, enableMetrics bool) (RedisClient, *miniredis.
 	return client, mr
 }
 
+func TestNewRedisClient_PasswordFromEnv(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.RequireAuth("env-secret")
+
+	t.Setenv("REDIS_PASSWORD", "env-secret")
+	client, err := NewRedisClient(Config{Addrs: []string{mr.Addr()}, EnableMetrics: "false"})
+	trequire.NoError(t, err, "env password should be used")
+	client.Close()
+}
+
+func TestNewRedisClient_PasswordEnvOverridesConfig(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.RequireAuth("env-secret")
+
+	t.Setenv("REDIS_PASSWORD", "env-secret")
+	client, err := NewRedisClient(Config{Addrs: []string{mr.Addr()}, Password: "config-secret", EnableMetrics: "false"})
+	trequire.NoError(t, err, "env password should override config password")
+	client.Close()
+}
+
 // --- statusLabel tests ---
 
 func TestStatusLabel(t *testing.T) {

@@ -94,6 +94,26 @@ func TestNewRedisClient_SetPeriod(t *testing.T) {
 	trequire.NoError(t, client.SetPeriod(ctx, "objectTTL", &TestObject{Age: 1, Name: "testObject"}, time.Second*60), "SetPeriod should succeed")
 }
 
+func TestNewRedisClient_PasswordFromEnv(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.RequireAuth("env-secret")
+
+	t.Setenv("REDIS_PASSWORD", "env-secret")
+	client, err := NewRedisClient(Config{Addrs: []string{mr.Addr()}})
+	trequire.NoError(t, err, "env password should be used")
+	client.(*redisClient).Close()
+}
+
+func TestNewRedisClient_PasswordEnvOverridesConfig(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.RequireAuth("env-secret")
+
+	t.Setenv("REDIS_PASSWORD", "env-secret")
+	client, err := NewRedisClient(Config{Addrs: []string{mr.Addr()}, Password: "config-secret"})
+	trequire.NoError(t, err, "env password should override config password")
+	client.(*redisClient).Close()
+}
+
 func TestNewRedisClient_SetNX(t *testing.T) {
 	client := setupTestClient(t)
 	ctx := context.Background()

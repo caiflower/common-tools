@@ -83,6 +83,7 @@ func (c *redisCmd) Key(key string) string {
 // NewRedisClient creates a new Redis client using go-redis v9.
 func NewRedisClient(config Config) (RedisClient, error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+	config.Password = tools.ResolvePasswordFromEnv("REDIS", config.Name, config.Password)
 
 	if len(config.Addrs) == 0 {
 		return nil, fmt.Errorf("new redis client failed: addrs must not be empty")

@@ -114,6 +114,7 @@ type redisClient struct {
 
 func NewRedisClient(config Config) (RedisClient, error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+	config.Password = tools.ResolvePasswordFromEnv("REDIS", config.Name, config.Password)
 
 	if len(config.Addrs) == 0 {
 		return nil, fmt.Errorf("new redis client failed: addrs must not be empty")

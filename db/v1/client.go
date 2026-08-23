@@ -75,6 +75,7 @@ type Client struct {
 
 func NewDBClient(config Config) (c *Client, err error) {
 	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+	config.Password = tools.ResolvePasswordFromEnv("DB", config.Name, config.Password)
 
 	if err := config.Validate(); err != nil {
 		return nil, err
