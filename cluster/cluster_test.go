@@ -41,30 +41,30 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	c1.Nodes = append(c1.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: port1,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: port2,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: port3,
 		})
@@ -72,30 +72,30 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	c2.Nodes = append(c2.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: port1,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: port2,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: port3,
 		})
@@ -103,54 +103,54 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 	c3.Nodes = append(c3.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: port1,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: port2,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: port3,
 		})
 
 	c1.Nodes[0].Local = true
-	cluster1, err = NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster1, err = NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
 
 	c2.Nodes[1].Local = true
-	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
+	cluster2, err = NewClusterWithArgs(c2, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
 
 	c3.Nodes[2].Local = true
-	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
+	cluster3, err = NewClusterWithArgs(c3, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
@@ -161,9 +161,9 @@ func common() (cluster1, cluster2, cluster3 *Cluster) {
 func TestSingleCluster(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
 
-	if cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	if cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "TRACE",
-	})); err != nil {
+	}))); err != nil {
 		panic(err)
 	} else {
 		err = cluster.Start()
@@ -197,30 +197,30 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	c1.Nodes = append(c1.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: 8080,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: 8081,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: 8082,
 		})
@@ -228,30 +228,30 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	c2.Nodes = append(c2.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: 8080,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: 8081,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: 8082,
 		})
@@ -259,38 +259,38 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	c3.Nodes = append(c3.Nodes,
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost1",
 			Port: 8080,
 		},
 		&struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost2",
 			Port: 8081,
 		}, &struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			Ip:   "127.0.0.1",
+			IP:   "127.0.0.1",
 			Name: "localhost3",
 			Port: 8082,
 		})
 
 	c1.Nodes[0].Local = true
-	cluster1, err = NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster1, err = NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "TRACE",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
@@ -299,9 +299,9 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	_ = cluster1.Start()
 
 	c2.Nodes[1].Local = true
-	cluster2, err = NewClusterWithArgs(c2, logger.NewLogger(&logger.Config{
+	cluster2, err = NewClusterWithArgs(c2, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "TRACE",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
@@ -310,9 +310,9 @@ func redisCommon() (cluster1, cluster2, cluster3 *Cluster) {
 	_ = cluster2.Start()
 
 	c3.Nodes[2].Local = true
-	cluster3, err = NewClusterWithArgs(c3, logger.NewLogger(&logger.Config{
+	cluster3, err = NewClusterWithArgs(c3, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "TRACE",
-	}))
+	})))
 	if err != nil {
 		panic(err)
 	}
@@ -382,12 +382,19 @@ func TestMockApplication(t *testing.T) {
 }
 
 func waitAllForReady(t *testing.T, cluster1, cluster2, cluster3 *Cluster) {
-	for {
-		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() {
-			break
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady() &&
+			cluster1.GetLeaderName() == cluster2.GetLeaderName() &&
+			cluster1.GetLeaderName() == cluster3.GetLeaderName() &&
+			cluster1.GetMyTerm() == cluster2.GetMyTerm() &&
+			cluster1.GetMyTerm() == cluster3.GetMyTerm() {
+			return
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
+	assert.Equal(t, true, cluster1.IsReady() && cluster2.IsReady() && cluster3.IsReady())
 	assert.Equal(t, true, cluster1.GetLeaderName() == cluster2.GetLeaderName())
 	assert.Equal(t, true, cluster1.GetLeaderName() == cluster3.GetLeaderName())
 	assert.Equal(t, true, cluster1.GetMyTerm() == cluster2.GetMyTerm())

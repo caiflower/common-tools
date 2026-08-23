@@ -41,7 +41,7 @@ func (g *grpcNodeClient) ClientConn() grpc.ClientConnInterface {
 	return g.conn
 }
 
-func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig, traceIdKey string) (*grpcNodeClient, error) {
+func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig, traceIDKey string, unaryInterceptors []grpc.UnaryClientInterceptor, streamInterceptors []grpc.StreamClientInterceptor) (*grpcNodeClient, error) {
 	var opts []grpc.DialOption
 	opts = append(opts,
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -49,8 +49,8 @@ func newGrpcNodeClient(ctx context.Context, address string, tlsCfg *TLSConfig, t
 			Timeout:             5 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithUnaryInterceptor(traceIdUnaryClientInterceptor(traceIdKey)),
-		grpc.WithStreamInterceptor(traceIdStreamClientInterceptor(traceIdKey)),
+		grpc.WithChainUnaryInterceptor(append([]grpc.UnaryClientInterceptor{traceIdUnaryClientInterceptor(traceIDKey)}, unaryInterceptors...)...),
+		grpc.WithChainStreamInterceptor(append([]grpc.StreamClientInterceptor{traceIdStreamClientInterceptor(traceIDKey)}, streamInterceptors...)...),
 	)
 
 	if tlsCfg != nil && tlsCfg.Enabled {
@@ -152,7 +152,7 @@ func (g *grpcNodeClient) Heartbeat(ctx context.Context) (proto.ClusterService_He
 
 func newRemoteCallRequest(f *FuncSpec) (*proto.RemoteCallRequest, error) {
 	req := &proto.RemoteCallRequest{
-		TraceId:  f.traceId,
+		TraceId:  f.traceID,
 		Uuid:     f.uuid,
 		FuncName: f.funcName,
 		Sync:     f.sync,

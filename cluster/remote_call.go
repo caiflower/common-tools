@@ -36,7 +36,7 @@ var ErrResultNotReady = fmt.Errorf("remote call result not ready")
 
 type FuncSpec struct {
 	mu                    sync.RWMutex
-	traceId               string
+	traceID               string
 	uuid                  string
 	nodeName              string
 	funcName              string
@@ -73,7 +73,7 @@ func NewAsyncFuncSpec(nodeName, funcName string, param interface{}, timeout time
 		param:    param,
 		timeout:  timeout,
 	}
-	f.traceId = f.uuid
+	f.traceID = f.uuid
 	return f
 }
 
@@ -86,12 +86,12 @@ func (fs *FuncSpec) startTimer() {
 }
 
 func (fs *FuncSpec) SetTraceId(traceId string) *FuncSpec {
-	fs.traceId = traceId
+	fs.traceID = traceId
 	return fs
 }
 
 func (fs *FuncSpec) GetTraceId() string {
-	return fs.traceId
+	return fs.traceID
 }
 
 func (fs *FuncSpec) IgnoreNotReady() *FuncSpec {

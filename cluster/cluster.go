@@ -97,11 +97,11 @@ type Config struct {
 	Mode       string        `yaml:"mode" default:"cluster" json:"mode"`
 	Timeout    time.Duration `yaml:"timeout" default:"5s" json:"timeout"`
 	Enable     string        `yaml:"enable" default:"true" json:"enable"`
-	TraceIdKey string        `yaml:"traceIdKey" default:"X-Request-ID" json:"traceIdKey"`
+	TraceIDKey string        `yaml:"traceIdKey" default:"X-Request-ID" json:"traceIdKey"`
 	TLS        TLSConfig     `yaml:"tls" json:"tls"`
 	Nodes      []*struct {
 		Name  string
-		Ip    string
+		IP    string
 		Port  int
 		Local bool
 	} `yaml:"nodes" json:"nodes"`
@@ -135,48 +135,107 @@ type ReplicasDiscovery struct {
 }
 
 type Cluster struct {
-	lock               sync.Locker    // 启动关闭锁
-	fightingState      uint32         // 选举状态锁（modeCluster使用）
-	redisFightingState uint32         // 选举状态锁（modeRedis使用）
-	redisWatchDogState uint32         // WatchDog状态锁（modeRedis使用）
-	config             *Config        // 配置文件
-	curNode            *Node          // 当前节点
-	leaderNode         *Node          // 领导节点
-	leaderLock         sync.RWMutex   // leader锁
-	lostLeaderTime     time.Time      // 没有leader的时间
-	allNode            *sync.Map      // 所有的节点
-	aliveNodes         *sync.Map      // 所有存活的节点
-	term               atomic.Int64   // 当前任期
-	sate               uint32         // 集群状态
-	grpcServer         *grpc.Server   // gRPC 服务端
-	logger             logger.ILog    // 日志框架
-	votesMap           map[int]string // 投票map term->nodeName
-	votesLock          sync.Locker    // 投票锁
-	localFuncs         map[string]func(data interface{}) (interface{}, error)
-	localFuncsLock     sync.RWMutex
-	registeredServices map[string]*grpc.ServiceDesc // 预注册的 gRPC 服务
-	registeredImpls    map[string]interface{}       // 预注册的 gRPC 服务实现
-	Redis              redisv2.RedisClient          `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
-	ctx                context.Context
-	cancelFunc         context.CancelFunc
-	events             chan *event
-	eventMu            sync.RWMutex
-	eventsClosed       bool
-	jobTrackers        *sync.Map
-	closeSuccess       chan bool
-	currentReplicas    atomic.Value
-	connectLock        sync.Mutex
-	reconnectPending   uint32
-	callCache          *gocache.Cache
-	heartbeatStreams   *heartbeatStreamManager
+	lock                     sync.Locker    // 启动关闭锁
+	fightingState            uint32         // 选举状态锁（modeCluster使用）
+	redisFightingState       uint32         // 选举状态锁（modeRedis使用）
+	redisWatchDogState       uint32         // WatchDog状态锁（modeRedis使用）
+	config                   *Config        // 配置文件
+	curNode                  *Node          // 当前节点
+	leaderNode               *Node          // 领导节点
+	leaderLock               sync.RWMutex   // leader锁
+	lostLeaderTime           time.Time      // 没有leader的时间
+	allNode                  *sync.Map      // 所有的节点
+	aliveNodes               *sync.Map      // 所有存活的节点
+	term                     atomic.Int64   // 当前任期
+	sate                     uint32         // 集群状态
+	grpcServer               *grpc.Server   // gRPC 服务端
+	logger                   logger.ILog    // 日志框架
+	votesMap                 map[int]string // 投票map term->nodeName
+	votesLock                sync.Locker    // 投票锁
+	localFuncs               map[string]func(data interface{}) (interface{}, error)
+	localFuncsLock           sync.RWMutex
+	registeredServices       map[string]*grpc.ServiceDesc // 预注册的 gRPC 服务
+	registeredImpls          map[string]interface{}       // 预注册的 gRPC 服务实现
+	serverUnaryInterceptors  []grpc.UnaryServerInterceptor
+	serverStreamInterceptors []grpc.StreamServerInterceptor
+	clientUnaryInterceptors  []grpc.UnaryClientInterceptor
+	clientStreamInterceptors []grpc.StreamClientInterceptor
+	Redis                    redisv2.RedisClient `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	ctx                      context.Context
+	cancelFunc               context.CancelFunc
+	events                   chan *event
+	eventMu                  sync.RWMutex
+	eventsClosed             bool
+	jobTrackers              *sync.Map
+	closeSuccess             chan bool
+	currentReplicas          atomic.Value
+	connectLock              sync.Mutex
+	reconnectPending         uint32
+	callCache                *gocache.Cache
+	heartbeatStreams         atomic.Pointer[heartbeatStreamManager]
 }
 
-func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
-	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+type ClusterOption func(*Cluster)
 
-	if logger == nil {
-		return nil, errors.New("logger required")
+// WithLogger sets the logger used by the cluster.
+func WithLogger(logger logger.ILog) ClusterOption {
+	return func(c *Cluster) {
+		if logger != nil {
+			c.logger = logger
+		}
 	}
+}
+
+// WithServerUnaryInterceptors appends user gRPC unary interceptors to the
+// cluster server, after the built-in traceId interceptor.
+func WithServerUnaryInterceptors(interceptors ...grpc.UnaryServerInterceptor) ClusterOption {
+	return func(c *Cluster) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.serverUnaryInterceptors = append(c.serverUnaryInterceptors, interceptor)
+			}
+		}
+	}
+}
+
+// WithServerStreamInterceptors appends user gRPC stream interceptors to the
+// cluster server, after the built-in traceId interceptor.
+func WithServerStreamInterceptors(interceptors ...grpc.StreamServerInterceptor) ClusterOption {
+	return func(c *Cluster) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.serverStreamInterceptors = append(c.serverStreamInterceptors, interceptor)
+			}
+		}
+	}
+}
+
+// WithClientUnaryInterceptors appends user gRPC unary interceptors to cluster
+// node clients, after the built-in traceId interceptor.
+func WithClientUnaryInterceptors(interceptors ...grpc.UnaryClientInterceptor) ClusterOption {
+	return func(c *Cluster) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.clientUnaryInterceptors = append(c.clientUnaryInterceptors, interceptor)
+			}
+		}
+	}
+}
+
+// WithClientStreamInterceptors appends user gRPC stream interceptors to
+// cluster node clients, after the built-in traceId interceptor.
+func WithClientStreamInterceptors(interceptors ...grpc.StreamClientInterceptor) ClusterOption {
+	return func(c *Cluster) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.clientStreamInterceptors = append(c.clientStreamInterceptors, interceptor)
+			}
+		}
+	}
+}
+
+func NewClusterWithArgs(config Config, options ...ClusterOption) (*Cluster, error) {
+	_ = tools.DoTagFunc(&config, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
 
 	switch config.Mode {
 	case modeCluster, modeSingle, modeRedis:
@@ -189,7 +248,7 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		allNode:            &sync.Map{},
 		aliveNodes:         &sync.Map{},
 		sate:               _init,
-		logger:             logger,
+		logger:             logger.DefaultLogger(),
 		lock:               syncx.NewSpinLock(),
 		votesMap:           make(map[int]string),
 		votesLock:          syncx.NewSpinLock(),
@@ -198,6 +257,12 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 		registeredServices: make(map[string]*grpc.ServiceDesc),
 		registeredImpls:    make(map[string]interface{}),
 		callCache:          gocache.New(gocache.NoExpiration, 1*time.Minute),
+	}
+
+	for _, option := range options {
+		if option != nil {
+			option(cluster)
+		}
 	}
 
 	if !cluster.IsEnable() {
@@ -233,8 +298,8 @@ func NewClusterWithArgs(config Config, logger logger.ILog) (*Cluster, error) {
 	return cluster, nil
 }
 
-func NewCluster(config Config) (*Cluster, error) {
-	return NewClusterWithArgs(config, logger.DefaultLogger())
+func NewCluster(config Config, options ...ClusterOption) (*Cluster, error) {
+	return NewClusterWithArgs(config, options...)
 }
 
 func (c *Cluster) Name() string {
@@ -298,7 +363,7 @@ func (c *Cluster) Start() error {
 	case modeCluster:
 		fallthrough
 	default:
-		c.heartbeatStreams = newHeartbeatStreamManager(c)
+		c.heartbeatStreams.Store(newHeartbeatStreamManager(c))
 		go c.fighting()
 		go c.heartbeat()
 	}
@@ -337,8 +402,8 @@ func (c *Cluster) Close() {
 
 	atomic.StoreUint32(&c.sate, closed)
 
-	if c.heartbeatStreams != nil {
-		c.heartbeatStreams.stopAll()
+	if m := c.heartbeatStreams.Load(); m != nil {
+		m.stopAll()
 	}
 
 	c.aliveNodes.Range(func(key, value interface{}) bool {
@@ -552,7 +617,7 @@ func (c *Cluster) loadNodes() {
 		}
 	} else {
 		for _, n := range c.config.Nodes {
-			address := n.Ip + ":" + strconv.Itoa(n.Port)
+			address := n.IP + ":" + strconv.Itoa(n.Port)
 			node := newNode(address, n.Name, c.config.Timeout.Seconds()/3)
 			c.allNode.Store(n.Name, node)
 			addresses = append(addresses, address)
@@ -588,9 +653,10 @@ func (c *Cluster) getQuorum() int {
 
 func (c *Cluster) findCurNode() {
 	if c.curNode == nil { // 说明没有开启调试
-		if c.config.Mode == modeSingle {
+		switch c.config.Mode {
+		case modeSingle:
 			c.curNode = newNode("127.0.0.1:10000", "single", c.config.Timeout.Seconds()/3)
-		} else if c.config.Mode == modeRedis {
+		case modeRedis:
 			// Redis 模式：根据本地信息创建当前节点
 			dns := env.GetLocalDNS()
 			ip := env.GetLocalHostIP()
@@ -621,7 +687,7 @@ func (c *Cluster) findCurNode() {
 			c.curNode = node
 
 			c.logger.Info("[cluster] redis mode: set current node, name=%s, address=%s", nodeName, address)
-		} else {
+		default:
 			dns := env.GetLocalDNS()
 			ip := env.GetLocalHostIP()
 			c.allNode.Range(func(key, value interface{}) bool {
@@ -648,18 +714,6 @@ func (c *Cluster) findCurNode() {
 			}
 		}
 	}
-}
-
-func (c *Cluster) needReconnect() (need bool) {
-	c.allNode.Range(func(key, value interface{}) bool {
-		if _, ex := c.aliveNodes.Load(key); !ex {
-			need = true
-			return false
-		}
-		return true
-	})
-
-	return
 }
 
 func (c *Cluster) markNodeUnavailable(nodeName string) {
@@ -723,7 +777,7 @@ func (c *Cluster) reconnect() {
 	resultCh := make(chan connectResult, len(pending))
 	for i := range pending {
 		go func(r connectResult) {
-			client, err := newGrpcNodeClient(ctx, r.node.address, &c.config.TLS, c.config.TraceIdKey)
+			client, err := newGrpcNodeClient(ctx, r.node.address, &c.config.TLS, c.config.TraceIDKey, c.clientUnaryInterceptors, c.clientStreamInterceptors)
 			resultCh <- connectResult{nodeName: r.nodeName, node: r.node, client: client, err: err}
 		}(pending[i])
 	}
@@ -779,8 +833,8 @@ func (c *Cluster) listen() {
 			MinTime:             15 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.UnaryInterceptor(traceIdUnaryServerInterceptor(c.config.TraceIdKey)),
-		grpc.StreamInterceptor(traceIdStreamServerInterceptor(c.config.TraceIdKey)),
+		grpc.ChainUnaryInterceptor(append([]grpc.UnaryServerInterceptor{traceIdUnaryServerInterceptor(c.config.TraceIDKey)}, c.serverUnaryInterceptors...)...),
+		grpc.ChainStreamInterceptor(append([]grpc.StreamServerInterceptor{traceIdStreamServerInterceptor(c.config.TraceIDKey)}, c.serverStreamInterceptors...)...),
 	)
 	if c.config.TLS.Enabled {
 		creds, err := loadTLSServerCredentials(&c.config.TLS)
@@ -1019,18 +1073,25 @@ func (c *Cluster) heartbeat() {
 	for {
 		select {
 		case <-c.ctx.Done():
-			c.heartbeatStreams.stopAll()
+			if m := c.heartbeatStreams.Load(); m != nil {
+				m.stopAll()
+			}
 			return
 		case <-ticker.C:
 			if c.IsLeader() {
 				c.logger.Trace("[cluster] leader %s sending heartbeat", c.GetMyName())
 
+				m := c.heartbeatStreams.Load()
+				if m == nil {
+					continue
+				}
+
 				c.aliveNodes.Range(func(key, value interface{}) bool {
 					nodeName := key.(string)
 					node := value.(*Node)
 					if nodeName != c.GetMyName() {
-						if _, ok := c.heartbeatStreams.streams.Load(nodeName); !ok {
-							c.heartbeatStreams.startStream(node)
+						if _, ok := m.streams.Load(nodeName); !ok {
+							m.startStream(node)
 						}
 					}
 					return true
@@ -1045,7 +1106,7 @@ func (c *Cluster) heartbeat() {
 					nodeName := key.(string)
 					if nodeName != c.GetMyName() {
 						total++
-						if c.heartbeatStreams.sendHeartbeat(nodeName, int32(c.term.Load())) {
+						if m.sendHeartbeat(nodeName, int32(c.term.Load())) {
 							success++
 						}
 					}
@@ -1068,7 +1129,9 @@ func (c *Cluster) heartbeat() {
 
 				ticker.Reset(leaderHeartbeatInterval)
 			} else if c.IsFollower() {
-				c.heartbeatStreams.stopAll()
+				if m := c.heartbeatStreams.Load(); m != nil {
+					m.stopAll()
+				}
 				if !c.IsReady() || c.GetLeaderNode() == nil {
 					c.logger.Info("[cluster] follower %s not ready, triggering election", c.GetMyName())
 					go c.fighting()
@@ -1477,7 +1540,7 @@ func (c *Cluster) CallFunc(f *FuncSpec) (interface{}, error) {
 }
 
 func (c *Cluster) callLocalFunc(f *FuncSpec) {
-	golocalv1.PutTraceID(f.traceId)
+	golocalv1.PutTraceID(f.traceID)
 	defer golocalv1.Clean()
 
 	c.localFuncsLock.RLock()

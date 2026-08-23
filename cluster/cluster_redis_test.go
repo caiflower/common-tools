@@ -62,7 +62,7 @@ func createTestRedisCluster(t *testing.T, redisClient redisv2.RedisClient, name 
 		},
 	}
 
-	cluster, err := NewClusterWithArgs(cfg, logger.NewLogger(&logger.Config{Level: "INFO"}))
+	cluster, err := NewClusterWithArgs(cfg, WithLogger(logger.NewLogger(&logger.Config{Level: "INFO"})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}

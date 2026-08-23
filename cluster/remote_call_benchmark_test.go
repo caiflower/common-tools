@@ -78,11 +78,11 @@ func buildBenchClusters(n int) ([]*Cluster, func()) {
 		for j, nd := range allNodes {
 			entry := &struct {
 				Name  string
-				Ip    string
+				IP    string
 				Port  int
 				Local bool
 			}{
-				Ip:    nd.Ip,
+				IP:    nd.Ip,
 				Name:  nd.Name,
 				Port:  nd.Port,
 				Local: j == i,
@@ -90,7 +90,7 @@ func buildBenchClusters(n int) ([]*Cluster, func()) {
 			cfg.Nodes = append(cfg.Nodes, entry)
 		}
 
-		c, err := NewClusterWithArgs(cfg, log)
+		c, err := NewClusterWithArgs(cfg, WithLogger(log))
 		if err != nil {
 			panic(fmt.Sprintf("create bench cluster node %d failed: %v", i, err))
 		}

@@ -1,3 +1,5 @@
+//go:build test
+
 /*
  * Copyright 2024 caiflower Authors
  *
@@ -78,11 +80,11 @@ func buildN100Clusters(n int) ([]*Cluster, []int) {
 		for j, nd := range allNodes {
 			entry := &struct {
 				Name  string
-				Ip    string
+				IP    string
 				Port  int
 				Local bool
 			}{
-				Ip:    nd.Ip,
+				IP:    nd.Ip,
 				Name:  nd.Name,
 				Port:  nd.Port,
 				Local: j == i,
@@ -90,7 +92,7 @@ func buildN100Clusters(n int) ([]*Cluster, []int) {
 			cfg.Nodes = append(cfg.Nodes, entry)
 		}
 
-		c, err := NewClusterWithArgs(cfg, log)
+		c, err := NewClusterWithArgs(cfg, WithLogger(log))
 		if err != nil {
 			panic(fmt.Sprintf("创建节点 %d 失败: %v", i, err))
 		}

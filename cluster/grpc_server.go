@@ -157,7 +157,7 @@ func (s *clusterServiceServer) Heartbeat(stream proto.ClusterService_HeartbeatSe
 func (s *clusterServiceServer) RemoteCall(ctx context.Context, req *proto.RemoteCallRequest) (*proto.RemoteCallResponse, error) {
 	c := s.cluster
 	f := &FuncSpec{
-		traceId:  req.TraceId,
+		traceID:  req.TraceId,
 		uuid:     req.Uuid,
 		funcName: req.FuncName,
 		sync:     req.Sync,
@@ -176,7 +176,7 @@ func (s *clusterServiceServer) RemoteCall(ctx context.Context, req *proto.Remote
 	c.callLocalFunc(f)
 
 	resp := &proto.RemoteCallResponse{
-		TraceId:  f.traceId,
+		TraceId:  f.traceID,
 		Uuid:     f.uuid,
 		FuncName: f.funcName,
 	}

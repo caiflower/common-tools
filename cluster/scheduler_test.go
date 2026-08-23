@@ -18,6 +18,7 @@ package cluster
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ type TestJobTracker struct {
 	leaderEndTime     time.Time
 	followerStartTime time.Time
 	followerEndTime   time.Time
+	mu                sync.Mutex
 }
 
 func (t *TestJobTracker) Name() string {
@@ -39,20 +41,58 @@ func (t *TestJobTracker) Name() string {
 }
 
 func (t *TestJobTracker) OnStartedLeading() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.leaderStartTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStoppedLeading() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.leaderEndTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStoppedFollowing() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.followerEndTime = time.Now()
 }
 
 func (t *TestJobTracker) OnStartedFollowing(leaderName string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.leaderName = leaderName
 	t.followerStartTime = time.Now()
+}
+
+func (t *TestJobTracker) LeaderName() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.leaderName
+}
+
+func (t *TestJobTracker) LeaderStartTime() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.leaderStartTime
+}
+
+func (t *TestJobTracker) LeaderEndTime() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.leaderEndTime
+}
+
+func (t *TestJobTracker) FollowerStartTime() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.followerStartTime
+}
+
+func (t *TestJobTracker) FollowerEndTime() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.followerEndTime
 }
 
 func TestClusterJobTracker(t *testing.T) {
@@ -82,57 +122,57 @@ func TestClusterJobTracker(t *testing.T) {
 	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
 	assert.Equal(t, cluster1.GetMyTerm(), cluster2.GetMyTerm())
 
-	judge := func(leader, f1, f2 TestJobTracker) {
-		assert.Equal(t, false, leader.leaderStartTime.IsZero())
-		assert.Equal(t, true, leader.leaderEndTime.IsZero())
-		assert.Equal(t, true, leader.followerStartTime.IsZero())
-		assert.Equal(t, true, leader.followerEndTime.IsZero())
+	judge := func(leader, f1, f2 *TestJobTracker) {
+		assert.Equal(t, false, leader.LeaderStartTime().IsZero())
+		assert.Equal(t, true, leader.LeaderEndTime().IsZero())
+		assert.Equal(t, true, leader.FollowerStartTime().IsZero())
+		assert.Equal(t, true, leader.FollowerEndTime().IsZero())
 
-		assert.Equal(t, true, f1.leaderStartTime.IsZero())
-		assert.Equal(t, true, f1.leaderEndTime.IsZero())
-		assert.Equal(t, false, f1.followerStartTime.IsZero())
+		assert.Equal(t, true, f1.LeaderStartTime().IsZero())
+		assert.Equal(t, true, f1.LeaderEndTime().IsZero())
+		assert.Equal(t, false, f1.FollowerStartTime().IsZero())
 
-		assert.Equal(t, true, f2.leaderStartTime.IsZero())
-		assert.Equal(t, true, f2.leaderEndTime.IsZero())
-		assert.Equal(t, false, f2.followerStartTime.IsZero())
+		assert.Equal(t, true, f2.LeaderStartTime().IsZero())
+		assert.Equal(t, true, f2.LeaderEndTime().IsZero())
+		assert.Equal(t, false, f2.FollowerStartTime().IsZero())
 	}
 
 	switch cluster1.GetLeaderName() {
 	case "localhost1":
-		assert.Equal(t, t2.leaderName, "localhost1")
-		assert.Equal(t, t3.leaderName, "localhost1")
+		assert.Equal(t, t2.LeaderName(), "localhost1")
+		assert.Equal(t, t3.LeaderName(), "localhost1")
 
 		time.Sleep(5 * time.Second)
-		judge(t1, t2, t3)
+		judge(&t1, &t2, &t3)
 
 		cluster1.Close()
 
 		time.Sleep(10 * time.Second)
-		assert.Equal(t, true, t1.leaderEndTime.After(t1.leaderStartTime))
+		assert.Equal(t, true, t1.LeaderEndTime().After(t1.LeaderStartTime()))
 		_ = cluster1.Start()
 	case "localhost2":
-		assert.Equal(t, t1.leaderName, "localhost2")
-		assert.Equal(t, t3.leaderName, "localhost2")
+		assert.Equal(t, t1.LeaderName(), "localhost2")
+		assert.Equal(t, t3.LeaderName(), "localhost2")
 
 		time.Sleep(5 * time.Second)
-		judge(t2, t1, t3)
+		judge(&t2, &t1, &t3)
 
 		cluster2.Close()
 
 		time.Sleep(10 * time.Second)
-		assert.Equal(t, true, t2.leaderEndTime.After(t2.leaderStartTime))
+		assert.Equal(t, true, t2.LeaderEndTime().After(t2.LeaderStartTime()))
 		_ = cluster2.Start()
 	case "localhost3":
-		assert.Equal(t, t1.leaderName, "localhost3")
-		assert.Equal(t, t2.leaderName, "localhost3")
+		assert.Equal(t, t1.LeaderName(), "localhost3")
+		assert.Equal(t, t2.LeaderName(), "localhost3")
 
 		time.Sleep(5 * time.Second)
-		judge(t3, t1, t2)
+		judge(&t3, &t1, &t2)
 
 		cluster3.Close()
 
 		time.Sleep(10 * time.Second)
-		assert.Equal(t, true, t3.leaderEndTime.After(t3.leaderStartTime))
+		assert.Equal(t, true, t3.LeaderEndTime().After(t3.LeaderStartTime()))
 		_ = cluster3.Start()
 	}
 

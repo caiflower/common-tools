@@ -225,10 +225,9 @@ func BenchmarkNativeGRPCCall(b *testing.B) {
 	}
 	client := proto.NewTestGreeterClient(conn)
 
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := client.SayHello(context.Background(), &proto.TestHelloRequest{Name: "bench"})
 		if err != nil {
 			b.Fatalf("native gRPC call failed: %v", err)

@@ -12,9 +12,9 @@ import (
 
 func TestRaceCondition_TermConcurrentAccess(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -91,9 +91,9 @@ func TestRaceCondition_TermFightingAndRead(t *testing.T) {
 
 func TestRaceCondition_RegisterFuncConcurrentAccess(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -127,9 +127,9 @@ func TestRaceCondition_RegisterFuncConcurrentAccess(t *testing.T) {
 
 func TestRaceCondition_SignLeaderAndReleaseLeader(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -217,9 +217,9 @@ func TestRaceCondition_HeartbeatStreamAccess(t *testing.T) {
 
 func TestRaceCondition_CloseAndRead(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -254,9 +254,9 @@ func TestRaceCondition_CloseAndRead(t *testing.T) {
 
 func TestRaceCondition_RegisterFuncAndCallFuncConcurrent(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -309,9 +309,9 @@ func TestRaceCondition_RegisterFuncAndCallFuncConcurrent(t *testing.T) {
 
 func TestRaceCondition_CloseWithoutStart(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -349,9 +349,9 @@ func TestRaceCondition_TriggerReconnectDedup(t *testing.T) {
 
 func TestRaceCondition_ConcurrentClose(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -425,9 +425,9 @@ func TestRaceCondition_AliveNodesConcurrentReadWrite(t *testing.T) {
 
 func TestRaceCondition_EventsChannelSendAndClose(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -506,9 +506,9 @@ func TestRaceCondition_CallFuncRemoteWithNodeChange(t *testing.T) {
 
 func TestRaceCondition_ReleaseWithNodeNameAndSignLeader(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -679,9 +679,9 @@ func (m *mockJobTracker) OnStoppedFollowing()                  {}
 
 func TestRaceCondition_JobTrackerConcurrentAccess(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}
@@ -751,9 +751,9 @@ func TestRaceCondition_GetGRPCClientWithNodeChange(t *testing.T) {
 
 func TestRaceCondition_VotesMapConcurrentAccess(t *testing.T) {
 	c1 := Config{Enable: "true", Mode: modeSingle}
-	cluster, err := NewClusterWithArgs(c1, logger.NewLogger(&logger.Config{
+	cluster, err := NewClusterWithArgs(c1, WithLogger(logger.NewLogger(&logger.Config{
 		Level: "FATAL",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("failed to create cluster: %v", err)
 	}

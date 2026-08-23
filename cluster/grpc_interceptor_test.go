@@ -53,24 +53,24 @@ func buildCommonClustersWithGreeter(traceIdKey string) (cluster1, cluster2, clus
 	log := logger.NewLogger(&logger.Config{Level: "FATAL"})
 
 	makeConfig := func(localIdx int) Config {
-		cfg := Config{Enable: "true", Mode: modeCluster, TraceIdKey: traceIdKey}
+		cfg := Config{Enable: "true", Mode: modeCluster, TraceIDKey: traceIdKey}
 		nodes := []*struct {
 			Name  string
-			Ip    string
+			IP    string
 			Port  int
 			Local bool
 		}{
-			{Ip: node1.Ip, Name: node1.Name, Port: node1.Port, Local: localIdx == 0},
-			{Ip: node2.Ip, Name: node2.Name, Port: node2.Port, Local: localIdx == 1},
-			{Ip: node3.Ip, Name: node3.Name, Port: node3.Port, Local: localIdx == 2},
+			{IP: node1.Ip, Name: node1.Name, Port: node1.Port, Local: localIdx == 0},
+			{IP: node2.Ip, Name: node2.Name, Port: node2.Port, Local: localIdx == 1},
+			{IP: node3.Ip, Name: node3.Name, Port: node3.Port, Local: localIdx == 2},
 		}
 		cfg.Nodes = nodes
 		return cfg
 	}
 
-	cluster1, _ = NewClusterWithArgs(makeConfig(0), log)
-	cluster2, _ = NewClusterWithArgs(makeConfig(1), log)
-	cluster3, _ = NewClusterWithArgs(makeConfig(2), log)
+	cluster1, _ = NewClusterWithArgs(makeConfig(0), WithLogger(log))
+	cluster2, _ = NewClusterWithArgs(makeConfig(1), WithLogger(log))
+	cluster3, _ = NewClusterWithArgs(makeConfig(2), WithLogger(log))
 
 	_ = cluster2.RegisterGRPCService(&proto.TestGreeter_ServiceDesc, &testGreeterServer{})
 	return
