@@ -37,7 +37,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const grpcTracerName = "github.com/caiflower/common-tools/grpc"
+const grpcTracerName = "google.golang.org/grpc"
 
 // GRPCOption configures how gRPC calls are traced.
 type GRPCOption func(*grpcTraceOptions)
