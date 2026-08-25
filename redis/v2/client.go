@@ -115,6 +115,7 @@ func NewRedisClient(config Config) (RedisClient, error) {
 			MinIdleConns:    config.MinIdleConns,
 			ConnMaxIdleTime: connMaxIdleTime(config),
 			ConnMaxLifetime: connMaxLifetime(config),
+			DisableIdentity: config.DisableIdentity,
 		}
 		cc := redis.NewClusterClient(opts)
 		c.redis = cc
@@ -130,6 +131,7 @@ func NewRedisClient(config Config) (RedisClient, error) {
 			MinIdleConns:    config.MinIdleConns,
 			ConnMaxIdleTime: connMaxIdleTime(config),
 			ConnMaxLifetime: connMaxLifetime(config),
+			DisableIdentity: config.DisableIdentity,
 		}
 		sc := redis.NewClient(opts)
 		c.redis = sc

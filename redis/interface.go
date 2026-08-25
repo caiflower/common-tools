@@ -38,6 +38,7 @@ type Config struct {
 	IdleTimeout           time.Duration `yaml:"idleTimeout" default:"300s" json:"idleTimeout"` // v8 name, use ConnMaxIdleTime for new configs
 	ConnMaxLifetime       time.Duration `yaml:"connMaxLifetime" json:"connMaxLifetime"`        // v9 alias for MaxConnAge, no default: zero sentinel enables fallback to MaxConnAge
 	ConnMaxIdleTime       time.Duration `yaml:"connMaxIdleTime" json:"connMaxIdleTime"`        // v9 alias for IdleTimeout, no default: zero sentinel enables fallback to IdleTimeout
+	DisableIdentity       bool          `yaml:"disableIdentity" json:"disableIdentity"`        // v9 only
 	KeyPrefix             string        `yaml:"keyPrefix" json:"keyPrefix"`
 	EnableMetrics         string        `yaml:"enableMetrics" default:"true" json:"enableMetrics"`
 }
