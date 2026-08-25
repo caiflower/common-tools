@@ -63,7 +63,7 @@ var (
 	TimePattern5 *regexp.Regexp
 )
 
-func unmarshalJSONToJson(data []byte) (time.Time, error) {
+func unmarshalJSONToJSON(data []byte) (time.Time, error) {
 	str := string(data)
 	if str == "\"\"" || str == "null" {
 		return time.Time{}, nil
@@ -110,7 +110,7 @@ func (t *Time) Time() time.Time {
 }
 
 func (t *Time) UnmarshalJSON(data []byte) (err error) {
-	now, timeErr := unmarshalJSONToJson(data)
+	now, timeErr := unmarshalJSONToJSON(data)
 	if timeErr != nil {
 		logger.Error("time type convert error. %s", timeErr)
 		return

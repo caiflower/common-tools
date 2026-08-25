@@ -14,14 +14,13 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 //**************************************
 // 类
 //**************************************
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -85,7 +84,7 @@ func createClass(cls interface{}) *Class {
 	kind := reflect.TypeOf(cls).Kind()
 
 	if kind != reflect.Ptr && kind != reflect.Interface {
-		panic(fmt.Sprintf("CrateClass failed. Class must be pointer or interface. "))
+		panic("CrateClass failed. Class must be pointer or interface. ")
 	}
 
 	// 实例化

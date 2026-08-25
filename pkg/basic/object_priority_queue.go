@@ -18,7 +18,7 @@ package basic
 
 import "errors"
 
-var nilElement = errors.New("size is 0")
+var ErrOfNilElement = errors.New("size is 0")
 
 type Ordered interface {
 	// String sort and uuid
@@ -100,7 +100,7 @@ func (h *ObjectPriorityQueue[T]) Poll() (T, error) {
 		}
 		return res, nil
 	} else {
-		return h.zero, nilElement
+		return h.zero, ErrOfNilElement
 	}
 }
 
@@ -108,7 +108,7 @@ func (h *ObjectPriorityQueue[T]) Peek() (T, error) {
 	if h.size > 0 {
 		return h.arr[0], nil
 	} else {
-		return h.zero, nilElement
+		return h.zero, ErrOfNilElement
 	}
 }
 

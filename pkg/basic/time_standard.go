@@ -54,7 +54,7 @@ func (t *TimeStandard) Time() time.Time {
 }
 
 func (t *TimeStandard) UnmarshalJSON(data []byte) (err error) {
-	now, timeErr := unmarshalJSONToJson(data)
+	now, timeErr := unmarshalJSONToJSON(data)
 	if timeErr != nil {
 		return timeErr
 	}

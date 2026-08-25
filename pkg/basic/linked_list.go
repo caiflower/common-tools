@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 type LinkedList[T comparable] struct {
 	size  int
@@ -65,7 +65,7 @@ func (l *LinkedList[T]) AddLast(item T) {
 
 func (l *LinkedList[T]) RemoveFirst() (T, error) {
 	if l.size == 0 {
-		return l.zero, nilElement
+		return l.zero, ErrOfNilElement
 	}
 
 	res := l.first.item
@@ -82,7 +82,7 @@ func (l *LinkedList[T]) RemoveFirst() (T, error) {
 
 func (l *LinkedList[T]) RemoveLast() (T, error) {
 	if l.size == 0 {
-		return l.zero, nilElement
+		return l.zero, ErrOfNilElement
 	}
 
 	res := l.last.item

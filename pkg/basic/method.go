@@ -72,7 +72,7 @@ func NewMethod(cls *Class, v interface{}) *Method {
 
 		replace := tools.RegReplace(name, `[^.]*\.`, "")
 		_tm := reflect.ValueOf(cls.cls).MethodByName(replace)
-		if _tm.IsValid() == false {
+		if !_tm.IsValid() {
 			return nil
 		}
 		funC = _tm.Interface()
@@ -174,7 +174,7 @@ func (m *Method) HasRets() bool {
 
 // Invoke 反射调用方法
 func (m *Method) Invoke(args []reflect.Value) []reflect.Value {
-	if m.HasArgs() == false {
+	if !m.HasArgs() {
 		return m.funcValue.Call(nil)
 	}
 	return m.funcValue.Call(args)

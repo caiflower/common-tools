@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- package basic
+package basic
 
 type Set[T comparable] map[T]struct{}
 
@@ -54,9 +54,9 @@ func (s Set[T]) Size() int {
 }
 
 func (s Set[T]) ToSlice() []T {
-	r := make([]T, s.Size(), s.Size())
+	r := make([]T, s.Size())
 	i := 0
-	for k, _ := range s {
+	for k := range s {
 		r[i] = k
 		i++
 	}
