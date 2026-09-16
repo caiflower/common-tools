@@ -102,6 +102,7 @@ func NewHandler(config HandlerCfg, logger logger.ILog) *Handler {
 		restfulPaths:              make(map[string]struct{}),
 		logger:                    logger,
 		oai:                       goai.Default(),
+		inflight:                  newInflight(),
 		afterDispatchCallbackFunc: resp.DefaultResultCallback,
 	}
 	setGoAIInstance(commonHandler.oai)
@@ -154,6 +155,10 @@ type Handler struct {
 	// RequestContext pool
 	ctxPool sync.Pool
 	status  uint32
+
+	// inflight tracks the requests being handled, for graceful shutdown.
+	inflight *inflight
+
 	// goai
 	oai *goai.OpenApiV3
 }
@@ -165,6 +170,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx = initCtx(ctx, w, r)
 	ctx.SetContext(context.TODO())
 	defer h.putRequestContext(ctx)
+
+	if !h.inflight.enter() {
+		h.rejectShuttingDown(ctx)
+		return
+	}
+	defer h.inflight.leave()
 
 	if h.specialRequest(ctx) {
 		return
@@ -196,6 +207,12 @@ func (h *Handler) Serve(ctx *app.RequestCtx) {
 
 	ctx.SetMethod(ctx.Request.Method())
 	ctx.SetPath(ctx.Request.Path())
+
+	if !h.inflight.enter() {
+		h.rejectShuttingDown(ctx)
+		return
+	}
+	defer h.inflight.leave()
 
 	if h.specialRequest(ctx) {
 		return
@@ -832,6 +849,23 @@ func (h *Handler) SetRunning(val bool) bool {
 	}
 
 	return atomic.CompareAndSwapUint32(&h.status, statusRunning, statusClosed)
+}
+
+// Drain stops accepting new requests and waits for the in-flight requests to
+// finish, bounded by ctx. HTTP servers call it during graceful shutdown so that
+// downstream resources (kafka/redis/db) are not closed while requests are still
+// being handled.
+func (h *Handler) Drain(ctx context.Context) error {
+	return h.inflight.drain(ctx)
+}
+
+// rejectShuttingDown answers an incoming request with 503 while draining.
+func (h *Handler) rejectShuttingDown(ctx *app.RequestCtx) {
+	apiErr := e.NewApiError(e.Unavailable, "server is shutting down", nil)
+	ctx.JSON(apiErr.GetCode(), resp.Result{
+		RequestID: golocalv1.GetTraceID(),
+		Error:     &e.Error{Code: apiErr.GetCode(), Message: apiErr.GetMessage(), Type: apiErr.GetType()},
+	})
 }
 
 func (h *Handler) GetCtxPool() *sync.Pool {

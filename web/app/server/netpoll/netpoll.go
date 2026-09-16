@@ -155,6 +155,13 @@ func (s *HttpServer) Close() {
 
 	timeout, cancelFunc := context.WithTimeout(context.Background(), s.Options.ExitWaitTimeout)
 	defer cancelFunc()
+
+	// 停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
+	// 在请求仍被处理时被关闭。
+	if err := s.Handler.Drain(timeout); err != nil {
+		s.logger.Warn("netpoll http server drain failed. Error: %s", err.Error())
+	}
+
 	if err := s.transporter.Shutdown(timeout); err != nil {
 		s.logger.Error("http server shutdown failed. Error: %s", err.Error())
 	}

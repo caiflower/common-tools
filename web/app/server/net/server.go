@@ -110,6 +110,13 @@ func (s *HttpServer) Close() {
 		// 30秒超时
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 		defer cancel()
+
+		// 停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
+		// 在请求仍被处理时被关闭。
+		if err := s.Handler.Drain(ctx); err != nil {
+			s.logger.Warn(" **** http server drain error **** error:%s", err.Error())
+		}
+
 		if err := s.server.Shutdown(ctx); err != nil {
 			s.logger.Warn(" **** http server shutdown error **** \n"+
 				"**** error:%s ****", err.Error())
