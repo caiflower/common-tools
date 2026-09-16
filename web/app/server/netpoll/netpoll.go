@@ -153,18 +153,20 @@ func (s *HttpServer) Close() {
 		return
 	}
 
-	timeout, cancelFunc := context.WithTimeout(context.Background(), s.Options.ExitWaitTimeout)
-	defer cancelFunc()
-
-	// 停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
-	// 在请求仍被处理时被关闭。
-	if err := s.Handler.Drain(timeout); err != nil {
+	// 先停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
+	// 在请求仍被处理时被关闭。drain 和 transport 关闭各持有独立超时，
+	// 避免 drain 耗尽预算后 transport 来不及清理。
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), s.Options.ExitWaitTimeout)
+	if err := s.Handler.Drain(drainCtx); err != nil {
 		s.logger.Warn("netpoll http server drain failed. Error: %s", err.Error())
 	}
+	drainCancel()
 
-	if err := s.transporter.Shutdown(timeout); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), s.Options.ExitWaitTimeout)
+	if err := s.transporter.Shutdown(shutdownCtx); err != nil {
 		s.logger.Error("http server shutdown failed. Error: %s", err.Error())
 	}
+	shutdownCancel()
 }
 
 func (s *HttpServer) getHandlerCfg() router.HandlerCfg {

@@ -36,19 +36,16 @@ func TestHttpServerClosesFirst(t *testing.T) {
 }
 
 func TestCloseDrainsInflightRequest(t *testing.T) {
-	// grab a free port for the standard server, which has no Listener option.
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 
-	addr := probe.Addr().String()
-	_ = probe.Close()
-
+	addr := ln.Addr().String()
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 
-	s := NewHttpServer(NormalConfig{Addr: addr, HandleTimeout: time.Second})
+	s := NewHttpServer(NormalConfig{Listener: ln})
 	router.NewRouterGroup(s.Handler).GET("/slow", app.HandlerFunc(func(_ context.Context, _ *app.RequestContext) {
 		entered <- struct{}{}
 

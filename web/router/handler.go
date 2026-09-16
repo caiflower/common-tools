@@ -171,15 +171,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx.SetContext(context.TODO())
 	defer h.putRequestContext(ctx)
 
+	// metrics / swagger / pprof stay available while draining.
+	if h.specialRequest(ctx) {
+		return
+	}
+
 	if !h.inflight.enter() {
 		h.rejectShuttingDown(ctx)
 		return
 	}
 	defer h.inflight.leave()
-
-	if h.specialRequest(ctx) {
-		return
-	}
 
 	if h.serverCommon(ctx) {
 		return
@@ -208,15 +209,16 @@ func (h *Handler) Serve(ctx *app.RequestCtx) {
 	ctx.SetMethod(ctx.Request.Method())
 	ctx.SetPath(ctx.Request.Path())
 
+	// metrics / swagger / pprof stay available while draining.
+	if h.specialRequest(ctx) {
+		return
+	}
+
 	if !h.inflight.enter() {
 		h.rejectShuttingDown(ctx)
 		return
 	}
 	defer h.inflight.leave()
-
-	if h.specialRequest(ctx) {
-		return
-	}
 
 	if h.serverCommon(ctx) {
 		return

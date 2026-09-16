@@ -46,6 +46,8 @@ type NormalConfig struct {
 	ReadTimeout   time.Duration `yaml:"readTimeout" default:"20s"`
 	WriteTimeout  time.Duration `yaml:"writeTimeout" default:"35s"`
 	HandleTimeout time.Duration `yaml:"handleTimeout" default:"60s"` // 请求总处理超时时间
+	// Listener, when set, is used instead of binding Addr.
+	Listener net.Listener `yaml:"-"`
 }
 
 func NewHttpServer(config NormalConfig) *HttpServer {
@@ -90,10 +92,14 @@ func (s *HttpServer) Start() error {
 			"*************************************************************************************************", s.cfg.Name, s.cfg.RootPath, s.cfg.Addr)
 
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil {
-			if err.Error() != "http: Server closed" {
-				panic(err)
-			}
+		var err error
+		if s.cfg.Listener != nil {
+			err = s.server.Serve(s.cfg.Listener)
+		} else {
+			err = s.server.ListenAndServe()
+		}
+		if err != nil && err.Error() != "http: Server closed" {
+			panic(err)
 		}
 	}()
 
@@ -108,19 +114,24 @@ func (s *HttpServer) Close() {
 
 	if s.server != nil {
 		// 30秒超时
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-		defer cancel()
+		const waitTimeout = time.Second * 30
 
-		// 停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
-		// 在请求仍被处理时被关闭。
-		if err := s.Handler.Drain(ctx); err != nil {
+		// 先停止接收新请求并等待在途请求完成，避免下游资源（kafka/redis/db）
+		// 在请求仍被处理时被关闭。drain 和 transport 关闭各持有独立超时，
+		// 避免 drain 耗尽预算后 transport 来不及清理。
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), waitTimeout)
+		if err := s.Handler.Drain(drainCtx); err != nil {
 			s.logger.Warn(" **** http server drain error **** error:%s", err.Error())
 		}
+		drainCancel()
 
-		if err := s.server.Shutdown(ctx); err != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), waitTimeout)
+		if err := s.server.Shutdown(shutdownCtx); err != nil {
 			s.logger.Warn(" **** http server shutdown error **** \n"+
 				"**** error:%s ****", err.Error())
 		}
+		shutdownCancel()
+
 		s.logger.Info(" **** http server gracefully shutdown ****")
 	}
 	s.server = nil
