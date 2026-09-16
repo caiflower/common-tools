@@ -25,6 +25,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
+	appserver "github.com/caiflower/common-tools/web/app/server"
 	"github.com/caiflower/common-tools/web/protocol"
 	"github.com/caiflower/common-tools/web/router"
 )
@@ -35,6 +36,7 @@ type HttpServer struct {
 	logger logger.ILog
 	server *http.Server
 	*router.Handler
+	appserver.Daemon
 	cfg NormalConfig
 }
 

@@ -34,8 +34,13 @@ type Resource interface {
 	Close()
 }
 
+// OrderHTTPServer is the recommended close order for HTTP servers. It is the
+// smallest order, so an HTTP server is closed first and stops accepting new
+// requests before downstream resources (kafka/redis/db) are closed.
+const OrderHTTPServer = 0
+
 // ResourceWithOrder is an optional interface that resources can implement to specify their close order.
-// Higher order values mean the resource will be closed earlier.
+// Lower order values mean the resource will be closed earlier.
 // Resources implementing this interface will have their Order() method called to determine close priority.
 // If not implemented, the resource will use the default order provided when adding to the manager.
 type ResourceWithOrder interface {
@@ -89,9 +94,11 @@ func (rm *resourceManger) Add(resource Resource) {
 }
 
 // AddWithOrder adds a resource with a specific close order.
-// Higher order values mean the resource will be closed earlier.
+// Lower order values mean the resource will be closed earlier.
 // Recommended order values:
-//   - Kafka consumers: 100 (close first to stop consuming)
+//   - HTTP servers: OrderHTTPServer, i.e. 0 (close first, stop accepting new requests / draining)
+//   - Kafka consumers: 100 (close next, to stop consuming)
+//   - Kafka producers: 200
 //   - Redis/DB clients: 1000 (close last, after consumers and servers)
 //   - Default(Add): 1
 func (rm *resourceManger) AddWithOrder(resource Resource, order int) {
@@ -105,13 +112,8 @@ func (rm *resourceManger) AddWithOrder(resource Resource, order int) {
 	}
 
 	rm.resources = append(rm.resources, resource)
-
-	// If resource implements ResourceWithOrder, use its Order() method
-	if rwo, ok := resource.(ResourceWithOrder); ok {
-		rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: rwo.Order()})
-	} else {
-		rm.pagePackageResource = append(rm.pagePackageResource, packageResource{Resource: resource, order: order})
-	}
+	rm.pagePackageResource = append(rm.pagePackageResource,
+		packageResource{Resource: resource, order: closeOrder(resource, order)})
 }
 
 func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {
@@ -125,7 +127,18 @@ func (rm *resourceManger) AddDaemonWithOrder(daemon DaemonResource, order int) {
 	}
 
 	rm.daemons = append(rm.daemons, daemon)
-	rm.pagePackageResource = append(rm.pagePackageResource, packageResource{DaemonResource: daemon, order: order})
+	rm.pagePackageResource = append(rm.pagePackageResource,
+		packageResource{DaemonResource: daemon, order: closeOrder(daemon, order)})
+}
+
+// closeOrder returns the resource's own Order() when it implements
+// ResourceWithOrder, otherwise it returns the provided default order.
+func closeOrder(resource interface{}, order int) int {
+	if rwo, ok := resource.(ResourceWithOrder); ok {
+		return rwo.Order()
+	}
+
+	return order
 }
 
 func (rm *resourceManger) AddDaemon(daemon DaemonResource) {
@@ -138,9 +151,9 @@ func (rm *resourceManger) Signal() {
 		if !rm.running {
 			rm.running = true
 
-			sort.Slice(rm.pagePackageResource, func(i, j int) bool {
-				return rm.pagePackageResource[i].order > rm.pagePackageResource[j].order
-			})
+			// start resources in reverse close order, so that downstream
+			// dependencies (db/cache) are ready before the servers.
+			rm.sortByOrder()
 
 			for _, resource := range rm.pagePackageResource {
 				if err := resource.Start(); err != nil {
@@ -159,7 +172,17 @@ func (rm *resourceManger) Signal() {
 	}
 }
 
+// sortByOrder sorts resources by close order descending, so that iterating in
+// reverse closes them from the smallest order to the largest order.
+func (rm *resourceManger) sortByOrder() {
+	sort.Slice(rm.pagePackageResource, func(i, j int) bool {
+		return rm.pagePackageResource[i].order > rm.pagePackageResource[j].order
+	})
+}
+
 func (rm *resourceManger) destroy() {
+	rm.sortByOrder()
+
 	for i := len(rm.pagePackageResource) - 1; i >= 0; i-- {
 		rm.pagePackageResource[i].Close()
 	}

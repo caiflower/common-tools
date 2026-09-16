@@ -28,6 +28,7 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 	"github.com/caiflower/common-tools/web/app"
+	"github.com/caiflower/common-tools/web/app/server"
 	"github.com/caiflower/common-tools/web/app/server/config"
 	"github.com/caiflower/common-tools/web/common/bytestr"
 	requstoption "github.com/caiflower/common-tools/web/common/config"
@@ -47,6 +48,7 @@ type HttpServer struct {
 	*router.Handler
 
 	config.Options
+	server.Daemon
 	logger          logger.ILog
 	transporter     network.Transporter
 	requestCtxPool  sync.Pool

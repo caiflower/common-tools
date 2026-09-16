@@ -29,6 +29,11 @@ type Core interface {
 	Start() error
 	Close()
 
+	// Order implements global.ResourceWithOrder: an HTTP server is always
+	// closed first during graceful shutdown, before downstream resources
+	// (kafka/redis/db). Embed server.Daemon to get the default implementation.
+	Order() int
+
 	AddController(v interface{}) *controller.Controller
 	RegisterGRPCService(serviceDesc *grpc.ServiceDesc, srv interface{}) *controller.Controller
 	Register(ctl *controller.RestfulController)
