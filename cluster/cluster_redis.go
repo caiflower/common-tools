@@ -30,7 +30,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// redisKeyNodes 返回节点注册 key 的前缀
+// redisKeyNodes 返回节点索引 set key
 func (c *Cluster) redisKeyNodes() string {
 	return c.config.RedisDiscovery.DataPath + ":Nodes"
 }
@@ -38,11 +38,6 @@ func (c *Cluster) redisKeyNodes() string {
 // redisKeyNode 返回指定节点的注册 key
 func (c *Cluster) redisKeyNode(nodeName string) string {
 	return c.redisKeyNodes() + ":" + nodeName
-}
-
-// redisKeyNodesPattern 返回节点扫描的 pattern
-func (c *Cluster) redisKeyNodesPattern() string {
-	return c.redisKeyNodes() + ":*"
 }
 
 // redisKeyElection 返回选举 key
@@ -99,7 +94,10 @@ func (c *Cluster) redisRegisterNode() {
 
 	// 退出时删除节点注册信息
 	// 注意：此时 c.ctx 已被 cancel，使用 context.TODO() 确保删除操作能执行完成，避免注册信息残留
-	if err := c.Redis.Cmd().Del(context.TODO(), c.Redis.Cmd().Key(key)).Err(); err != nil {
+	if err := c.Redis.Cmd().SRem(context.TODO(), c.redisKeyNodes(), c.GetMyName()).Err(); err != nil {
+		c.logger.Warn("[cluster-redis] remove node index failed: %v", err)
+	}
+	if err := c.Redis.Cmd().Del(context.TODO(), key).Err(); err != nil {
 		c.logger.Warn("[cluster-redis] delete node registration failed: %v", err)
 	}
 }
@@ -118,8 +116,12 @@ func (c *Cluster) doRegisterNode(key string) error {
 	}
 
 	// Use SET with TTL for registration and renewal
-	if err := c.Redis.Cmd().Set(c.ctx, c.Redis.Cmd().Key(key), string(data), c.config.RedisDiscovery.NodeRegisterTTL).Err(); err != nil {
+	if err := c.Redis.Cmd().Set(c.ctx, key, string(data), c.config.RedisDiscovery.NodeRegisterTTL).Err(); err != nil {
 		return fmt.Errorf("set node info failed: %w", err)
+	}
+
+	if err := c.Redis.Cmd().SAdd(c.ctx, c.redisKeyNodes(), nodeInfo.Name).Err(); err != nil {
+		return fmt.Errorf("add node index failed: %w", err)
 	}
 
 	c.logger.Debug("[cluster-redis] node registered: %s", c.GetMyName())
@@ -128,10 +130,8 @@ func (c *Cluster) doRegisterNode(key string) error {
 
 // redisSyncNodes 从 Redis 同步节点信息
 func (c *Cluster) redisSyncNodes() {
-	pattern := c.redisKeyNodesPattern()
-
 	fn := func() {
-		if err := c.doSyncNodes(pattern); err != nil {
+		if err := c.doSyncNodes(); err != nil {
 			c.logger.Error("[cluster-redis] sync nodes failed: %v", err)
 		}
 	}
@@ -145,51 +145,30 @@ func (c *Cluster) redisSyncNodes() {
 }
 
 // doSyncNodes 执行节点同步
-func (c *Cluster) doSyncNodes(pattern string) error {
-	// Use GetRedis() to get the raw redis.Cmdable for SCAN operations.
-	// Keys returned by SCAN already include the KeyPrefix, so we use the raw
-	// client directly to avoid double-prefixing when reading values.
-	redisCmd := c.Redis.GetRedis()
-
-	// SCAN 是游标迭代器，需循环直到 cursor 归零才能获取所有 key
-	var keys []string
-	var cursor uint64
-	for {
-		var batch []string
-		var err error
-		batch, cursor, err = redisCmd.Scan(c.ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return fmt.Errorf("scan nodes failed: %w", err)
-		}
-		keys = append(keys, batch...)
-		if cursor == 0 {
-			break
-		}
+func (c *Cluster) doSyncNodes() error {
+	indexKey := c.redisKeyNodes()
+	nodeNames, err := c.Redis.Cmd().SMembers(c.ctx, indexKey).Result()
+	if err != nil {
+		return fmt.Errorf("get node index failed: %w", err)
 	}
 
-	if len(keys) == 0 {
-		c.logger.Debug("[cluster-redis] no nodes found in Redis")
-		return nil
-	}
-
-	// Build new node mapping.
-	// Note: SCAN returns keys that already include KeyPrefix, so we use the raw
-	// redisCmd (from GetRedis()) for GET to avoid double-prefixing via Cmd().Key().
 	newNodes := make(map[string]*Node)
-	for _, key := range keys {
-		data, err := redisCmd.Get(c.ctx, key).Result()
+	for _, nodeName := range nodeNames {
+		key := c.redisKeyNode(nodeName)
+		data, err := c.Redis.Cmd().Get(c.ctx, key).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
+				if removeErr := c.Redis.Cmd().SRem(c.ctx, indexKey, nodeName).Err(); removeErr != nil {
+					c.logger.Warn("[cluster-redis] remove missing node from index failed, node=%s: %v", nodeName, removeErr)
+				}
 				continue
 			}
-			c.logger.Warn("[cluster-redis] get node info failed, key=%s: %v", key, err)
-			continue
+			return fmt.Errorf("get node info failed, node=%s: %w", nodeName, err)
 		}
 
 		var nodeInfo NodeInfo
 		if err := json.Unmarshal([]byte(data), &nodeInfo); err != nil {
-			c.logger.Warn("[cluster-redis] unmarshal node info failed, data=%s: %v", data, err)
-			continue
+			return fmt.Errorf("unmarshal node info failed, node=%s: %w", nodeName, err)
 		}
 
 		// 跳过自身节点，避免重复创建
@@ -260,7 +239,7 @@ func (c *Cluster) redisFighting() {
 func (c *Cluster) redisFightingWithRetry(key string, retryCount int) error {
 	const maxRetries = 3
 
-	ok, err := c.Redis.Cmd().SetNX(c.ctx, c.Redis.Cmd().Key(key), c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod).Result()
+	ok, err := c.Redis.Cmd().SetNX(c.ctx, key, c.GetMyName(), c.config.RedisDiscovery.ElectionPeriod).Result()
 	if err != nil {
 		if retryCount < maxRetries {
 			backoff := time.Duration(retryCount+1) * time.Second
@@ -280,7 +259,7 @@ func (c *Cluster) redisSyncLeader() {
 	key := c.redisKeyElection()
 
 	fn := func() {
-		leaderName, err := c.Redis.Cmd().Get(c.ctx, c.Redis.Cmd().Key(key)).Result()
+		leaderName, err := c.Redis.Cmd().Get(c.ctx, key).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				c.releaseLeader()
@@ -295,7 +274,7 @@ func (c *Cluster) redisSyncLeader() {
 				if node == nil {
 					// leader 节点未在本地节点列表中，触发一次节点同步尝试发现该节点
 					c.logger.Warn("[cluster-redis] leader %s not found locally, triggering node sync", leaderName)
-					if syncErr := c.doSyncNodes(c.redisKeyNodesPattern()); syncErr != nil {
+					if syncErr := c.doSyncNodes(); syncErr != nil {
 						c.logger.Error("[cluster-redis] sync nodes for leader discovery failed: %v", syncErr)
 						return
 					}
@@ -375,7 +354,7 @@ func (c *Cluster) redisRenewLeaderLease(ctx context.Context, key, leaderName str
 	result, err := c.redisScriptManager.EvalShaInt(
 		ctx,
 		redisOpRenewLeaderLease,
-		[]string{c.Redis.Cmd().Key(key)},
+		[]string{key},
 		leaderName,
 		ttlMillis,
 	)

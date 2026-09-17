@@ -331,7 +331,7 @@ func TestRedisFightingDirect(t *testing.T) {
 
 	// 验证选举 key 已设置
 	key := cluster.redisKeyElection()
-	leaderName, err := cluster.Redis.Cmd().Get(cluster.ctx, cluster.Redis.Cmd().Key(key)).Result()
+	leaderName, err := cluster.Redis.Cmd().Get(cluster.ctx, key).Result()
 	assert.NoError(t, err)
 	assert.Equal(t, "direct-test", leaderName)
 
@@ -370,7 +370,7 @@ func TestRedisFightingOnlyOneWins(t *testing.T) {
 
 	// 验证只有一个获胜
 	key := cluster1.redisKeyElection()
-	leaderName, err := cluster1.Redis.Cmd().Get(cluster1.ctx, cluster1.Redis.Cmd().Key(key)).Result()
+	leaderName, err := cluster1.Redis.Cmd().Get(cluster1.ctx, key).Result()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, leaderName)
 
@@ -386,6 +386,83 @@ func TestRedisFightingOnlyOneWins(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, winCount, "only one node should become leader")
+}
+
+func TestRedisRegisterNodeAddsNodeToIndex(t *testing.T) {
+	mr := miniredis.RunT(t)
+	redisClient := newMiniredisClient(t, mr.Addr())
+	cluster := createTestRedisCluster(t, redisClient, "node-a", 9001)
+
+	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
+	defer cluster.cancelFunc()
+
+	assert.NoError(t, cluster.doRegisterNode(cluster.redisKeyNode("node-a")))
+
+	members, err := cluster.Redis.Cmd().SMembers(
+		cluster.ctx,
+		cluster.redisKeyNodes(),
+	).Result()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"node-a"}, members)
+}
+
+func TestRedisNodeKeysOnlyUseClusterDataPath(t *testing.T) {
+	mr := miniredis.RunT(t)
+	redisClient, err := redisv2.NewRedisClient(redisv2.Config{
+		Addrs:         []string{mr.Addr()},
+		KeyPrefix:     "redis-v2-prefix",
+		EnableMetrics: "false",
+	})
+	assert.NoError(t, err)
+
+	cluster := createTestRedisCluster(t, redisClient, "node-a", 9001)
+	cluster.config.RedisDiscovery.DataPath = "cluster-prefix"
+	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
+	defer cluster.cancelFunc()
+
+	assert.NoError(t, cluster.doRegisterNode(cluster.redisKeyNode("node-a")))
+	cluster.redisFighting()
+
+	keys := mr.Keys()
+	assert.Contains(t, keys, "cluster-prefix:Nodes")
+	assert.Contains(t, keys, "cluster-prefix:Nodes:node-a")
+	assert.Contains(t, keys, "cluster-prefix:Election")
+	for _, key := range keys {
+		assert.NotContains(t, key, "redis-v2-prefix")
+	}
+}
+
+func TestRedisSyncNodesUsesNodeIndex(t *testing.T) {
+	mr := miniredis.RunT(t)
+	redisClient := newMiniredisClient(t, mr.Addr())
+	cluster := createTestRedisCluster(t, redisClient, "local-node", 9001)
+
+	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
+	defer cluster.cancelFunc()
+
+	indexKey := cluster.redisKeyNodes()
+	assert.NoError(t, cluster.Redis.Cmd().SAdd(cluster.ctx, indexKey, "indexed-node", "missing-node").Err())
+
+	assert.NoError(t, cluster.Redis.Cmd().Set(
+		cluster.ctx,
+		cluster.redisKeyNode("indexed-node"),
+		`{"name":"indexed-node","address":"127.0.0.1:1","timestamp":1}`,
+		time.Minute,
+	).Err())
+	assert.NoError(t, cluster.Redis.Cmd().Set(
+		cluster.ctx,
+		cluster.redisKeyNode("orphan-node"),
+		`{"name":"orphan-node","address":"127.0.0.1:2","timestamp":1}`,
+		time.Minute,
+	).Err())
+
+	assert.NoError(t, cluster.doSyncNodes())
+	assert.NotNil(t, cluster.GetNodeByName("indexed-node"))
+	assert.Nil(t, cluster.GetNodeByName("orphan-node"), "node keys not present in the index must be ignored")
+
+	members, err := cluster.Redis.Cmd().SMembers(cluster.ctx, indexKey).Result()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"indexed-node"}, members, "missing node records should be removed from the index")
 }
 
 type leaderTakeoverHook struct {
@@ -430,7 +507,7 @@ func TestRedisRenewLeaderLeaseIsAtomicAgainstTakeover(t *testing.T) {
 	assert.NoError(t, cluster.initRedisScriptManager(cluster.ctx))
 
 	key := cluster.redisKeyElection()
-	redisKey := cluster.Redis.Cmd().Key(key)
+	redisKey := key
 	assert.NoError(t, cluster.Redis.Cmd().Set(cluster.ctx, redisKey, "old-leader", time.Minute).Err())
 
 	hook := &leaderTakeoverHook{

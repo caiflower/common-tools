@@ -9,18 +9,21 @@ Redis 模式支持基于 Redis 的动态节点发现机制，节点信息不再�
 ### 1. 节点注册
 - 每个节点启动时，向 Redis 注册自己的信息（节点名称、地址、时间戳）
 - 注册信息带有 TTL（默认 60 秒），防止僵尸节点
+- 节点名称同时写入 Redis Set 索引，作为节点同步的唯一数据来源
 
 ### 2. 心跳续约
 - 节点定期（默认 20 秒）续约自己的注册信息
 - 如果节点宕机，注册信息会自动过期
 
 ### 3. 节点同步
-- 每个节点定期（默认 30 秒）从 Redis 扫描所有活跃节点
+- 每个节点定期（默认 30 秒）读取节点 Set 索引，再获取对应的节点注册信息
+- 注册信息已过期时，从 Set 索引中移除对应节点
 - 自动发现新加入的节点
 - 自动移除已下线的节点
 
 ### 4. Redis Key 结构
 ```
+{DataPath}:Nodes           ->  Set，成员为节点名称
 {DataPath}:Nodes:{NodeName}  ->  JSON 格式的节点信息
 {DataPath}:Election          ->  当前 Leader 名称
 ```
@@ -52,7 +55,7 @@ cluster:
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `dataPath` | - | Redis Key 前缀，用于隔离不同应用的集群数据 |
+| `dataPath` | - | cluster 模式唯一使用的 Redis Key 前缀，用于隔离不同应用的集群数据 |
 | `port` | 8081 | **新增**：节点通信端口，所有节点使用相同端口 |
 | `electionInterval` | 15s | Leader 续约检查间隔 |
 | `electionPeriod` | 30s | Leader 租期时间 |
@@ -105,7 +108,7 @@ cluster:
 
 ```bash
 # 查看所有注册的节点
-redis-cli KEYS "myapp:cluster:Nodes:*"
+redis-cli SMEMBERS "myapp:cluster:Nodes"
 
 # 查看某个节点的详细信息
 redis-cli GET "myapp:cluster:Nodes:node1"
@@ -132,6 +135,8 @@ redis-cli TTL "myapp:cluster:Nodes:node1"
 3. **网络分区**：网络分区可能导致节点误判，合理配置 TTL 和同步间隔
 4. **节点命名**：建议使用唯一的节点名称（如 hostname、pod name）
 5. **端口配置**：所有节点使用 `redisDiscovery.port` 配置的相同端口，无需为每个节点单独配置
+6. **升级兼容性**：从基于 `SCAN` 的旧版本升级时，旧版本不会写入节点 Set 索引。建议在发布前一次性将现有 `{DataPath}:Nodes:*` 节点名称写入 `{DataPath}:Nodes` Set，或采用会同时替换全部旧实例的发布方式，避免滚动升级期间新旧节点互相不可见。
+7. **Key 前缀**：cluster 模式只使用 `redisDiscovery.dataPath`，不会叠加 Redis v2 客户端的 `keyPrefix`。如果旧数据使用了客户端 `keyPrefix`，升级前需要将 cluster 相关 key 迁移到仅由 `dataPath` 生成的 key。
 
 ## 故障排查
 
