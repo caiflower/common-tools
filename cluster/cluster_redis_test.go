@@ -26,6 +26,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/caiflower/common-tools/pkg/logger"
 	redisv2 "github.com/caiflower/common-tools/redis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -385,4 +386,67 @@ func TestRedisFightingOnlyOneWins(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, winCount, "only one node should become leader")
+}
+
+type leaderTakeoverHook struct {
+	t         *testing.T
+	mr        *miniredis.Miniredis
+	key       string
+	newLeader string
+	injected  bool
+	commands  []string
+}
+
+func (h *leaderTakeoverHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *leaderTakeoverHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.commands = append(h.commands, cmd.Name())
+		err := next(ctx, cmd)
+		if !h.injected {
+			h.injected = true
+			if setErr := h.mr.Set(h.key, h.newLeader); setErr != nil {
+				h.t.Errorf("inject new leader failed: %v", setErr)
+			}
+			h.mr.SetTTL(h.key, time.Minute)
+		}
+		return err
+	}
+}
+
+func (h *leaderTakeoverHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestRedisRenewLeaderLeaseIsAtomicAgainstTakeover(t *testing.T) {
+	mr := miniredis.RunT(t)
+	redisClient := newMiniredisClient(t, mr.Addr())
+	cluster := createTestRedisCluster(t, redisClient, "old-leader", 9001)
+
+	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
+	defer cluster.cancelFunc()
+	assert.NoError(t, cluster.initRedisScriptManager(cluster.ctx))
+
+	key := cluster.redisKeyElection()
+	redisKey := cluster.Redis.Cmd().Key(key)
+	assert.NoError(t, cluster.Redis.Cmd().Set(cluster.ctx, redisKey, "old-leader", time.Minute).Err())
+
+	hook := &leaderTakeoverHook{
+		t:         t,
+		mr:        mr,
+		key:       redisKey,
+		newLeader: "new-leader",
+	}
+	redisClient.AddHook(hook)
+
+	renewed, err := cluster.redisRenewLeaderLease(cluster.ctx, key, "old-leader")
+	assert.NoError(t, err)
+	assert.True(t, renewed, "the old leader should renew while it still owns the lease")
+	assert.Equal(t, "evalsha", hook.commands[0], "lease renewal should use EVALSHA")
+
+	leaderName, err := cluster.Redis.Cmd().Get(cluster.ctx, redisKey).Result()
+	assert.NoError(t, err)
+	assert.Equal(t, "new-leader", leaderName, "old owner must not overwrite the new leader")
 }

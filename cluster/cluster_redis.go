@@ -26,6 +26,7 @@ import (
 
 	"github.com/caiflower/common-tools/pkg/crontab"
 	"github.com/caiflower/common-tools/pkg/logger"
+	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -49,7 +50,21 @@ func (c *Cluster) redisKeyElection() string {
 	return c.config.RedisDiscovery.DataPath + ":Election"
 }
 
+const redisRenewLeaderLeaseScript = `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`
+
+const redisOpRenewLeaderLease = "renewLeaderLease"
+
 func (c *Cluster) redisClusterStartUp() {
+	if err := c.initRedisScriptManager(c.ctx); err != nil {
+		c.logger.Error("[cluster-redis] init script manager failed: %v", err)
+		return
+	}
+
 	// 注册节点到 Redis
 	go c.redisRegisterNode()
 	// 获取主节点
@@ -320,23 +335,18 @@ func (c *Cluster) redisWatchDog() {
 	defer cancel() // 确保退出时取消 context
 
 	fn := func() {
-		leaderName, err := c.Redis.Cmd().Get(ctx, c.Redis.Cmd().Key(key)).Result()
+		renewed, err := c.redisRenewLeaderLease(ctx, key, c.GetLeaderName())
 		if err != nil {
-			logger.Error("[cluster-redis] get lease failed. Error: %v", err)
+			c.logger.Error("[cluster-redis] renew lease failed: %v", err)
 			c.releaseLeader()
 			cancel()
 			return
 		}
 
-		if leaderName != c.GetLeaderName() {
+		if !renewed {
+			c.logger.Warn("[cluster-redis] leader lease lost")
 			c.releaseLeader()
 			cancel()
-			return
-		}
-
-		err = c.Redis.Cmd().Set(ctx, c.Redis.Cmd().Key(key), leaderName, c.config.RedisDiscovery.ElectionPeriod).Err()
-		if err != nil {
-			logger.Error("[cluster-redis] set lease failed. Error: %v", err)
 		}
 	}
 
@@ -346,4 +356,47 @@ func (c *Cluster) redisWatchDog() {
 	<-ctx.Done()
 	c.logger.Info("[cluster-redis] watchdog stopped")
 	job.Stop()
+}
+
+func (c *Cluster) redisRenewLeaderLease(ctx context.Context, key, leaderName string) (bool, error) {
+	if leaderName == "" {
+		return false, nil
+	}
+
+	ttlMillis := c.config.RedisDiscovery.ElectionPeriod.Milliseconds()
+	if ttlMillis <= 0 {
+		return false, fmt.Errorf("invalid election period: %s", c.config.RedisDiscovery.ElectionPeriod)
+	}
+
+	if c.redisScriptManager == nil {
+		return false, errors.New("redis script manager is not initialized")
+	}
+
+	result, err := c.redisScriptManager.EvalShaInt(
+		ctx,
+		redisOpRenewLeaderLease,
+		[]string{c.Redis.Cmd().Key(key)},
+		leaderName,
+		ttlMillis,
+	)
+	if err != nil {
+		return false, fmt.Errorf("evaluate leader lease renewal failed: %w", err)
+	}
+
+	return result == 1, nil
+}
+
+func (c *Cluster) initRedisScriptManager(ctx context.Context) error {
+	scriptManager := redisv2.NewScriptManager(c.Redis.GetRedis())
+	if err := scriptManager.Register(redisOpRenewLeaderLease, redisRenewLeaderLeaseScript); err != nil {
+		return fmt.Errorf("register leader lease script failed: %w", err)
+	}
+
+	if err := scriptManager.LoadScripts(ctx); err != nil {
+		// ScriptManager falls back to EVAL and reloads asynchronously on NOSCRIPT.
+		c.logger.Warn("[cluster-redis] load scripts failed, EVAL fallback will be used: %v", err)
+	}
+
+	c.redisScriptManager = scriptManager
+	return nil
 }

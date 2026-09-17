@@ -161,6 +161,7 @@ type Cluster struct {
 	clientUnaryInterceptors  []grpc.UnaryClientInterceptor
 	clientStreamInterceptors []grpc.StreamClientInterceptor
 	Redis                    redisv2.RedisClient `autowired:"" conditional_on_property:"default.cluster.mode=redis"` // redis
+	redisScriptManager       *redisv2.ScriptManager
 	ctx                      context.Context
 	cancelFunc               context.CancelFunc
 	events                   chan *event
