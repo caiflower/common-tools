@@ -18,13 +18,13 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/caiflower/common-tools/pkg/crontab"
+	"github.com/caiflower/common-tools/pkg/json"
 	"github.com/caiflower/common-tools/pkg/logger"
 	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/redis/go-redis/v9"
@@ -32,7 +32,7 @@ import (
 
 // redisKeyNodes 返回节点索引 set key
 func (c *Cluster) redisKeyNodes() string {
-	return c.config.RedisDiscovery.DataPath + ":Nodes"
+	return "{" + c.config.RedisDiscovery.DataPath + "}:Nodes"
 }
 
 // redisKeyNode 返回指定节点的注册 key
@@ -42,7 +42,7 @@ func (c *Cluster) redisKeyNode(nodeName string) string {
 
 // redisKeyElection 返回选举 key
 func (c *Cluster) redisKeyElection() string {
-	return c.config.RedisDiscovery.DataPath + ":Election"
+	return "{" + c.config.RedisDiscovery.DataPath + "}:Election"
 }
 
 const redisRenewLeaderLeaseScript = `
@@ -53,6 +53,15 @@ return 0
 `
 
 const redisOpRenewLeaderLease = "renewLeaderLease"
+
+const redisRemoveMissingNodeScript = `
+if redis.call("EXISTS", KEYS[1]) == 0 then
+	return redis.call("SREM", KEYS[2], ARGV[1])
+end
+return 0
+`
+
+const redisOpRemoveMissingNode = "removeMissingNode"
 
 func (c *Cluster) redisClusterStartUp() {
 	if err := c.initRedisScriptManager(c.ctx); err != nil {
@@ -158,7 +167,7 @@ func (c *Cluster) doSyncNodes() error {
 		data, err := c.Redis.Cmd().Get(c.ctx, key).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
-				if removeErr := c.Redis.Cmd().SRem(c.ctx, indexKey, nodeName).Err(); removeErr != nil {
+				if _, removeErr := c.redisRemoveMissingNode(c.ctx, indexKey, key, nodeName); removeErr != nil {
 					c.logger.Warn("[cluster-redis] remove missing node from index failed, node=%s: %v", nodeName, removeErr)
 				}
 				continue
@@ -365,10 +374,31 @@ func (c *Cluster) redisRenewLeaderLease(ctx context.Context, key, leaderName str
 	return result == 1, nil
 }
 
+func (c *Cluster) redisRemoveMissingNode(ctx context.Context, indexKey, nodeKey, nodeName string) (bool, error) {
+	if c.redisScriptManager == nil {
+		return false, errors.New("redis script manager is not initialized")
+	}
+
+	result, err := c.redisScriptManager.EvalShaInt(
+		ctx,
+		redisOpRemoveMissingNode,
+		[]string{nodeKey, indexKey},
+		nodeName,
+	)
+	if err != nil {
+		return false, fmt.Errorf("evaluate missing node removal failed: %w", err)
+	}
+
+	return result == 1, nil
+}
+
 func (c *Cluster) initRedisScriptManager(ctx context.Context) error {
 	scriptManager := redisv2.NewScriptManager(c.Redis.GetRedis())
 	if err := scriptManager.Register(redisOpRenewLeaderLease, redisRenewLeaderLeaseScript); err != nil {
 		return fmt.Errorf("register leader lease script failed: %w", err)
+	}
+	if err := scriptManager.Register(redisOpRemoveMissingNode, redisRemoveMissingNodeScript); err != nil {
+		return fmt.Errorf("register missing node removal script failed: %w", err)
 	}
 
 	if err := scriptManager.LoadScripts(ctx); err != nil {

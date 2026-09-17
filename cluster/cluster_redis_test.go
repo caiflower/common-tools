@@ -426,9 +426,9 @@ func TestRedisNodeKeysOnlyUseClusterDataPath(t *testing.T) {
 	cluster.redisFighting()
 
 	keys := mr.Keys()
-	assert.Contains(t, keys, "cluster-prefix:Nodes")
-	assert.Contains(t, keys, "cluster-prefix:Nodes:node-a")
-	assert.Contains(t, keys, "cluster-prefix:Election")
+	assert.Contains(t, keys, "{cluster-prefix}:Nodes")
+	assert.Contains(t, keys, "{cluster-prefix}:Nodes:node-a")
+	assert.Contains(t, keys, "{cluster-prefix}:Election")
 	for _, key := range keys {
 		assert.NotContains(t, key, "redis-v2-prefix")
 	}
@@ -495,6 +495,7 @@ func TestRedisSyncNodesUsesNodeIndex(t *testing.T) {
 
 	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
 	defer cluster.cancelFunc()
+	assert.NoError(t, cluster.initRedisScriptManager(cluster.ctx))
 
 	indexKey := cluster.redisKeyNodes()
 	assert.NoError(t, cluster.Redis.Cmd().SAdd(cluster.ctx, indexKey, "indexed-node", "missing-node").Err())
@@ -519,6 +520,66 @@ func TestRedisSyncNodesUsesNodeIndex(t *testing.T) {
 	members, err := cluster.Redis.Cmd().SMembers(cluster.ctx, indexKey).Result()
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"indexed-node"}, members, "missing node records should be removed from the index")
+}
+
+type nodeReregisterHook struct {
+	t          *testing.T
+	onGetKey   string
+	reregister func() error
+	injected   bool
+}
+
+func (h *nodeReregisterHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *nodeReregisterHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if !h.injected && cmd.Name() == "get" && len(cmd.Args()) > 1 && fmt.Sprint(cmd.Args()[1]) == h.onGetKey {
+			h.injected = true
+			if reregisterErr := h.reregister(); reregisterErr != nil {
+				h.t.Errorf("reregister node failed: %v", reregisterErr)
+			}
+		}
+		return err
+	}
+}
+
+func (h *nodeReregisterHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestRedisSyncNodesDoesNotRemoveReregisteredNode(t *testing.T) {
+	mr := miniredis.RunT(t)
+	cluster := createTestRedisCluster(t, newMiniredisClient(t, mr.Addr()), "node-a", 9001)
+	reregisterCluster := createTestRedisCluster(t, newMiniredisClient(t, mr.Addr()), "node-a", 9001)
+
+	cluster.ctx, cluster.cancelFunc = context.WithCancel(context.Background())
+	defer cluster.cancelFunc()
+	reregisterCluster.ctx, reregisterCluster.cancelFunc = context.WithCancel(context.Background())
+	defer reregisterCluster.cancelFunc()
+	assert.NoError(t, cluster.initRedisScriptManager(cluster.ctx))
+	assert.NoError(t, reregisterCluster.initRedisScriptManager(reregisterCluster.ctx))
+
+	indexKey := cluster.redisKeyNodes()
+	nodeKey := cluster.redisKeyNode("node-a")
+	assert.NoError(t, cluster.doRegisterNode(nodeKey))
+	assert.NoError(t, cluster.Redis.Cmd().Del(cluster.ctx, nodeKey).Err())
+
+	cluster.Redis.AddHook(&nodeReregisterHook{
+		t:        t,
+		onGetKey: nodeKey,
+		reregister: func() error {
+			return reregisterCluster.doRegisterNode(reregisterCluster.redisKeyNode("node-a"))
+		},
+	})
+
+	assert.NoError(t, cluster.doSyncNodes())
+
+	members, err := cluster.Redis.Cmd().SMembers(cluster.ctx, indexKey).Result()
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"node-a"}, members, "a node re-registered during sync must remain in the index")
 }
 
 type leaderTakeoverHook struct {

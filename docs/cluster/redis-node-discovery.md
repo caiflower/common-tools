@@ -23,10 +23,12 @@ Redis 模式支持基于 Redis 的动态节点发现机制，节点信息不再�
 
 ### 4. Redis Key 结构
 ```
-{DataPath}:Nodes           ->  Set，成员为节点名称
+{DataPath}:Nodes             ->  Set，成员为节点名称
 {DataPath}:Nodes:{NodeName}  ->  JSON 格式的节点信息
 {DataPath}:Election          ->  当前 Leader 名称
 ```
+
+节点索引、节点信息和选举 key 都使用 `{dataPath}` 作为 Redis hash tag，保证属于同一个 hash slot。这样 Redis Cluster 可以通过 Lua 原子完成“确认节点信息仍不存在，再清理节点索引”。
 
 ## 配置示例
 
@@ -126,16 +128,16 @@ env:
 
 ```bash
 # 查看所有注册的节点
-redis-cli SMEMBERS "myapp:cluster:Nodes"
+redis-cli SMEMBERS "{myapp:cluster}:Nodes"
 
 # 查看某个节点的详细信息
-redis-cli GET "myapp:cluster:Nodes:node1"
+redis-cli GET "{myapp:cluster}:Nodes:node1"
 
 # 查看当前 Leader
-redis-cli GET "myapp:cluster:Election"
+redis-cli GET "{myapp:cluster}:Election"
 
 # 查看 Key 的剩余 TTL
-redis-cli TTL "myapp:cluster:Nodes:node1"
+redis-cli TTL "{myapp:cluster}:Nodes:node1"
 ```
 
 ### 日志监控
@@ -153,8 +155,8 @@ redis-cli TTL "myapp:cluster:Nodes:node1"
 3. **网络分区**：网络分区可能导致节点误判，合理配置 TTL 和同步间隔
 4. **节点命名**：建议使用唯一的节点名称（如 hostname、pod name）
 5. **端口配置**：所有节点使用 `redisDiscovery.port` 配置的相同端口，无需为每个节点单独配置
-6. **升级兼容性**：从基于 `SCAN` 的旧版本升级时，旧版本不会写入节点 Set 索引。建议在发布前一次性将现有 `{DataPath}:Nodes:*` 节点名称写入 `{DataPath}:Nodes` Set，或采用会同时替换全部旧实例的发布方式，避免滚动升级期间新旧节点互相不可见。
-7. **Key 前缀**：cluster 模式只使用 `redisDiscovery.dataPath`，不会叠加 Redis v2 客户端的 `keyPrefix`。如果旧数据使用了客户端 `keyPrefix`，升级前需要将 cluster 相关 key 迁移到仅由 `dataPath` 生成的 key。
+6. **升级兼容性**：从基于 `SCAN` 的旧版本升级时，旧版本不会写入节点 Set 索引。建议在发布前一次性将现有 `DataPath:Nodes:*` 节点名称写入 `{DataPath}:Nodes` Set，或采用会同时替换全部旧实例的发布方式，避免滚动升级期间新旧节点互相不可见。
+7. **Key 迁移**：cluster 模式只使用 `redisDiscovery.dataPath`，不会叠加 Redis v2 客户端的 `keyPrefix`。升级时还需要把旧 key `DataPath:Nodes`、`DataPath:Nodes:<NodeName>`、`DataPath:Election` 迁移为使用 `{DataPath}` hash tag 的新 key。
 
 ## 故障排查
 
