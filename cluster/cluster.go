@@ -273,12 +273,14 @@ func NewClusterWithArgs(config Config, options ...ClusterOption) (*Cluster, erro
 	// 初始化节点信息
 	cluster.loadNodes()
 	// find curNode
-	cluster.findCurNode()
-	cluster.aliveNodes.Store(cluster.GetMyName(), cluster.GetMyNode())
+	if err := cluster.findCurNode(); err != nil {
+		return nil, err
+	}
 
 	if cluster.curNode == nil {
 		return nil, errors.New("can not find local node")
 	}
+	cluster.aliveNodes.Store(cluster.GetMyName(), cluster.GetMyNode())
 
 	cluster.logger.Info("[cluster] local node address: %s", cluster.curNode.address)
 
@@ -329,7 +331,14 @@ func (c *Cluster) Start() error {
 
 	if c.config.Mode != modeSingle {
 		// 开启服务监听端口
-		c.listen()
+		if err := c.listen(); err != nil {
+			c.logger.Error("[cluster] start failed: %v", err)
+			cancelFunc()
+			c.ctx = nil
+			c.cancelFunc = nil
+			atomic.StoreUint32(&c.sate, _init)
+			return fmt.Errorf("start cluster failed: %w", err)
+		}
 		// 集群建立连接
 		c.reconnect()
 	}
@@ -652,7 +661,7 @@ func (c *Cluster) getQuorum() int {
 	return totalNodes/2 + 1
 }
 
-func (c *Cluster) findCurNode() {
+func (c *Cluster) findCurNode() error {
 	if c.curNode == nil { // 说明没有开启调试
 		switch c.config.Mode {
 		case modeSingle:
@@ -660,7 +669,10 @@ func (c *Cluster) findCurNode() {
 		case modeRedis:
 			// Redis 模式：根据本地信息创建当前节点
 			dns := env.GetLocalDNS()
-			ip := env.GetLocalHostIP()
+			ip := strings.TrimSpace(env.GetLocalHostIP())
+			if net.ParseIP(ip) == nil {
+				return fmt.Errorf("redis mode requires a valid LOCAL_HOST_IP, got %q", ip)
+			}
 
 			// 优先使用 DNS 名称作为节点名
 			nodeName := dns
@@ -682,7 +694,7 @@ func (c *Cluster) findCurNode() {
 				port = 8081 // 默认端口
 			}
 
-			address := fmt.Sprintf("%s:%d", ip, port)
+			address := net.JoinHostPort(ip, strconv.Itoa(port))
 			node := newNode(address, nodeName, c.config.Timeout.Seconds()/3)
 			c.allNode.Store(nodeName, node)
 			c.curNode = node
@@ -715,6 +727,7 @@ func (c *Cluster) findCurNode() {
 			}
 		}
 	}
+	return nil
 }
 
 func (c *Cluster) markNodeUnavailable(nodeName string) {
@@ -817,11 +830,10 @@ func (c *Cluster) reconnect() {
 	c.updateMetrics(c.IsLeader())
 }
 
-func (c *Cluster) listen() {
+func (c *Cluster) listen() error {
 	lis, err := net.Listen("tcp", c.curNode.address)
 	if err != nil {
-		c.logger.Error("[cluster] listen on %s failed: %v", c.curNode.address, err)
-		return
+		return fmt.Errorf("listen on %s failed: %w", c.curNode.address, err)
 	}
 
 	var serverOpts []grpc.ServerOption
@@ -840,8 +852,8 @@ func (c *Cluster) listen() {
 	if c.config.TLS.Enabled {
 		creds, err := loadTLSServerCredentials(&c.config.TLS)
 		if err != nil {
-			c.logger.Error("[cluster] load TLS server credentials failed: %v", err)
-			return
+			_ = lis.Close()
+			return fmt.Errorf("load TLS server credentials failed: %w", err)
 		}
 		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
@@ -858,6 +870,8 @@ func (c *Cluster) listen() {
 			c.logger.Error("[cluster] grpc server serve failed: %v", err)
 		}
 	}()
+
+	return nil
 }
 
 func (c *Cluster) fighting() {

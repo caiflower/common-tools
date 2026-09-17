@@ -51,6 +51,24 @@ cluster:
     nodeHeartbeatPeriod: 20s     # 节点心跳续约周期
 ```
 
+### Kubernetes Downward API 配置
+
+Redis 模式必须使用 Pod IP 作为节点通信地址。在 Kubernetes 中通过 Downward API 显式注入：
+
+```yaml
+env:
+  - name: LOCAL_HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.podIP
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+```
+
+`LOCAL_HOST_IP` 为空或不是合法 IP 时，Redis 模式会拒绝创建 Cluster，避免将不可达地址注册到 Redis。
+
 ### 配置参数说明
 
 | 参数 | 默认值 | 说明 |

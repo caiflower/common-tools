@@ -20,10 +20,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/caiflower/common-tools/global/env"
 	"github.com/caiflower/common-tools/pkg/logger"
 	redisv2 "github.com/caiflower/common-tools/redis/v2"
 	"github.com/redis/go-redis/v9"
@@ -430,6 +432,60 @@ func TestRedisNodeKeysOnlyUseClusterDataPath(t *testing.T) {
 	for _, key := range keys {
 		assert.NotContains(t, key, "redis-v2-prefix")
 	}
+}
+
+func TestRedisModeRejectsInvalidLocalHostIP(t *testing.T) {
+	originalIP := env.GetLocalHostIP()
+	originalDNS := env.GetLocalDNS()
+	defer func() {
+		env.LocalhostIP = originalIP
+		env.LocalDNS = originalDNS
+	}()
+
+	env.LocalDNS = ""
+	for _, test := range []struct {
+		name string
+		ip   string
+	}{
+		{name: "empty", ip: ""},
+		{name: "invalid", ip: "not-an-ip"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env.LocalhostIP = test.ip
+
+			_, err := NewClusterWithArgs(Config{
+				Mode:   modeRedis,
+				Enable: "true",
+				RedisDiscovery: RedisDiscovery{
+					DataPath: "test:redis",
+					Port:     9001,
+				},
+			})
+			assert.ErrorContains(t, err, "LOCAL_HOST_IP")
+		})
+	}
+}
+
+func TestClusterStartFailsWhenListenAddressInUse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer listener.Close()
+
+	cluster, err := NewClusterWithArgs(Config{
+		Mode:    modeRedis,
+		Enable:  "true",
+		Timeout: time.Second,
+		RedisDiscovery: RedisDiscovery{
+			DataPath: "test:redis",
+			Port:     listener.Addr().(*net.TCPAddr).Port,
+		},
+	})
+	assert.NoError(t, err)
+
+	cluster.curNode = newNode(listener.Addr().String(), "local-node", 1)
+
+	err = cluster.Start()
+	assert.ErrorContains(t, err, "listen")
 }
 
 func TestRedisSyncNodesUsesNodeIndex(t *testing.T) {
