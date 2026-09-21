@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -32,6 +33,8 @@ import (
 	"github.com/caiflower/common-tools/pkg/logger"
 	"github.com/caiflower/common-tools/pkg/tools"
 )
+
+var _ xkafka.BatchConsumer = (*KafkaClient)(nil)
 
 type KafkaMessage = sarama.ConsumerMessage
 
@@ -97,12 +100,50 @@ type consumerGroupHandler struct {
 	*KafkaClient
 }
 
-type msgItem struct {
-	msg           *sarama.ConsumerMessage
-	done          bool
+type consumeState struct {
+	done          atomic.Bool
 	retryCount    int
 	lastRetryTime time.Time
 	retryDelay    time.Duration
+}
+
+func (s *consumeState) markDone() {
+	s.done.Store(true)
+}
+
+type msgItem struct {
+	consumeState
+	msg *sarama.ConsumerMessage
+}
+
+type batchItem struct {
+	consumeState
+	messages []*sarama.ConsumerMessage
+	values   []interface{}
+}
+
+type queuedItem interface {
+	isDone() bool
+	lastMessage() *sarama.ConsumerMessage
+}
+
+func (i *msgItem) isDone() bool {
+	return i.done.Load()
+}
+
+func (i *msgItem) lastMessage() *sarama.ConsumerMessage {
+	return i.msg
+}
+
+func (i *batchItem) isDone() bool {
+	return i.done.Load()
+}
+
+func (i *batchItem) lastMessage() *sarama.ConsumerMessage {
+	if len(i.messages) == 0 {
+		return nil
+	}
+	return i.messages[len(i.messages)-1]
 }
 
 func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
@@ -122,6 +163,9 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 	h.sessionMu.Lock()
 	h.consumerSession = session
 	h.sessionMu.Unlock()
+	if h.batchMode {
+		return h.consumeClaimBatch(session, claim)
+	}
 	for {
 		select {
 		case msg, ok := <-claim.Messages():
@@ -130,9 +174,9 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			}
 			logger.Trace("Message receive event : [name=%s] [group=%s] [topic=%s] [partition=%d] [offset=%d] [msg=%s]", h.cfg.Name, h.cfg.GroupID, msg.Topic, msg.Partition, msg.Offset, string(msg.Value))
 
-			item := &msgItem{msg: msg, done: false}
+			item := &msgItem{msg: msg}
 
-			key := fmt.Sprintf("%s-%d", msg.Topic, msg.Partition)
+			key := topicPartitionKey(msg.Topic, msg.Partition)
 			select {
 			case <-h.ctx.Done():
 				logger.Info("[ConsumeClaim] consumer is closed. [key:%s]", key)
@@ -140,15 +184,175 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 			case h.msgChan <- item:
 			}
 
-			queue, ok := h.msgQueue.Load(key)
-			if !ok {
-				queue = basic.NewSafeRingQueue(h.cfg.ConsumerQueueSize)
-				h.msgQueue.Store(key, queue)
-			}
-			queue.(*basic.SafeRingQueue).BlockEnqueue(item)
+			h.getQueue(key, h.cfg.ConsumerQueueSize).BlockEnqueue(item)
 		case <-session.Context().Done(): //表示内部会话已关闭，这里一定要退出去，否则会导致 rebalance 超时
 			return nil
 		}
+	}
+}
+
+func (h *consumerGroupHandler) consumeClaimBatch(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+	for {
+		messages, ok := h.collectBatch(session, claim)
+		if !ok {
+			return nil
+		}
+
+		item := newBatchItem(messages)
+		key := topicPartitionKey(claim.Topic(), claim.Partition())
+		queue := h.getQueue(key, batchQueueCapacity(h.cfg.ConsumerQueueSize, h.cfg.ConsumerBatchSize))
+		queue.BlockEnqueue(item)
+
+		batchChan, ok := h.ensureBatchWorker(key)
+		if !ok {
+			return nil
+		}
+		select {
+		case <-h.ctx.Done():
+			logger.Info("[ConsumeClaim] consumer is closed. [key:%s]", key)
+			return nil
+		case batchChan <- item:
+		}
+	}
+}
+
+func (h *consumerGroupHandler) getQueue(key string, capacity int) *basic.SafeRingQueue {
+	queue, ok := h.msgQueue.Load(key)
+	if !ok {
+		queue = basic.NewSafeRingQueue(capacity)
+		h.msgQueue.Store(key, queue)
+	}
+	return queue.(*basic.SafeRingQueue)
+}
+
+func topicPartitionKey(topic string, partition int32) string {
+	return fmt.Sprintf("%s-%d", topic, partition)
+}
+
+func (h *consumerGroupHandler) ensureBatchWorker(key string) (chan *batchItem, bool) {
+	if value, ok := h.batchQueues.Load(key); ok {
+		return value.(chan *batchItem), true
+	}
+
+	h.batchWorkerMu.Lock()
+	defer h.batchWorkerMu.Unlock()
+	if !h.running.Load() {
+		return nil, false
+	}
+	if value, ok := h.batchQueues.Load(key); ok {
+		return value.(chan *batchItem), true
+	}
+
+	capacity := batchQueueCapacity(h.cfg.ConsumerQueueSize, h.cfg.ConsumerBatchSize)
+	batchChan := make(chan *batchItem, capacity)
+	h.batchQueues.Store(key, batchChan)
+	h.batchWG.Add(1)
+	go h.consumeBatch(batchChan)
+	return batchChan, true
+}
+
+func (c *KafkaClient) consumeBatch(batchChan <-chan *batchItem) {
+	defer c.batchWG.Done()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case item, ok := <-batchChan:
+			if !ok {
+				return
+			}
+			if !c.running.Load() {
+				return
+			}
+			select {
+			case c.batchSem <- struct{}{}:
+			case <-c.ctx.Done():
+				return
+			}
+			c.processBatch(item, c.batchHandler, c.batchDeadLetterFunc)
+			<-c.batchSem
+		}
+	}
+}
+
+func batchQueueCapacity(queueSize, batchSize int) int {
+	if queueSize <= 0 || batchSize <= 0 {
+		return 1
+	}
+	capacity := (queueSize + batchSize - 1) / batchSize
+	if capacity < 1 {
+		return 1
+	}
+	return capacity
+}
+
+func retryDelay(retryCount int) time.Duration {
+	backoffSeconds := 1 << (retryCount - 1)
+	if backoffSeconds > 30 {
+		backoffSeconds = 30
+	}
+	return time.Duration(backoffSeconds) * time.Second
+}
+
+func newBatchItem(messages []*sarama.ConsumerMessage) *batchItem {
+	values := make([]interface{}, len(messages))
+	for i, msg := range messages {
+		values[i] = msg
+	}
+	return &batchItem{
+		messages: messages,
+		values:   values,
+	}
+}
+
+func completedQueueItem(value interface{}) (*sarama.ConsumerMessage, bool) {
+	item, ok := value.(queuedItem)
+	if !ok || !item.isDone() {
+		return nil, false
+	}
+	msg := item.lastMessage()
+	return msg, msg != nil
+}
+
+func (h *consumerGroupHandler) collectBatch(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) ([]*sarama.ConsumerMessage, bool) {
+	select {
+	case <-h.ctx.Done():
+		return nil, false
+	case <-session.Context().Done():
+		return nil, false
+	case msg, ok := <-claim.Messages():
+		if !ok {
+			return nil, false
+		}
+		batch := make([]*sarama.ConsumerMessage, 0, h.cfg.ConsumerBatchSize)
+		batch = append(batch, msg)
+		if len(batch) >= h.cfg.ConsumerBatchSize {
+			return batch, true
+		}
+		if h.cfg.ConsumerBatchWait <= 0 {
+			return batch, true
+		}
+
+		// Flush partial batches after the max wait so low-throughput partitions
+		// still reach the batch worker.
+		timer := time.NewTimer(h.cfg.ConsumerBatchWait)
+		defer timer.Stop()
+		for len(batch) < h.cfg.ConsumerBatchSize {
+			select {
+			case <-h.ctx.Done():
+				return nil, false
+			case <-session.Context().Done():
+				return nil, false
+			case <-timer.C:
+				return batch, true
+			case next, ok := <-claim.Messages():
+				if !ok {
+					return batch, true
+				}
+				batch = append(batch, next)
+			}
+		}
+		return batch, true
 	}
 }
 
@@ -232,12 +436,7 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 						if !c.running.Load() {
 							return false
 						}
-						// Calculate exponential backoff delay: 1s, 2s, 4s, 8s, 16s... (max 30s)
-						backoffSeconds := 1 << (item.retryCount - 1) // 2^(retryCount-1)
-						if backoffSeconds > 30 {
-							backoffSeconds = 30
-						}
-						item.retryDelay = time.Duration(backoffSeconds) * time.Second
+						item.retryDelay = retryDelay(item.retryCount)
 						item.lastRetryTime = time.Now()
 
 						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
@@ -262,17 +461,61 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 					}
 					// Mark done to allow offset commit, preventing rebalance / 标记完成以允许 offset 提交，避免 rebalance
 				}
-				xkafka.RecordConsumedDuration(time.Now().Sub(startTime).Milliseconds())
+				xkafka.RecordConsumedDuration(time.Since(startTime).Milliseconds())
 				xkafka.CountConsumer(c.cfg)
 				return true
 			}()
 			if completed {
-				item.done = true
+				item.markDone()
 			}
 		}
 	}
 	for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
 		go runThread(i)
+	}
+}
+
+func (c *KafkaClient) processBatch(item *batchItem, fn xkafka.BatchHandler, dlHandler xkafka.BatchDeadLetterHandler) {
+	defer e.OnError(fmt.Sprintf("kafka [%s] batch consumer listen", c.cfg.Name))
+	for {
+		startTime := time.Now()
+		err := fn(item.values)
+		xkafka.RecordConsumedDuration(time.Since(startTime).Milliseconds())
+		if err == nil {
+			for range item.messages {
+				xkafka.CountConsumer(c.cfg)
+			}
+			item.markDone()
+			return
+		}
+
+		item.retryCount++
+		if item.retryCount < c.cfg.ConsumerRetryCount {
+			item.retryDelay = retryDelay(item.retryCount)
+			item.lastRetryTime = time.Now()
+			logger.Warn("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] (retry %d/%d), will retry after %v. Error: %v",
+				item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), item.retryCount, c.cfg.ConsumerRetryCount, item.retryDelay, err)
+
+			timer := time.NewTimer(item.retryDelay)
+			select {
+			case <-c.ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
+		}
+
+		logger.Error("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] after %d retries. Error: %v",
+			item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), c.cfg.ConsumerRetryCount, err)
+		if dlHandler != nil {
+			dlHandler(item.values, err)
+		}
+		for range item.messages {
+			xkafka.CountConsumer(c.cfg)
+		}
+		item.markDone()
+		return
 	}
 }
 
@@ -284,46 +527,53 @@ func (c *KafkaClient) monitorOffset() {
 		c.monitorOffsetRunning.Store(true)
 		defer c.monitorOffsetRunning.Store(false)
 
-		c.commitCycleCount++
-		c.msgQueue.Range(func(key, value interface{}) bool {
-			if msgQueue := value.(*basic.SafeRingQueue); msgQueue.Size() >= 0 {
-				var lastDoneMsg *sarama.ConsumerMessage = nil
-
-				for {
-					if msg, err := msgQueue.Peek(); err == nil {
-						if msg.(*msgItem).done {
-							lastDoneMsg = msg.(*msgItem).msg
-							_, _ = msgQueue.Dequeue()
-						}
-					} else {
-						break
-					}
-				}
-
-				// 提交过的offset的消息
-				if lastDoneMsg != nil {
-					if c.commitCycleCount%10 == 0 {
-						logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
-					}
-					c.sessionMu.RLock()
-					session := c.consumerSession
-					c.sessionMu.RUnlock()
-					if session != nil {
-						session.MarkMessage(lastDoneMsg, "")
-						session.Commit()
-					}
-				}
-			}
-			return true
-		})
-
-		if c.commitCycleCount%10 == 0 {
-			c.commitCycleCount = 0
-		}
+		c.commitCompletedOffsets()
 	}
 	c.commitOffsetFunc = fn
 	c.monitorOffsetJob = crontab.NewRegularJob("MonitorOffset", fn, crontab.WithInterval(c.cfg.ConsumerCommitInterval), crontab.WithIgnorePanic(), crontab.WithImmediately())
 	c.monitorOffsetJob.Run()
+}
+
+func (c *KafkaClient) commitCompletedOffsets() {
+	c.commitCycleCount++
+	c.msgQueue.Range(func(key, value interface{}) bool {
+		msgQueue, ok := value.(*basic.SafeRingQueue)
+		if !ok {
+			return true
+		}
+
+		var lastDoneMsg *sarama.ConsumerMessage
+		for {
+			item, err := msgQueue.Peek()
+			if err != nil {
+				break
+			}
+			lastMessage, done := completedQueueItem(item)
+			if !done {
+				break
+			}
+			lastDoneMsg = lastMessage
+			_, _ = msgQueue.Dequeue()
+		}
+
+		if lastDoneMsg != nil {
+			if c.commitCycleCount%10 == 0 {
+				logger.Info("%s Commit offset [key=%s] [offset=%d]", c.cfg.Name, key, lastDoneMsg.Offset)
+			}
+			c.sessionMu.RLock()
+			session := c.consumerSession
+			c.sessionMu.RUnlock()
+			if session != nil {
+				session.MarkMessage(lastDoneMsg, "")
+				session.Commit()
+			}
+		}
+		return true
+	})
+
+	if c.commitCycleCount%10 == 0 {
+		c.commitCycleCount = 0
+	}
 }
 
 func (c *KafkaClient) monitorMsgQueueSize() {
@@ -346,17 +596,57 @@ func (c *KafkaClient) Listen(fn func(message interface{}) error, deadLetterHandl
 	if c.running.Load() || strings.ToUpper(c.cfg.Enable) != "TRUE" {
 		return
 	}
-	c.running.Store(true)
+	c.batchMode = false
 
 	c.msgChan = make(chan *msgItem, c.cfg.ConsumerQueueSize)
 	c.closeChan = make(chan struct{}, c.cfg.ConsumerWorkerNum)
+	c.startConsumer(func() {
+		go c.consume(fn, deadLetterHandler...)
+	})
+}
+
+func (c *KafkaClient) ListenBatch(fn xkafka.BatchHandler, deadLetterHandler ...xkafka.BatchDeadLetterHandler) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.running.Load() || strings.ToUpper(c.cfg.Enable) != "TRUE" {
+		return
+	}
+	if c.cfg.ConsumerBatchSize <= 0 {
+		c.cfg.ConsumerBatchSize = 1
+	}
+	if c.cfg.ConsumerBatchWait < 0 {
+		c.cfg.ConsumerBatchWait = 0
+	}
+	workerNum := c.cfg.ConsumerWorkerNum
+	if workerNum <= 0 {
+		workerNum = 1
+	}
+
+	var dlHandler xkafka.BatchDeadLetterHandler
+	if len(deadLetterHandler) > 0 {
+		dlHandler = deadLetterHandler[0]
+	}
+
+	c.batchMode = true
+	c.batchHandler = fn
+	c.batchDeadLetterFunc = dlHandler
+	c.batchQueues = sync.Map{}
+	c.batchWG = sync.WaitGroup{}
+	c.batchSem = make(chan struct{}, workerNum)
+	c.startConsumer(nil)
+}
+
+func (c *KafkaClient) startConsumer(startWorkers func()) {
 	c.msgQueue = sync.Map{}
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	c.cancelFunc = cancelFunc
 	c.ctx = ctx
+	c.running.Store(true)
 
 	go c.openConsume()
-	go c.consume(fn, deadLetterHandler...)
+	if startWorkers != nil {
+		startWorkers()
+	}
 	c.monitorOffset()
 	c.monitorMsgQueueSize()
 }

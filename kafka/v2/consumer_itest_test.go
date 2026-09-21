@@ -1,4 +1,18 @@
-//go:build integration
+/*
+ * Copyright 2026 caiflower Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 package v2
 
@@ -14,15 +28,56 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testTopic = "test-topic"
+
+type consumerMockBrokerOptions struct {
+	partitions map[string][]int32
+	messages   map[string]map[int32][]string
+}
+
 func newConsumerMockBroker(t *testing.T) *sarama.MockBroker {
+	t.Helper()
+	return newConsumerMockBrokerWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			testTopic: {0},
+		},
+		messages: map[string]map[int32][]string{
+			testTopic: {
+				0: {"hello-consumer"},
+			},
+		},
+	})
+}
+
+func newConsumerMockBrokerWithOptions(t *testing.T, opts consumerMockBrokerOptions) *sarama.MockBroker {
 	t.Helper()
 	broker := sarama.NewMockBroker(t, 1)
 
+	metadata := sarama.NewMockMetadataResponse(nil).
+		SetBroker(broker.Addr(), broker.BrokerID())
+	offsets := sarama.NewMockOffsetResponse(nil)
+	offsetFetch := sarama.NewMockOffsetFetchResponse(nil)
+	fetch := sarama.NewMockFetchResponse(nil, 100)
+	for topic, partitions := range opts.partitions {
+		for _, partition := range partitions {
+			messages := opts.messages[topic][partition]
+			newestOffset := int64(len(messages))
+
+			metadata.SetLeader(topic, partition, broker.BrokerID())
+			offsets.
+				SetOffset(topic, partition, sarama.OffsetNewest, newestOffset).
+				SetOffset(topic, partition, sarama.OffsetOldest, 0)
+			offsetFetch.SetOffset("test-group", topic, partition, 0, "", sarama.ErrNoError)
+			fetch.SetHighWaterMark(topic, partition, newestOffset)
+			for offset, value := range messages {
+				fetch.SetMessage(topic, partition, int64(offset), sarama.StringEncoder(value))
+			}
+		}
+	}
+
 	broker.SetHandlerByMap(map[string]sarama.MockResponse{
 		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(nil),
-		"MetadataRequest": sarama.NewMockMetadataResponse(nil).
-			SetBroker(broker.Addr(), broker.BrokerID()).
-			SetLeader(testTopic, 0, broker.BrokerID()),
+		"MetadataRequest":    metadata,
 		"FindCoordinatorRequest": sarama.NewMockFindCoordinatorResponse(nil).
 			SetCoordinator(sarama.CoordinatorGroup, "test-group", broker),
 		"JoinGroupRequest": sarama.NewMockJoinGroupResponse(nil).
@@ -30,21 +85,12 @@ func newConsumerMockBroker(t *testing.T) *sarama.MockBroker {
 		"SyncGroupRequest": sarama.NewMockSyncGroupResponse(nil).
 			SetMemberAssignment(&sarama.ConsumerGroupMemberAssignment{
 				Version: 0,
-				Topics: map[string][]int32{
-					testTopic: {0},
-				},
+				Topics:  opts.partitions,
 			}),
-		"HeartbeatRequest": sarama.NewMockHeartbeatResponse(nil),
-		"OffsetRequest": sarama.NewMockOffsetResponse(nil).
-			SetOffset(testTopic, 0, sarama.OffsetNewest, 1).
-			SetOffset(testTopic, 0, sarama.OffsetOldest, 0),
-		"OffsetFetchRequest": sarama.NewMockOffsetFetchResponse(nil).
-			SetOffset("test-group", testTopic, 0, 0, "", sarama.ErrNoError),
-		"FetchRequest": sarama.NewMockSequence(
-			sarama.NewMockFetchResponse(nil, 1).
-				SetMessage(testTopic, 0, 0, sarama.StringEncoder("hello-consumer")),
-			sarama.NewMockFetchResponse(nil, 1),
-		),
+		"HeartbeatRequest":    sarama.NewMockHeartbeatResponse(nil),
+		"OffsetRequest":       offsets,
+		"OffsetFetchRequest":  offsetFetch,
+		"FetchRequest":        fetch,
 		"OffsetCommitRequest": sarama.NewMockOffsetCommitResponse(nil),
 	})
 

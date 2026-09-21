@@ -26,6 +26,7 @@ import (
 
 	"github.com/IBM/sarama"
 	xkafka "github.com/caiflower/common-tools/kafka"
+	"github.com/caiflower/common-tools/pkg/basic"
 	"github.com/caiflower/common-tools/pkg/crontab"
 	"github.com/caiflower/common-tools/pkg/e"
 	"github.com/caiflower/common-tools/pkg/logger"
@@ -42,6 +43,13 @@ type KafkaClient struct {
 	consumerGroup       sarama.ConsumerGroup
 	msgChan             chan *msgItem
 	msgQueue            sync.Map
+	batchMode           bool
+	batchQueues         sync.Map
+	batchWorkerMu       sync.Mutex
+	batchWG             sync.WaitGroup
+	batchSem            chan struct{}
+	batchHandler        xkafka.BatchHandler
+	batchDeadLetterFunc xkafka.BatchDeadLetterHandler
 	consumerSession     sarama.ConsumerGroupSession
 	sessionMu           sync.RWMutex
 	monitorOffsetJob    crontab.RegularJob
@@ -80,24 +88,28 @@ func (c *KafkaClient) Close() {
 	}
 	c.running.Store(false)
 	logger.Info("[Kafka client close] name='%s'", c.cfg.Name)
+	if c.cancelFunc != nil {
+		c.cancelFunc()
+	}
 
 	if c.msgChan != nil {
-		c.cancelFunc()
-
 		close(c.msgChan)
 
 		for i := 1; i <= c.cfg.ConsumerWorkerNum; i++ {
 			<-c.closeChan
 		}
 
-		if c.commitOffsetFunc != nil {
-			// 手动再提交一次offset
-			logger.Info("[Kafka client close] commit offset before close, name='%s'", c.cfg.Name)
-			c.commitOffsetFunc()
-		}
-
 		c.msgChan = nil
 		c.closeChan = nil
+	}
+	if c.batchMode {
+		c.waitBatchWorkers()
+	}
+	if c.commitOffsetFunc != nil {
+		c.commitOffsetsBeforeClose()
+	}
+	if c.batchMode {
+		c.drainBatchQueues()
 	}
 
 	if c.consumerGroup != nil {
@@ -122,6 +134,31 @@ func (c *KafkaClient) Close() {
 		_ = c.asyncProducer.Close()
 		c.asyncProducer = nil
 	}
+}
+
+func (c *KafkaClient) waitBatchWorkers() {
+	c.batchWorkerMu.Lock()
+	defer c.batchWorkerMu.Unlock()
+	c.batchWG.Wait()
+}
+
+func (c *KafkaClient) commitOffsetsBeforeClose() {
+	logger.Info("[Kafka client close] commit offset before close, name='%s'", c.cfg.Name)
+	c.commitOffsetFunc()
+}
+
+func (c *KafkaClient) drainBatchQueues() {
+	c.msgQueue.Range(func(_, value interface{}) bool {
+		queue, ok := value.(*basic.SafeRingQueue)
+		if !ok {
+			return true
+		}
+		for {
+			if _, err := queue.Dequeue(); err != nil {
+				return true
+			}
+		}
+	})
 }
 
 var SHA256 scram.HashGeneratorFcn = func() hash.Hash { return sha256.New() }

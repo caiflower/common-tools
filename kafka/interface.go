@@ -43,6 +43,8 @@ type Config struct {
 	ConsumerCommitInterval    time.Duration `yaml:"consumerCommitInterval" default:"1s"`      // 提交offset间隔 / Offset commit interval
 	ConsumerFetchMaxBytes     int           `yaml:"consumerFetchMaxBytes" default:"52428800"` // 一次抓取消息的最大大小，要确保这个大小要大于一条消息的最大大小，默认50MB，如果内存占用过高，可以适当调小 / Max bytes per fetch, ensure this is larger than max message size, default 50MB
 	ConsumerRetryCount        int           `yaml:"consumerRetryCount" default:"3"`           // 消费失败最大重试次数，默认3 / Max retry count for failed messages, default 3
+	ConsumerBatchSize         int           `yaml:"consumerBatchSize" default:"100"`          // 批量消费时每批最大消息数 / Max messages per batch
+	ConsumerBatchWait         time.Duration `yaml:"consumerBatchWait" default:"100ms"`        // 批量消费时等待凑批的最长时间 / Max wait before flushing a partial batch
 	SecurityProtocol          string        `yaml:"securityProtocol"`
 	SaslMechanism             string        `yaml:"saslMechanism"`
 	SaslUsername              string        `yaml:"saslUsername"`
@@ -78,6 +80,13 @@ type ProducerHook interface {
 // 接收原始消息和最后一次回调返回的错误。
 type DeadLetterHandler func(message interface{}, err error)
 
+// BatchHandler processes messages from one topic partition in offset order.
+// Returning an error retries the entire batch.
+type BatchHandler func(messages []interface{}) error
+
+// BatchDeadLetterHandler is called once after all retries for a batch are exhausted.
+type BatchDeadLetterHandler func(messages []interface{}, err error)
+
 type Consumer interface {
 	// Listen starts consuming messages. If the callback returns a non-nil error,
 	// the message will be re-enqueued for retry up to ConsumerRetryCount times.
@@ -89,6 +98,13 @@ type Consumer interface {
 	// 重试次数耗尽后，调用可选的死信回调 deadLetterHandler，
 	// 然后提交 offset 以避免 rebalance。
 	Listen(fn func(message interface{}) error, deadLetterHandler ...DeadLetterHandler)
+	Close()
+}
+
+type BatchConsumer interface {
+	// ListenBatch starts partition-local batch consumption. A callback receives
+	// only messages from the same topic partition, ordered by offset.
+	ListenBatch(fn BatchHandler, deadLetterHandler ...BatchDeadLetterHandler)
 	Close()
 }
 

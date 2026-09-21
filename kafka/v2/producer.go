@@ -140,7 +140,7 @@ func (c *KafkaClient) producerHooksSnapshot() []xkafka.ProducerHook {
 }
 
 func (c *KafkaClient) openSyncProducer() {
-	config := c.saramaConfig
+	config := cloneSaramaConfig(c.saramaConfig)
 	var producer sarama.SyncProducer
 	var err error
 label:
@@ -165,7 +165,7 @@ label:
 }
 
 func (c *KafkaClient) openASyncProducer() {
-	config := c.saramaConfig
+	config := cloneSaramaConfig(c.saramaConfig)
 	var producer sarama.AsyncProducer
 
 label:
@@ -211,6 +211,14 @@ label:
 			}
 		}
 	}(producer)
+}
+
+func cloneSaramaConfig(config *sarama.Config) *sarama.Config {
+	if config == nil {
+		return nil
+	}
+	cloned := *config
+	return &cloned
 }
 
 func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
