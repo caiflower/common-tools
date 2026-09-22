@@ -85,8 +85,9 @@ func NewConsumerClient(cfg xkafka.Config) *KafkaClient {
 	}
 
 	kafkaClient := &KafkaClient{
-		cfg:          &cfg,
-		saramaConfig: config,
+		cfg:                   &cfg,
+		saramaConfig:          config,
+		consumerReplayOffsets: buildConsumerReplayOffsets(cfg.ConsumerReplayOffsets),
 	}
 
 	logger.Info("[kafka-consumer] consumer '%s' config: %s", cfg.Name, tools.ToJson(cfg))
@@ -148,7 +149,42 @@ func (i *batchItem) lastMessage() *sarama.ConsumerMessage {
 
 func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
 	logger.Info("%s", tools.ToJson(session.Claims()))
+	resetOffset := false
+	for topic, partitions := range session.Claims() {
+		for _, partition := range partitions {
+			key := topicPartitionKey(topic, partition)
+			offset, ok := h.consumerReplayOffsets[key]
+			if !ok {
+				continue
+			}
+			if _, loaded := h.replayedOffsets.LoadOrStore(key, struct{}{}); loaded {
+				continue
+			}
+
+			session.ResetOffset(topic, partition, offset, "")
+			session.MarkOffset(topic, partition, offset, "")
+			logger.Info("[kafka-consumer] replay offset [name=%s] [topic=%s] [partition=%d] [offset=%d]", h.cfg.Name, topic, partition, offset)
+			resetOffset = true
+		}
+	}
+	if resetOffset {
+		session.Commit()
+	}
 	return nil
+}
+
+func buildConsumerReplayOffsets(offsets []xkafka.ConsumerReplayOffset) map[string]int64 {
+	if len(offsets) == 0 {
+		return nil
+	}
+	result := make(map[string]int64, len(offsets))
+	for _, offset := range offsets {
+		if offset.Topic == "" {
+			continue
+		}
+		result[topicPartitionKey(offset.Topic, offset.Partition)] = offset.Offset
+	}
+	return result
 }
 
 func (h *consumerGroupHandler) Cleanup(session sarama.ConsumerGroupSession) error {
@@ -638,6 +674,7 @@ func (c *KafkaClient) ListenBatch(fn xkafka.BatchHandler, deadLetterHandler ...x
 
 func (c *KafkaClient) startConsumer(startWorkers func()) {
 	c.msgQueue = sync.Map{}
+	c.replayedOffsets = sync.Map{}
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	c.cancelFunc = cancelFunc
 	c.ctx = ctx

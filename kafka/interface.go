@@ -23,35 +23,42 @@ import (
 	"time"
 )
 
+type ConsumerReplayOffset struct {
+	Topic     string `yaml:"topic" json:"topic"`
+	Partition int32  `yaml:"partition" json:"partition"`
+	Offset    int64  `yaml:"offset" json:"offset"`
+}
+
 type Config struct {
-	Name                      string        `yaml:"name"`
-	Enable                    string        `yaml:"enable" default:"true"` // 默认开启 / Enabled by default
-	BootstrapServers          []string      `yaml:"bootstrapServers"`
-	GroupID                   string        `yaml:"groupId"`
-	Topics                    []string      `yaml:"topics"`
-	ProducerAcks              int           `yaml:"producerAcks" default:"-1"`
-	ProducerCompressType      string        `yaml:"producerCompressType" default:"none"`  // none, gzip, snappy, lz4, zstd
-	ProducerIdempotence       bool          `yaml:"producerIdempotence"`                  // enable.idempotence
-	ProducerMessageTimeout    time.Duration `yaml:"producerMessageTimeout" default:"15s"` // 仅在v1生效 / Only effective in v1
-	ProducerRequestTimeout    time.Duration `yaml:"producerRequestTimeout" default:"10s"`
-	ProducerVersion           string        `yaml:"producerVersion"` // kafka版本，仅在v2生效 / Kafka version, only effective in v2
-	ConsumerWorkerNum         int           `yaml:"consumerWorkerNum" default:"2"`
-	ConsumerHeartBeatInterval time.Duration `yaml:"consumerHeartBeatInterval" default:"6s"`
-	ConsumerSessionTimeout    time.Duration `yaml:"consumerSessionTimeout" default:"20s"`
-	ConsumerAutoOffsetReset   string        `yaml:"consumerAutoOffsetReset" default:"latest"` // https://www.cnblogs.com/convict/p/16701154.html
-	ConsumerQueueSize         int           `yaml:"consumerQueueSize" default:"500"`          // 消费者每个缓存队列大小，默认1000 / Consumer buffer queue size per partition
-	ConsumerCommitInterval    time.Duration `yaml:"consumerCommitInterval" default:"1s"`      // 提交offset间隔 / Offset commit interval
-	ConsumerFetchMaxBytes     int           `yaml:"consumerFetchMaxBytes" default:"52428800"` // 一次抓取消息的最大大小，要确保这个大小要大于一条消息的最大大小，默认50MB，如果内存占用过高，可以适当调小 / Max bytes per fetch, ensure this is larger than max message size, default 50MB
-	ConsumerRetryCount        int           `yaml:"consumerRetryCount" default:"3"`           // 消费失败最大重试次数，默认3 / Max retry count for failed messages, default 3
-	ConsumerBatchSize         int           `yaml:"consumerBatchSize" default:"100"`          // 批量消费时每批最大消息数 / Max messages per batch
-	ConsumerBatchWait         time.Duration `yaml:"consumerBatchWait" default:"100ms"`        // 批量消费时等待凑批的最长时间 / Max wait before flushing a partial batch
-	SecurityProtocol          string        `yaml:"securityProtocol"`
-	SaslMechanism             string        `yaml:"saslMechanism"`
-	SaslUsername              string        `yaml:"saslUsername"`
-	SaslPassword              string        `yaml:"saslPassword"`
-	SSLCaFile                 string        `yaml:"sslCaFile"`
-	SSLCertFile               string        `yaml:"sslCertFile"`
-	SSLKeyFile                string        `yaml:"sslKeyFile"`
+	Name                      string                 `yaml:"name"`
+	Enable                    string                 `yaml:"enable" default:"true"` // 默认开启 / Enabled by default
+	BootstrapServers          []string               `yaml:"bootstrapServers"`
+	GroupID                   string                 `yaml:"groupId"`
+	Topics                    []string               `yaml:"topics"`
+	ProducerAcks              int                    `yaml:"producerAcks" default:"-1"`
+	ProducerCompressType      string                 `yaml:"producerCompressType" default:"none"`  // none, gzip, snappy, lz4, zstd
+	ProducerIdempotence       bool                   `yaml:"producerIdempotence"`                  // enable.idempotence
+	ProducerMessageTimeout    time.Duration          `yaml:"producerMessageTimeout" default:"15s"` // 仅在v1生效 / Only effective in v1
+	ProducerRequestTimeout    time.Duration          `yaml:"producerRequestTimeout" default:"10s"`
+	ProducerVersion           string                 `yaml:"producerVersion"` // kafka版本，仅在v2生效 / Kafka version, only effective in v2
+	ConsumerWorkerNum         int                    `yaml:"consumerWorkerNum" default:"2"`
+	ConsumerHeartBeatInterval time.Duration          `yaml:"consumerHeartBeatInterval" default:"6s"`
+	ConsumerSessionTimeout    time.Duration          `yaml:"consumerSessionTimeout" default:"20s"`
+	ConsumerAutoOffsetReset   string                 `yaml:"consumerAutoOffsetReset" default:"latest"` // https://www.cnblogs.com/convict/p/16701154.html
+	ConsumerQueueSize         int                    `yaml:"consumerQueueSize" default:"500"`          // 消费者每个缓存队列大小，默认1000 / Consumer buffer queue size per partition
+	ConsumerCommitInterval    time.Duration          `yaml:"consumerCommitInterval" default:"1s"`      // 提交offset间隔 / Offset commit interval
+	ConsumerFetchMaxBytes     int                    `yaml:"consumerFetchMaxBytes" default:"52428800"` // 一次抓取消息的最大大小，要确保这个大小要大于一条消息的最大大小，默认50MB，如果内存占用过高，可以适当调小 / Max bytes per fetch, ensure this is larger than max message size, default 50MB
+	ConsumerRetryCount        int                    `yaml:"consumerRetryCount" default:"3"`           // 消费失败最大重试次数，默认3 / Max retry count for failed messages, default 3
+	ConsumerBatchSize         int                    `yaml:"consumerBatchSize" default:"100"`          // 仅在v2生效，批量消费时每批最大消息数 / Only effective in v2, max messages per batch
+	ConsumerBatchWait         time.Duration          `yaml:"consumerBatchWait" default:"100ms"`        // 仅在v2生效，批量消费时等待凑批的最长时间 / Only effective in v2, max wait before flushing a partial batch
+	ConsumerReplayOffsets     []ConsumerReplayOffset `yaml:"consumerReplayOffsets"`                    // 仅在v2生效，首次分配到 partition 时从指定 offset 开始消费 / Only effective in v2, start assigned partitions from the configured offsets once
+	SecurityProtocol          string                 `yaml:"securityProtocol"`
+	SaslMechanism             string                 `yaml:"saslMechanism"`
+	SaslUsername              string                 `yaml:"saslUsername"`
+	SaslPassword              string                 `yaml:"saslPassword"`
+	SSLCaFile                 string                 `yaml:"sslCaFile"`
+	SSLCertFile               string                 `yaml:"sslCertFile"`
+	SSLKeyFile                string                 `yaml:"sslKeyFile"`
 }
 
 // ProducerContext is per-send state created by ProducerHook. Complete is

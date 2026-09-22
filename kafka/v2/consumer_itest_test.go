@@ -31,8 +31,9 @@ import (
 const testTopic = "test-topic"
 
 type consumerMockBrokerOptions struct {
-	partitions map[string][]int32
-	messages   map[string]map[int32][]string
+	partitions       map[string][]int32
+	messages         map[string]map[int32][]string
+	committedOffsets map[string]map[int32]int64
 }
 
 func newConsumerMockBroker(t *testing.T) *sarama.MockBroker {
@@ -51,6 +52,12 @@ func newConsumerMockBroker(t *testing.T) *sarama.MockBroker {
 
 func newConsumerMockBrokerWithOptions(t *testing.T, opts consumerMockBrokerOptions) *sarama.MockBroker {
 	t.Helper()
+	broker, _ := newConsumerMockBrokerHarnessWithOptions(t, opts)
+	return broker
+}
+
+func newConsumerMockBrokerHarnessWithOptions(t *testing.T, opts consumerMockBrokerOptions) (*sarama.MockBroker, *sarama.MockOffsetFetchResponse) {
+	t.Helper()
 	broker := sarama.NewMockBroker(t, 1)
 
 	metadata := sarama.NewMockMetadataResponse(nil).
@@ -67,7 +74,11 @@ func newConsumerMockBrokerWithOptions(t *testing.T, opts consumerMockBrokerOptio
 			offsets.
 				SetOffset(topic, partition, sarama.OffsetNewest, newestOffset).
 				SetOffset(topic, partition, sarama.OffsetOldest, 0)
-			offsetFetch.SetOffset("test-group", topic, partition, 0, "", sarama.ErrNoError)
+			committedOffset, ok := opts.committedOffsets[topic][partition]
+			if !ok {
+				committedOffset = 0
+			}
+			offsetFetch.SetOffset("test-group", topic, partition, committedOffset, "", sarama.ErrNoError)
 			fetch.SetHighWaterMark(topic, partition, newestOffset)
 			for offset, value := range messages {
 				fetch.SetMessage(topic, partition, int64(offset), sarama.StringEncoder(value))
@@ -94,7 +105,7 @@ func newConsumerMockBrokerWithOptions(t *testing.T, opts consumerMockBrokerOptio
 		"OffsetCommitRequest": sarama.NewMockOffsetCommitResponse(nil),
 	})
 
-	return broker
+	return broker, offsetFetch
 }
 
 func newTestConsumerConfig(brokerAddr string) xkafka.Config {

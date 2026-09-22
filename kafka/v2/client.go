@@ -40,25 +40,27 @@ type KafkaClient struct {
 	running              atomic.Bool
 	monitorOffsetRunning atomic.Bool
 
-	consumerGroup       sarama.ConsumerGroup
-	msgChan             chan *msgItem
-	msgQueue            sync.Map
-	batchMode           bool
-	batchQueues         sync.Map
-	batchWorkerMu       sync.Mutex
-	batchWG             sync.WaitGroup
-	batchSem            chan struct{}
-	batchHandler        xkafka.BatchHandler
-	batchDeadLetterFunc xkafka.BatchDeadLetterHandler
-	consumerSession     sarama.ConsumerGroupSession
-	sessionMu           sync.RWMutex
-	monitorOffsetJob    crontab.RegularJob
-	monitorQueueSizeJob crontab.RegularJob
-	commitOffsetFunc    func()
-	closeChan           chan struct{}
-	ctx                 context.Context
-	cancelFunc          context.CancelFunc
-	commitCycleCount    int
+	consumerGroup         sarama.ConsumerGroup
+	msgChan               chan *msgItem
+	msgQueue              sync.Map
+	batchMode             bool
+	batchQueues           sync.Map
+	batchWorkerMu         sync.Mutex
+	batchWG               sync.WaitGroup
+	batchSem              chan struct{}
+	batchHandler          xkafka.BatchHandler
+	batchDeadLetterFunc   xkafka.BatchDeadLetterHandler
+	consumerSession       sarama.ConsumerGroupSession
+	sessionMu             sync.RWMutex
+	consumerReplayOffsets map[string]int64
+	replayedOffsets       sync.Map
+	monitorOffsetJob      crontab.RegularJob
+	monitorQueueSizeJob   crontab.RegularJob
+	commitOffsetFunc      func()
+	closeChan             chan struct{}
+	ctx                   context.Context
+	cancelFunc            context.CancelFunc
+	commitCycleCount      int
 
 	// 同步发送
 	syncProducer sarama.SyncProducer

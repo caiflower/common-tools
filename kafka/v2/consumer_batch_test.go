@@ -204,6 +204,104 @@ func TestKafkaClientCloseStopsBatchWorker(t *testing.T) {
 	}
 }
 
+func TestConsumerGroupHandlerSetupResetsReplayOffsetOnce(t *testing.T) {
+	cfg := xkafka.Config{}
+	client := &KafkaClient{cfg: &cfg}
+	client.consumerReplayOffsets = map[string]int64{
+		topicPartitionKey("batch-topic", 0): 7,
+	}
+	handler := &consumerGroupHandler{KafkaClient: client}
+	session := &testConsumerGroupSession{
+		ctx: context.Background(),
+		claims: map[string][]int32{
+			"batch-topic": {0, 1},
+		},
+	}
+
+	if err := handler.Setup(session); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	if len(session.resetOffsets) != 1 {
+		t.Fatalf("expected one replayed offset, got %v", session.resetOffsets)
+	}
+	if got := session.resetOffsets[0]; got.topic != "batch-topic" || got.partition != 0 || got.offset != 7 {
+		t.Fatalf("unexpected replay offset: %+v", got)
+	}
+	if session.commitCount != 1 {
+		t.Fatalf("expected replay offset to be committed once, got %d", session.commitCount)
+	}
+
+	if err := handler.Setup(session); err != nil {
+		t.Fatalf("second setup failed: %v", err)
+	}
+	if len(session.resetOffsets) != 1 {
+		t.Fatalf("expected replay offset not to reset again, got %v", session.resetOffsets)
+	}
+	if session.commitCount != 1 {
+		t.Fatalf("expected no extra commit, got %d", session.commitCount)
+	}
+}
+
+func TestConsumerGroupHandlerSetupResetsReplayOffsetAfterRebalance(t *testing.T) {
+	cfg := xkafka.Config{}
+	client := &KafkaClient{cfg: &cfg}
+	client.consumerReplayOffsets = map[string]int64{
+		topicPartitionKey("batch-topic", 1): 9,
+	}
+	handler := &consumerGroupHandler{KafkaClient: client}
+
+	firstSession := &testConsumerGroupSession{
+		ctx: context.Background(),
+		claims: map[string][]int32{
+			"batch-topic": {0},
+		},
+	}
+	if err := handler.Setup(firstSession); err != nil {
+		t.Fatalf("first setup failed: %v", err)
+	}
+	if len(firstSession.resetOffsets) != 0 || firstSession.commitCount != 0 {
+		t.Fatalf("expected no replay before partition assignment, got offsets=%v commits=%d", firstSession.resetOffsets, firstSession.commitCount)
+	}
+
+	secondSession := &testConsumerGroupSession{
+		ctx: context.Background(),
+		claims: map[string][]int32{
+			"batch-topic": {1},
+		},
+	}
+	if err := handler.Setup(secondSession); err != nil {
+		t.Fatalf("second setup failed: %v", err)
+	}
+	if len(secondSession.resetOffsets) != 1 {
+		t.Fatalf("expected replay after partition assignment, got %v", secondSession.resetOffsets)
+	}
+	if got := secondSession.resetOffsets[0]; got.partition != 1 || got.offset != 9 {
+		t.Fatalf("unexpected replay offset: %+v", got)
+	}
+	if secondSession.commitCount != 1 {
+		t.Fatalf("expected one replay commit, got %d", secondSession.commitCount)
+	}
+}
+
+func TestBuildConsumerReplayOffsets(t *testing.T) {
+	offsets := buildConsumerReplayOffsets([]xkafka.ConsumerReplayOffset{
+		{Topic: "", Partition: 0, Offset: 1},
+		{Topic: "topic", Partition: 0, Offset: 2},
+		{Topic: "topic", Partition: 1, Offset: 3},
+		{Topic: "topic", Partition: 0, Offset: 4},
+	})
+
+	if len(offsets) != 2 {
+		t.Fatalf("expected 2 configured offsets, got %v", offsets)
+	}
+	if got := offsets[topicPartitionKey("topic", 0)]; got != 4 {
+		t.Fatalf("expected duplicate offset to use the last value 4, got %d", got)
+	}
+	if got := offsets[topicPartitionKey("topic", 1)]; got != 3 {
+		t.Fatalf("expected partition 1 offset 3, got %d", got)
+	}
+}
+
 func TestConsumerGroupHandlerConsumesPartitionLocalBatches(t *testing.T) {
 	cfg := xkafka.Config{
 		Name:              "batch-partition-test",
@@ -646,6 +744,358 @@ func TestListenBatchDeadLettersWholeBatchViaMockBroker(t *testing.T) {
 	}
 }
 
+func TestListenBatchReplaysFromConfiguredOffsetViaMockBroker(t *testing.T) {
+	broker := newConsumerMockBrokerWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			testTopic: {0},
+		},
+		messages: map[string]map[int32][]string{
+			testTopic: {
+				0: {"offset-zero", "offset-one", "offset-two"},
+			},
+		},
+		committedOffsets: map[string]map[int32]int64{
+			testTopic: {
+				0: 3,
+			},
+		},
+	})
+	defer broker.Close()
+
+	cfg := newTestConsumerConfig(broker.Addr())
+	cfg.ConsumerBatchSize = 10
+	cfg.ConsumerBatchWait = 20 * time.Millisecond
+	cfg.ConsumerCommitInterval = 5 * time.Millisecond
+	cfg.ConsumerReplayOffsets = []xkafka.ConsumerReplayOffset{
+		{
+			Topic:     testTopic,
+			Partition: 0,
+			Offset:    1,
+		},
+	}
+
+	client := NewConsumerClient(cfg)
+	defer client.Close()
+
+	received := make(chan []string, 1)
+	client.ListenBatch(func(messages []interface{}) error {
+		values := make([]string, 0, len(messages))
+		for _, message := range messages {
+			values = append(values, string(message.(*KafkaMessage).Value))
+		}
+		received <- values
+		return nil
+	})
+
+	values := receiveBatchValues(t, received)
+	if len(values) != 2 || values[0] != "offset-one" || values[1] != "offset-two" {
+		t.Fatalf("expected replay batch [offset-one offset-two], got %v", values)
+	}
+}
+
+func TestListenBatchReplaysWithoutCommittedOffsetViaMockBroker(t *testing.T) {
+	broker := newConsumerMockBrokerWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			testTopic: {0},
+		},
+		messages: map[string]map[int32][]string{
+			testTopic: {
+				0: {"offset-zero", "offset-one", "offset-two"},
+			},
+		},
+		committedOffsets: map[string]map[int32]int64{
+			testTopic: {
+				0: -1,
+			},
+		},
+	})
+	defer broker.Close()
+
+	cfg := newTestConsumerConfig(broker.Addr())
+	cfg.ConsumerBatchSize = 10
+	cfg.ConsumerBatchWait = 20 * time.Millisecond
+	cfg.ConsumerReplayOffsets = []xkafka.ConsumerReplayOffset{
+		{
+			Topic:     testTopic,
+			Partition: 0,
+			Offset:    1,
+		},
+	}
+
+	client := NewConsumerClient(cfg)
+	defer client.Close()
+
+	received := make(chan []string, 1)
+	client.ListenBatch(func(messages []interface{}) error {
+		values := make([]string, 0, len(messages))
+		for _, message := range messages {
+			values = append(values, string(message.(*KafkaMessage).Value))
+		}
+		received <- values
+		return nil
+	})
+
+	values := receiveBatchValues(t, received)
+	if len(values) != 2 || values[0] != "offset-one" || values[1] != "offset-two" {
+		t.Fatalf("expected replay batch [offset-one offset-two] without committed offset, got %v", values)
+	}
+}
+
+func TestListenReplaysFromConfiguredOffsetViaMockBroker(t *testing.T) {
+	broker := newConsumerMockBrokerWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			testTopic: {0},
+		},
+		messages: map[string]map[int32][]string{
+			testTopic: {
+				0: {"offset-zero", "offset-one", "offset-two"},
+			},
+		},
+		committedOffsets: map[string]map[int32]int64{
+			testTopic: {
+				0: 3,
+			},
+		},
+	})
+	defer broker.Close()
+
+	cfg := newTestConsumerConfig(broker.Addr())
+	cfg.ConsumerReplayOffsets = []xkafka.ConsumerReplayOffset{
+		{
+			Topic:     testTopic,
+			Partition: 0,
+			Offset:    1,
+		},
+	}
+
+	client := NewConsumerClient(cfg)
+	defer client.Close()
+
+	received := make(chan string, 2)
+	client.Listen(func(message interface{}) error {
+		received <- string(message.(*KafkaMessage).Value)
+		return nil
+	})
+
+	for _, want := range []string{"offset-one", "offset-two"} {
+		select {
+		case got := <-received:
+			if got != want {
+				t.Fatalf("expected replayed message %q, got %q", want, got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for replayed message %q", want)
+		}
+	}
+}
+
+func TestListenReplaysMultipleTopicsAndPartitionsViaMockBroker(t *testing.T) {
+	const (
+		topicA = "replay-topic-a"
+		topicB = "replay-topic-b"
+	)
+
+	broker := newConsumerMockBrokerWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			topicA: {0, 1},
+			topicB: {0, 1},
+		},
+		messages: map[string]map[int32][]string{
+			topicA: {
+				0: {"a0-0", "a0-1", "a0-2"},
+				1: {"a1-0", "a1-1", "a1-2"},
+			},
+			topicB: {
+				0: {"b0-0", "b0-1"},
+				1: {"b1-0", "b1-1", "b1-2"},
+			},
+		},
+		committedOffsets: map[string]map[int32]int64{
+			topicA: {
+				0: 3,
+				1: 3,
+			},
+			topicB: {
+				0: 2,
+				1: 2,
+			},
+		},
+	})
+	defer broker.Close()
+
+	cfg := newTestConsumerConfig(broker.Addr())
+	cfg.Topics = []string{topicA, topicB}
+	cfg.ConsumerWorkerNum = 4
+	cfg.ConsumerReplayOffsets = []xkafka.ConsumerReplayOffset{
+		{Topic: topicA, Partition: 0, Offset: 1},
+		{Topic: topicA, Partition: 1, Offset: 2},
+		{Topic: topicB, Partition: 0, Offset: 1},
+		{Topic: topicB, Partition: 1, Offset: 1},
+	}
+
+	client := NewConsumerClient(cfg)
+	defer client.Close()
+
+	expected := []string{
+		"a0-1", "a0-2",
+		"a1-2",
+		"b0-1",
+		"b1-1", "b1-2",
+	}
+	received := make(chan string, len(expected)+10)
+	client.Listen(func(message interface{}) error {
+		received <- string(message.(*KafkaMessage).Value)
+		return nil
+	})
+
+	counts := make(map[string]int, len(expected))
+	for range expected {
+		select {
+		case value := <-received:
+			counts[value]++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for replay messages, got %v", counts)
+		}
+	}
+
+	for _, value := range expected {
+		if counts[value] != 1 {
+			t.Fatalf("expected message %q exactly once, got counts %v", value, counts)
+		}
+	}
+}
+
+func TestListenReplayCommitPersistsAcrossRestartViaMockBroker(t *testing.T) {
+	broker, offsetFetch := newConsumerMockBrokerHarnessWithOptions(t, consumerMockBrokerOptions{
+		partitions: map[string][]int32{
+			testTopic: {0},
+		},
+		messages: map[string]map[int32][]string{
+			testTopic: {
+				0: {"offset-zero", "offset-one", "offset-two"},
+			},
+		},
+	})
+	defer broker.Close()
+
+	cfg := newTestConsumerConfig(broker.Addr())
+	cfg.ConsumerBatchSize = 10
+	cfg.ConsumerBatchWait = 20 * time.Millisecond
+	cfg.ConsumerReplayOffsets = []xkafka.ConsumerReplayOffset{
+		{Topic: testTopic, Partition: 0, Offset: 2},
+	}
+
+	client := NewConsumerClient(cfg)
+	received := make(chan []string, 1)
+	client.ListenBatch(func(messages []interface{}) error {
+		values := make([]string, 0, len(messages))
+		for _, message := range messages {
+			values = append(values, string(message.(*KafkaMessage).Value))
+		}
+		received <- values
+		return nil
+	})
+
+	values := receiveBatchValues(t, received)
+	if len(values) != 1 || values[0] != "offset-two" {
+		t.Fatalf("expected replay batch [offset-two], got %v", values)
+	}
+	waitForQueueItemDone(t, client, topicPartitionKey(testTopic, 0))
+
+	deadline := time.Now().Add(3 * time.Second)
+	var committedOffset int64
+	for time.Now().Before(deadline) {
+		if offset, ok := committedOffsetFromHistory(broker, "test-group", testTopic, 0); ok && offset == 3 {
+			committedOffset = offset
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if committedOffset != 3 {
+		t.Fatalf("expected replay completion offset 3 to be committed, got %d", committedOffset)
+	}
+	client.Close()
+
+	// The mock broker does not persist offset commits by itself. Feed the
+	// actual committed offset back into the offset-fetch response to simulate
+	// a restart against a broker that did persist it.
+	offsetFetch.SetOffset("test-group", testTopic, 0, committedOffset, "", sarama.ErrNoError)
+
+	restartCfg := cfg
+	restartCfg.ConsumerReplayOffsets = nil
+	restartClient := NewConsumerClient(restartCfg)
+	defer restartClient.Close()
+
+	historyStart := len(broker.History())
+	restarted := make(chan string, 1)
+	restartClient.Listen(func(message interface{}) error {
+		restarted <- string(message.(*KafkaMessage).Value)
+		return nil
+	})
+	waitForBrokerRequest(t, broker, historyStart, func(req interface{}) bool {
+		_, ok := req.(*sarama.FetchRequest)
+		return ok
+	})
+
+	select {
+	case value := <-restarted:
+		t.Fatalf("expected no message after restart from committed offset, got %q", value)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func committedOffsetFromHistory(broker *sarama.MockBroker, group, topic string, partition int32) (int64, bool) {
+	var (
+		lastOffset int64
+		found      bool
+	)
+	for _, entry := range broker.History() {
+		req, ok := entry.Request.(*sarama.OffsetCommitRequest)
+		if !ok || req.ConsumerGroup != group {
+			continue
+		}
+		offset, _, err := req.Offset(topic, partition)
+		if err != nil {
+			continue
+		}
+		lastOffset = offset
+		found = true
+	}
+	return lastOffset, found
+}
+
+func waitForQueueItemDone(t *testing.T, client *KafkaClient, key string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		value, ok := client.msgQueue.Load(key)
+		if ok {
+			if item, err := value.(*basic.SafeRingQueue).Peek(); err == nil {
+				if queued, ok := item.(queuedItem); ok && queued.isDone() {
+					return
+				}
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for queued item %s to complete", key)
+}
+
+func waitForBrokerRequest(t *testing.T, broker *sarama.MockBroker, start int, match func(interface{}) bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		history := broker.History()
+		for _, entry := range history[start:] {
+			if match(entry.Request) {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for broker request")
+}
+
 func receiveBatchValues(t *testing.T, received <-chan []string) []string {
 	t.Helper()
 	select {
@@ -714,15 +1164,31 @@ func (c *testConsumerGroupClaim) Messages() <-chan *sarama.ConsumerMessage { ret
 type testConsumerGroupSession struct {
 	ctx           context.Context
 	markedOffsets []int64
+	claims        map[string][]int32
+	resetOffsets  []consumerSessionResetOffset
+	commitCount   int
 }
 
-func (s *testConsumerGroupSession) Claims() map[string][]int32 { return nil }
+type consumerSessionResetOffset struct {
+	topic     string
+	partition int32
+	offset    int64
+}
+
+func (s *testConsumerGroupSession) Claims() map[string][]int32 { return s.claims }
 func (s *testConsumerGroupSession) MemberID() string           { return "" }
 func (s *testConsumerGroupSession) GenerationID() int32        { return 0 }
 func (s *testConsumerGroupSession) MarkOffset(string, int32, int64, string) {
 }
-func (s *testConsumerGroupSession) Commit() {}
-func (s *testConsumerGroupSession) ResetOffset(string, int32, int64, string) {
+func (s *testConsumerGroupSession) Commit() {
+	s.commitCount++
+}
+func (s *testConsumerGroupSession) ResetOffset(topic string, partition int32, offset int64, _ string) {
+	s.resetOffsets = append(s.resetOffsets, consumerSessionResetOffset{
+		topic:     topic,
+		partition: partition,
+		offset:    offset,
+	})
 }
 func (s *testConsumerGroupSession) MarkMessage(msg *sarama.ConsumerMessage, _ string) {
 	s.markedOffsets = append(s.markedOffsets, msg.Offset)
