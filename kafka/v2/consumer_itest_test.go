@@ -198,11 +198,12 @@ func TestV2Consumer_RetryExhaustedThenDeadLetter(t *testing.T) {
 	var callCount int32
 	var dlMsg string
 	var dlErr error
-	dlHandler := func(message interface{}, err error) {
+	dlHandler := func(message interface{}, err error) error {
 		atomic.AddInt32(&callCount, 1)
 		dlMsg = string(message.(*sarama.ConsumerMessage).Value)
 		dlErr = err
 		cancel()
+		return nil
 	}
 
 	go client.consume(func(message interface{}) error {

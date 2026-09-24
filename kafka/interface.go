@@ -52,6 +52,8 @@ type Config struct {
 	ConsumerBatchSize         int                    `yaml:"consumerBatchSize" default:"100"`          // 仅在v2生效，批量消费时每批最大消息数 / Only effective in v2, max messages per batch
 	ConsumerBatchWait         time.Duration          `yaml:"consumerBatchWait" default:"100ms"`        // 仅在v2生效，批量消费时等待凑批的最长时间 / Only effective in v2, max wait before flushing a partial batch
 	ConsumerReplayOffsets     []ConsumerReplayOffset `yaml:"consumerReplayOffsets"`                    // 仅在v2生效，首次分配到 partition 时从指定 offset 开始消费 / Only effective in v2, start assigned partitions from the configured offsets once
+	DeadLetterRetryCount      int                    `yaml:"deadLetterRetryCount" default:"3"`         // 死信处理器最大执行次数 / Max attempts for dead-letter handlers
+	DeadLetterRetryInterval   time.Duration          `yaml:"deadLetterRetryInterval" default:"1s"`     // 死信处理重试基础间隔，指数退避，最大30s / Base interval for dead-letter retries
 	SecurityProtocol          string                 `yaml:"securityProtocol"`
 	SaslMechanism             string                 `yaml:"saslMechanism"`
 	SaslUsername              string                 `yaml:"saslUsername"`
@@ -82,28 +84,32 @@ type ProducerHook interface {
 
 // DeadLetterHandler is called when a message fails after all retries are exhausted.
 // The handler receives the original message and the last error from the callback.
+// Returning an error retries the handler according to DeadLetterRetryCount and
+// leaves the source message uncommitted when all attempts fail.
 //
 // DeadLetterHandler 在消息重试次数耗尽后被调用，
-// 接收原始消息和最后一次回调返回的错误。
-type DeadLetterHandler func(message interface{}, err error)
+// 接收原始消息和最后一次回调返回的错误。返回 error 会触发死信重试；
+// 重试耗尽后不提交源消息 offset。
+type DeadLetterHandler func(message interface{}, err error) error
 
 // BatchHandler processes messages from one topic partition in offset order.
 // Returning an error retries the entire batch.
 type BatchHandler func(messages []interface{}) error
 
-// BatchDeadLetterHandler is called once after all retries for a batch are exhausted.
-type BatchDeadLetterHandler func(messages []interface{}, err error)
+// BatchDeadLetterHandler is called after all retries for a batch are exhausted.
+// Returning an error retries the handler for the whole batch.
+type BatchDeadLetterHandler func(messages []interface{}, err error) error
 
 type Consumer interface {
 	// Listen starts consuming messages. If the callback returns a non-nil error,
 	// the message will be re-enqueued for retry up to ConsumerRetryCount times.
-	// When all retries are exhausted, the optional deadLetterHandler is called,
-	// then the message offset is committed to prevent rebalance.
+	// When all retries are exhausted, the optional deadLetterHandler is called.
+	// The source offset is committed only after the handler succeeds.
 	//
 	// Listen 启动消息消费。如果回调返回非 nil 的 error，
 	// 消息将重新入队重试，最多重试 ConsumerRetryCount 次。
-	// 重试次数耗尽后，调用可选的死信回调 deadLetterHandler，
-	// 然后提交 offset 以避免 rebalance。
+	// 重试次数耗尽后，调用可选的死信回调 deadLetterHandler。
+	// 只有死信处理成功后才提交源消息 offset。
 	Listen(fn func(message interface{}) error, deadLetterHandler ...DeadLetterHandler)
 	Close()
 }

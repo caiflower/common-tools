@@ -70,3 +70,11 @@ func TestConfig_DurationSmallButValid(t *testing.T) {
 	assert.Equal(t, 500*time.Millisecond, cfg.ProducerRequestTimeout, "500ms stays 500ms")
 	assert.Equal(t, 1*time.Second, cfg.ProducerMessageTimeout, "1s stays 1s")
 }
+
+func TestConfig_DeadLetterRetryDefaults(t *testing.T) {
+	cfg := Config{Name: "test", Enable: "true"}
+	_ = tools.DoTagFunc(&cfg, []tools.FnObj{{Fn: tools.SetDefaultValueIfNil}})
+
+	assert.Equal(t, 3, cfg.DeadLetterRetryCount)
+	assert.Equal(t, time.Second, cfg.DeadLetterRetryInterval)
+}

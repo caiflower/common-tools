@@ -154,9 +154,10 @@ func TestKafkaClientProcessBatchDeadLetterOnce(t *testing.T) {
 	var deadLetterSize int
 	client.processBatch(item, func([]interface{}) error {
 		return context.DeadlineExceeded
-	}, func(messages []interface{}, _ error) {
+	}, func(messages []interface{}, _ error) error {
 		atomic.AddInt32(&calls, 1)
 		deadLetterSize = len(messages)
+		return nil
 	})
 
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -675,12 +676,13 @@ func TestListenBatchRetriesWholeBatchViaMockBroker(t *testing.T) {
 		}
 		received <- values
 		return nil
-	}, func(messages []interface{}, _ error) {
+	}, func(messages []interface{}, _ error) error {
 		values := make([]string, 0, len(messages))
 		for _, message := range messages {
 			values = append(values, string(message.(*KafkaMessage).Value))
 		}
 		deadLetter <- values
+		return nil
 	})
 
 	values := receiveBatchValues(t, received)
@@ -723,12 +725,13 @@ func TestListenBatchDeadLettersWholeBatchViaMockBroker(t *testing.T) {
 	client.ListenBatch(func([]interface{}) error {
 		atomic.AddInt32(&calls, 1)
 		return errors.New("dead batch")
-	}, func(messages []interface{}, _ error) {
+	}, func(messages []interface{}, _ error) error {
 		values := make([]string, 0, len(messages))
 		for _, message := range messages {
 			values = append(values, string(message.(*KafkaMessage).Value))
 		}
 		deadLetter <- values
+		return nil
 	})
 
 	select {

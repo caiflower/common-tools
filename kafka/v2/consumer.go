@@ -462,45 +462,7 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 				return
 			}
 
-			completed := func() bool {
-				defer e.OnError(fmt.Sprintf("kafka [%s-%d] consumer listen", c.cfg.Name, tid))
-				startTime := time.Now()
-				if err := fn(item.msg); err != nil {
-					item.retryCount++
-					if item.retryCount < c.cfg.ConsumerRetryCount {
-						// Check if consumer is still running before retry, avoid writing to closed channel / 消费者关闭时不再重试，避免向已关闭 channel 写入
-						if !c.running.Load() {
-							return false
-						}
-						item.retryDelay = retryDelay(item.retryCount)
-						item.lastRetryTime = time.Now()
-
-						// Retry: re-enqueue the message for another attempt / 重试：将消息重新入队
-						logger.Warn("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), will retry after %v. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, item.retryDelay, err)
-						// Use goroutine to delay re-enqueue without blocking the worker
-						// 使用 goroutine 延迟入队，不阻塞当前 worker 协程
-						go func(msg *msgItem) {
-							time.Sleep(msg.retryDelay)
-							select {
-							case <-c.ctx.Done():
-								return
-							case c.msgChan <- msg:
-							}
-						}(item)
-						return false
-					}
-					// All retries exhausted / 重试次数耗尽
-					logger.Error("[kafka-consumer] [%s-%d] consume message failed [topic=%s] [partition=%d] [offset=%d] after %d retries. Error: %v", c.cfg.Name, tid, item.msg.Topic, item.msg.Partition, item.msg.Offset, c.cfg.ConsumerRetryCount, err)
-					if dlHandler != nil {
-						// Call dead letter handler / 调用死信回调
-						dlHandler(item.msg, err)
-					}
-					// Mark done to allow offset commit, preventing rebalance / 标记完成以允许 offset 提交，避免 rebalance
-				}
-				xkafka.RecordConsumedDuration(time.Since(startTime).Milliseconds())
-				xkafka.CountConsumer(c.cfg)
-				return true
-			}()
+			completed := c.processMessage(item, fn, dlHandler)
 			if completed {
 				item.markDone()
 			}
@@ -511,48 +473,155 @@ func (c *KafkaClient) consume(fn func(message interface{}) error, deadLetterHand
 	}
 }
 
+func (c *KafkaClient) processMessage(
+	item *msgItem,
+	fn func(message interface{}) error,
+	dlHandler xkafka.DeadLetterHandler,
+) bool {
+	defer e.OnError(fmt.Sprintf("kafka [%s] consumer listen", c.cfg.Name))
+	startTime := time.Now()
+	if err := fn(item.msg); err != nil {
+		item.retryCount++
+		if item.retryCount < c.cfg.ConsumerRetryCount {
+			if !c.running.Load() {
+				return false
+			}
+			item.retryDelay = xkafka.RetryDelay(item.retryCount)
+			item.lastRetryTime = time.Now()
+
+			logger.Warn("[kafka-consumer] [%s] consume message failed [topic=%s] [partition=%d] [offset=%d] (retry %d/%d), will retry after %v. Error: %v",
+				c.cfg.Name, item.msg.Topic, item.msg.Partition, item.msg.Offset, item.retryCount, c.cfg.ConsumerRetryCount, item.retryDelay, err)
+			go func(msg *msgItem) {
+				timer := time.NewTimer(msg.retryDelay)
+				defer timer.Stop()
+				select {
+				case <-c.ctx.Done():
+					return
+				case <-timer.C:
+				}
+				select {
+				case <-c.ctx.Done():
+					return
+				case c.msgChan <- msg:
+				}
+			}(item)
+			return false
+		}
+
+		logger.Error("[kafka-consumer] [%s] consume message failed [topic=%s] [partition=%d] [offset=%d] after %d attempts. Error: %v",
+			c.cfg.Name, item.msg.Topic, item.msg.Partition, item.msg.Offset, c.cfg.ConsumerRetryCount, err)
+		if !c.handleDeadLetter(item.msg, err, dlHandler) {
+			return false
+		}
+	}
+	xkafka.RecordConsumedDuration(time.Since(startTime).Milliseconds())
+	xkafka.CountConsumer(c.cfg)
+	return true
+}
+
+func (c *KafkaClient) handleDeadLetter(
+	message interface{},
+	cause error,
+	dlHandler xkafka.DeadLetterHandler,
+) bool {
+	if dlHandler == nil {
+		return true
+	}
+
+	policy := xkafka.RetryPolicy{
+		MaxAttempts: c.cfg.DeadLetterRetryCount,
+		Delay: func(attempt int) time.Duration {
+			return xkafka.RetryDelayWithBase(attempt, c.cfg.DeadLetterRetryInterval, 30*time.Second)
+		},
+	}
+	err := policy.Run(c.ctx, func(attempt int) error {
+		if err := dlHandler(message, cause); err != nil {
+			logger.Warn("[kafka-consumer] [%s] dead-letter attempt %d/%d failed. Error: %v",
+				c.cfg.Name, attempt, c.cfg.DeadLetterRetryCount, err)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Error("[kafka-consumer] [%s] dead-letter failed after %d attempts; source offset will not be committed. Error: %v",
+			c.cfg.Name, c.cfg.DeadLetterRetryCount, err)
+		return false
+	}
+	return true
+}
+
 func (c *KafkaClient) processBatch(item *batchItem, fn xkafka.BatchHandler, dlHandler xkafka.BatchDeadLetterHandler) {
 	defer e.OnError(fmt.Sprintf("kafka [%s] batch consumer listen", c.cfg.Name))
-	for {
+	policy := xkafka.RetryPolicy{
+		MaxAttempts: c.cfg.ConsumerRetryCount,
+		Delay:       xkafka.RetryDelay,
+	}
+	err := policy.Run(c.ctx, func(attempt int) error {
 		startTime := time.Now()
 		err := fn(item.values)
 		xkafka.RecordConsumedDuration(time.Since(startTime).Milliseconds())
 		if err == nil {
-			for range item.messages {
-				xkafka.CountConsumer(c.cfg)
-			}
-			item.markDone()
-			return
+			return nil
 		}
 
-		item.retryCount++
-		if item.retryCount < c.cfg.ConsumerRetryCount {
-			item.retryDelay = retryDelay(item.retryCount)
-			item.lastRetryTime = time.Now()
-			logger.Warn("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] (retry %d/%d), will retry after %v. Error: %v",
-				item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), item.retryCount, c.cfg.ConsumerRetryCount, item.retryDelay, err)
-
-			timer := time.NewTimer(item.retryDelay)
-			select {
-			case <-c.ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-			continue
-		}
-
-		logger.Error("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] after %d retries. Error: %v",
-			item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), c.cfg.ConsumerRetryCount, err)
-		if dlHandler != nil {
-			dlHandler(item.values, err)
-		}
+		item.retryCount = attempt
+		item.retryDelay = xkafka.RetryDelay(attempt)
+		item.lastRetryTime = time.Now()
+		logger.Warn("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] (attempt %d/%d), will retry after %v. Error: %v",
+			item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), attempt, c.cfg.ConsumerRetryCount, item.retryDelay, err)
+		return err
+	})
+	if err == nil {
 		for range item.messages {
 			xkafka.CountConsumer(c.cfg)
 		}
 		item.markDone()
 		return
 	}
+	if c.ctx.Err() != nil {
+		return
+	}
+
+	logger.Error("[kafka-consumer] batch consume failed [topic=%s] [partition=%d] [firstOffset=%d] [messages=%d] after %d attempts. Error: %v",
+		item.messages[0].Topic, item.messages[0].Partition, item.messages[0].Offset, len(item.messages), c.cfg.ConsumerRetryCount, err)
+	if !c.handleBatchDeadLetter(item.values, err, dlHandler) {
+		return
+	}
+	for range item.messages {
+		xkafka.CountConsumer(c.cfg)
+	}
+	item.markDone()
+}
+
+func (c *KafkaClient) handleBatchDeadLetter(
+	messages []interface{},
+	cause error,
+	dlHandler xkafka.BatchDeadLetterHandler,
+) bool {
+	if dlHandler == nil {
+		return true
+	}
+
+	policy := xkafka.RetryPolicy{
+		MaxAttempts: c.cfg.DeadLetterRetryCount,
+		Delay: func(attempt int) time.Duration {
+			return xkafka.RetryDelayWithBase(attempt, c.cfg.DeadLetterRetryInterval, 30*time.Second)
+		},
+	}
+	err := policy.Run(c.ctx, func(attempt int) error {
+		if err := dlHandler(messages, cause); err != nil {
+			logger.Warn("[kafka-consumer] [%s] batch dead-letter attempt %d/%d failed. Error: %v",
+				c.cfg.Name, attempt, c.cfg.DeadLetterRetryCount, err)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Error("[kafka-consumer] [%s] batch dead-letter failed after %d attempts; source offset will not be committed. Error: %v",
+			c.cfg.Name, c.cfg.DeadLetterRetryCount, err)
+		return false
+	}
+	return true
 }
 
 func (c *KafkaClient) monitorOffset() {
