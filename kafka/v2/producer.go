@@ -201,16 +201,26 @@ label:
 					logger.Info("KafkaAsyncProducer %s chan errors is closed. exit.", c.cfg.Name)
 					break fe
 				}
-				err.Msg.Metadata = finishProducerMessage(err.Msg.Metadata, err.Err)
-				if err != nil {
-					xkafka.AddProducerErrCount(c.cfg, err.Msg.Topic, xkafka.AsyncErr)
-					logger.Error("KafkaAsyncProducer %s got error. %s", c.cfg.Name, err)
-				}
+				handleAsyncProducerError(c.cfg, err)
 			case msg := <-success:
 				msg.Metadata = finishProducerMessage(msg.Metadata, nil)
 			}
 		}
 	}(producer)
+}
+
+func handleAsyncProducerError(cfg *xkafka.Config, producerErr *sarama.ProducerError) {
+	if producerErr == nil {
+		return
+	}
+	if producerErr.Msg == nil {
+		logger.Error("KafkaAsyncProducer %s got producer error without message. Error: %v", cfg.Name, producerErr.Err)
+		return
+	}
+
+	producerErr.Msg.Metadata = finishProducerMessage(producerErr.Msg.Metadata, producerErr.Err)
+	xkafka.AddProducerErrCount(cfg, producerErr.Msg.Topic, xkafka.AsyncErr)
+	logger.Error("KafkaAsyncProducer %s got error. %s", cfg.Name, producerErr)
 }
 
 func cloneSaramaConfig(config *sarama.Config) *sarama.Config {
