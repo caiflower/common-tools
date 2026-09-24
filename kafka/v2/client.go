@@ -60,6 +60,7 @@ type KafkaClient struct {
 	closeChan             chan struct{}
 	ctx                   context.Context
 	cancelFunc            context.CancelFunc
+	commitMu              sync.Mutex
 	commitCycleCount      int
 
 	// 同步发送

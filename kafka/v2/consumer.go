@@ -188,6 +188,12 @@ func buildConsumerReplayOffsets(offsets []xkafka.ConsumerReplayOffset) map[strin
 }
 
 func (h *consumerGroupHandler) Cleanup(session sarama.ConsumerGroupSession) error {
+	h.commitCompletedOffsets()
+	for topic, partitions := range session.Claims() {
+		for _, partition := range partitions {
+			h.msgQueue.Delete(topicPartitionKey(topic, partition))
+		}
+	}
 	h.sessionMu.Lock()
 	h.consumerSession = nil
 	h.sessionMu.Unlock()
@@ -640,6 +646,9 @@ func (c *KafkaClient) monitorOffset() {
 }
 
 func (c *KafkaClient) commitCompletedOffsets() {
+	c.commitMu.Lock()
+	defer c.commitMu.Unlock()
+
 	c.commitCycleCount++
 	c.msgQueue.Range(func(key, value interface{}) bool {
 		msgQueue, ok := value.(*basic.SafeRingQueue)

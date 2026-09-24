@@ -384,9 +384,16 @@ func (c *KafkaClient) rebalanceCallback(consumer *kafka.Consumer, event kafka.Ev
 		// commit current offset before rebalance
 		logger.Info("[rebalanceCallback] commit offset before rebalance, name='%s'", c.config.Name)
 		c.commitOffsetFunc()
+		c.removeRevokedPartitionQueues(ev.Partitions)
 	default:
 		logger.Warn("Unexpected event type: %v", event)
 	}
 
 	return nil
+}
+
+func (c *KafkaClient) removeRevokedPartitionQueues(partitions []kafka.TopicPartition) {
+	for i := range partitions {
+		c.msgQueue.Delete(getTopicPartitionKey(&partitions[i]))
+	}
 }
