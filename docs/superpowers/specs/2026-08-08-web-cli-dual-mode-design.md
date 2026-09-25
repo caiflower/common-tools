@@ -64,7 +64,7 @@ func (h *Handler) Routes() []RouteInfo
 
 - `method.Method` / gRPC 路由：`GetAction()` 得到 operationID，`GetTargetMethod()`/`ArgInfo` 得到参数。
 - `HandlerFuncTypeOfMethod`：无法得到稳定方法名时，用 method + path 生成 operationID，参数为空。
-- 参数来源映射：`path`/`query`/`header` tag 对应各自来源；GET/HEAD 下 `json` tag 映射 query，其他方法映射 body，与 `setArgsOptimized` 一致。
+- 参数来源映射：`path`/`query`/`header` tag 对应各自来源；GET/HEAD 下只有显式 `query` tag 映射 query（`setArgsOptimized` 同样只绑定带 query tag 的字段），其他方法 `json` tag 映射 body。
 
 ### 2. resource/verb 推导与显式覆盖
 

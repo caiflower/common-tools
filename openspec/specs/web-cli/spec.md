@@ -64,7 +64,7 @@ The CLI SHALL cache remote metadata locally. Cache SHALL be keyed by server addr
 - **THEN** the CLI SHALL execute using the cached metadata and output a warning
 
 ### Requirement: Request parameter binding
-The CLI SHALL bind path parameters into the URL template, query parameters into the query string, header parameters into request headers, and body parameters from `--data` or `-f`. For GET/HEAD routes, `json` tag fields SHALL be treated as query parameters; for other methods they SHALL be treated as body.
+The CLI SHALL bind path parameters into the URL template, query parameters into the query string, header parameters into request headers, and body parameters from `--data` or `-f`. For GET/HEAD routes, only fields with an explicit `query` tag SHALL be treated as query parameters, matching server-side binding; `json` tag fields SHALL NOT be exposed as CLI flags. For other methods `json` tag fields SHALL be treated as body.
 
 #### Scenario: Path and query parameters
 - **WHEN** command `get users --id=1 --status=active` maps to `GET /users/:id`

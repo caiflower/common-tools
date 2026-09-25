@@ -186,6 +186,46 @@ func TestDiscoverWithoutCacheFails(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestDiscoverRecoversFromCorruptedCache(t *testing.T) {
+	var requests atomic.Int32
+	server := newDiscoveryServer(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("ETag", `"v1-v1"`)
+		_ = json.NewEncoder(w).Encode(discoveryMetadata())
+	})
+	defer server.Close()
+
+	dir := t.TempDir()
+	path, err := cacheFilePath(server.URL, dir)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	// Truncated JSON, as left behind by an interrupted write.
+	require.NoError(t, os.WriteFile(path, []byte(`{"name":"myapp"`), 0o600))
+
+	meta, err := Discover(context.Background(), server.URL, CacheOptions{TTL: time.Minute, Dir: dir})
+	require.NoError(t, err)
+	assert.Equal(t, "myapp", meta.Name)
+	assert.Equal(t, int32(1), requests.Load())
+
+	fresh, err := readCacheFile(path)
+	require.NoError(t, err)
+	require.NotNil(t, fresh)
+	assert.Equal(t, "myapp", fresh.Name)
+
+	// --refresh used to be unable to recover either; it must also refetch.
+	require.NoError(t, os.WriteFile(path, []byte(`not json at all`), 0o600))
+	_, err = Discover(context.Background(), server.URL, CacheOptions{TTL: time.Minute, Dir: dir, Refresh: true})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), requests.Load())
+
+	// Atomic write must not leave temporary files behind.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		assert.NotContains(t, entry.Name(), ".tmp-")
+	}
+}
+
 func TestCacheFilePathUsesServerHash(t *testing.T) {
 	dir := t.TempDir()
 	path, err := cacheFilePath("http://127.0.0.1:8080", dir)

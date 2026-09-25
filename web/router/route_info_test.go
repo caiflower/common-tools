@@ -91,7 +91,7 @@ func TestExtractParams(t *testing.T) {
 	m := method.NewDefaultTypeMethod(target)
 
 	params := extractParams(m, "GET")
-	assert.Len(t, params, 4)
+	assert.Len(t, params, 3)
 
 	byName := make(map[string]ParamInfo)
 	for _, p := range params {
@@ -103,7 +103,9 @@ func TestExtractParams(t *testing.T) {
 	assert.Equal(t, "int", byName["id"].Type)
 	assert.Equal(t, "query", byName["name"].Source)
 	assert.Equal(t, "header", byName["X-Auth"].Source)
-	assert.Equal(t, "query", byName["note"].Source)
+	// GET only binds fields with an explicit query tag; a bare json tag is not
+	// a query source (server-side setArgsOptimized behaves the same way).
+	assert.NotContains(t, byName, "note")
 
 	postParams := extractParams(method.NewDefaultTypeMethod(basic.NewMethod(nil, cliTestPost)), "POST")
 	postByName := make(map[string]ParamInfo)
@@ -123,7 +125,7 @@ func TestExtractParamsCtxFirstHandler(t *testing.T) {
 	}
 	assert.Equal(t, "path", byName["id"].Source)
 	assert.Equal(t, "query", byName["name"].Source)
-	assert.Equal(t, "query", byName["note"].Source)
+	assert.NotContains(t, byName, "note")
 }
 
 func TestExtractParamsGrpcHandler(t *testing.T) {
@@ -159,7 +161,7 @@ func TestRoutesAndOverride(t *testing.T) {
 	assert.Equal(t, "cliTestGet", route.OperationID)
 	assert.Equal(t, "get", route.Verb)
 	assert.Equal(t, "users", route.Resource)
-	assert.Len(t, route.Params, 4)
+	assert.Len(t, route.Params, 3)
 
 	handler.CLIRoute("GET", "/users/:id", "customers", "list")
 	route = handler.Routes()[0]

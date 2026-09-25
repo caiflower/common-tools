@@ -119,7 +119,7 @@ func extractParams(m *method.Method, httpMethod string) []ParamInfo {
 	if argIndex < 0 {
 		return nil
 	}
-	return extractParamsFromArg(target.GetArgInfo(argIndex), httpMethod, "")
+	return extractParamsFromArg(target.GetArgInfo(argIndex), httpMethod)
 }
 
 func requestArgIndex(m *method.Method, target *basic.Method) int {
@@ -136,7 +136,7 @@ func requestArgIndex(m *method.Method, target *basic.Method) int {
 	return 0
 }
 
-func extractParamsFromArg(arg *basic.ArgInfo, httpMethod string, prefix string) []ParamInfo {
+func extractParamsFromArg(arg *basic.ArgInfo, httpMethod string) []ParamInfo {
 	if arg == nil {
 		return nil
 	}
@@ -147,10 +147,10 @@ func extractParamsFromArg(arg *basic.ArgInfo, httpMethod string, prefix string) 
 	if t.Kind() != reflect.Struct {
 		return nil
 	}
-	return extractParamsFromType(t, httpMethod, prefix, make(map[reflect.Type]bool))
+	return extractParamsFromType(t, httpMethod, make(map[reflect.Type]bool))
 }
 
-func extractParamsFromType(t reflect.Type, httpMethod, prefix string, seen map[reflect.Type]bool) []ParamInfo {
+func extractParamsFromType(t reflect.Type, httpMethod string, seen map[reflect.Type]bool) []ParamInfo {
 	var params []ParamInfo
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -175,7 +175,7 @@ func extractParamsFromType(t reflect.Type, httpMethod, prefix string, seen map[r
 		}
 		if fieldType.Kind() == reflect.Struct && !seen[fieldType] {
 			seen[fieldType] = true
-			params = append(params, extractParamsFromType(fieldType, httpMethod, name+".", seen)...)
+			params = append(params, extractParamsFromType(fieldType, httpMethod, seen)...)
 		}
 	}
 	return params
@@ -191,12 +191,14 @@ func paramSourceAndName(field reflect.StructField, httpMethod string) (string, s
 	if value := strings.TrimSpace(field.Tag.Get("header")); value != "" {
 		return "header", value
 	}
+	// GET/HEAD only bind explicitly tagged query fields (see setArgsOptimized
+	// and the OpenAPI generator), so untagged fields must not become CLI flags.
+	if strings.EqualFold(httpMethod, consts.MethodGet) || strings.EqualFold(httpMethod, consts.MethodHead) {
+		return "", ""
+	}
 	jsonName := strings.TrimSpace(field.Tag.Get("json"))
 	if jsonName == "" {
 		jsonName = field.Name
-	}
-	if strings.EqualFold(httpMethod, consts.MethodGet) || strings.EqualFold(httpMethod, consts.MethodHead) {
-		return "query", jsonName
 	}
 	return "body", jsonName
 }

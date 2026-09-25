@@ -293,7 +293,7 @@ myapp get users --userId=42 --output yaml
 
 - `path`/`query`/`header` tag 对应独立 flag。
 - 非 GET/HEAD 请求的 `json` 字段通过 `--data` 传 JSON，或通过 `-f file.json` 从文件读取。
-- GET/HEAD 请求的 `json` 字段映射为 query 参数。
+- GET/HEAD 请求只会把显式 `query` tag 的字段映射为 query flag；仅写 `json` tag 的字段不会生成 flag（服务端绑定同样只认 `query` tag）。
 - 带 `verf:"required"` 的参数会标记为必填 flag。
 
 全局 flag：
@@ -382,12 +382,12 @@ type UserReq struct {
 
 #### 查询参数绑定（GET请求）
 
-使用 `json` tag 或 `query` tag 绑定查询参数。
+使用 `query` tag 绑定查询参数；仅写 `json` tag 的字段不会参与查询参数绑定。
 
 ```go
 type SearchReq struct {
-    Keyword string `query:"keyword"` // 推荐使用 query tag
-    Page    int    `json:"page"`     // 兼容 json tag
+    Keyword string `query:"keyword"`
+    Page    int    `query:"page"`
 }
 
 func Search(ctx context.Context, req *SearchReq) (interface{}, error) {

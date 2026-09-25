@@ -55,7 +55,10 @@ func readCacheFile(path string) (*cacheFile, error) {
 	}
 	var cached cacheFile
 	if err := json.Unmarshal(body, &cached); err != nil {
-		return nil, err
+		// A truncated or otherwise corrupted cache file (e.g. interrupted write)
+		// must not disable discovery forever: treat it as a cache miss and drop it.
+		_ = os.Remove(path)
+		return nil, nil
 	}
 	return &cached, nil
 }
@@ -68,5 +71,21 @@ func writeCacheFile(path string, metadata Metadata, fetchedAt time.Time) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, body, 0o600)
+	// Write to a temporary file and rename so readers never observe a
+	// partially written cache file.
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

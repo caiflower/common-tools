@@ -22,6 +22,7 @@ import (
 
 	"github.com/caiflower/common-tools/web/router"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type cliCmdReq struct {
@@ -64,6 +65,22 @@ func TestDynamicCommandsGenerateResourceFlag(t *testing.T) {
 	assert.NotNil(t, idFlag)
 	nameFlag := cmd.Flags().Lookup("name")
 	assert.NotNil(t, nameFlag)
+}
+
+func TestGetCommandIgnoresJsonOnlyFields(t *testing.T) {
+	engine := newCLIEngine()
+	engine.GET("/users/:id", cliCmdGet)
+	root := New(engine, WithName("myapp"), WithRunner(&fakeRunner{}))
+
+	cmd, _, err := root.Find([]string{"get", "users"})
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+	assert.NotNil(t, cmd.Flags().Lookup("id"))
+	assert.NotNil(t, cmd.Flags().Lookup("name"))
+	// json-only fields are not bound to query by the server, so the CLI must
+	// not expose flags that silently do nothing.
+	assert.Nil(t, cmd.Flags().Lookup("body"))
+	assert.Nil(t, cmd.Flags().Lookup("data"))
 }
 
 func TestCallCommandExists(t *testing.T) {
