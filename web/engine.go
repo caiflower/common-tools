@@ -93,6 +93,8 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 		DisableOptimization:           true,
 		EnableActionController:        options.EnableActionController,
 		EnableSwagger:                 options.EnableSwagger,
+		EnableCLI:                     options.EnableCLI,
+		CLIRoutesPath:                 options.CLIRoutesPath,
 		DisableHeaderNamesNormalizing: options.DisableHeaderNamesNormalizing,
 	}
 }
@@ -100,6 +102,11 @@ func (e *Engine) getHandlerCfg() router.HandlerCfg {
 // Handler returns the underlying Handler for advanced usage.
 func (e *Engine) Handler() *router.Handler {
 	return e.handler
+}
+
+// Addr returns the configured listening address.
+func (e *Engine) Addr() string {
+	return e.opts.Addr
 }
 
 // Group creates a new router group with the given path prefix and optional middleware.
@@ -180,4 +187,9 @@ func (e *Engine) GRPC(httpMethod string, relativePath string, handler func(srv i
 // RouterGroup returns the root RouterGroup.
 func (e *Engine) RouterGroup() *router.RouterGroup {
 	return e.routerGroup
+}
+
+// CLIRoute overrides the resource and verb used by the CLI for a registered route.
+func (e *Engine) CLIRoute(method, path, resource, verb string) {
+	e.handler.CLIRoute(method, path, resource, verb)
 }

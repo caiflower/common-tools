@@ -242,6 +242,83 @@ c.SetRetryIfFunc(func(req *protocol.Request, resp *protocol.Response, err error)
 
 ---
 
+## 命令行双模式
+
+同一个二进制可以同时作为 HTTP 服务和命令行工具使用：`serve` 子命令把 engine 注册到资源管理器并启动服务；其他子命令按 `动词 + 资源` 动态生成，通过 HTTP 调用运行中的服务。CLI 只走 HTTP，不直接执行进程内 handler。
+
+```go
+func main() {
+    engine := web.Default(
+        config.WithName("myapp"),
+        config.WithAddr(":8080"),
+        config.WithEnableCLI(true),
+    )
+
+    engine.GET("/users/:userId", uc.GetUser)
+    engine.POST("/users", uc.CreateUser)
+
+    // 可选：手动覆盖 CLI 的资源名和动词
+    engine.CLIRoute("GET", "/users/:userId", "user", "get")
+
+    if err := cli.Run(engine); err != nil {
+        panic(err)
+    }
+}
+```
+
+```bash
+# 启动服务（默认使用 global.DefaultResourceManger）
+myapp serve
+
+# 列出已注册接口
+myapp routes
+
+# 调用本地服务
+myapp get users --userId=42
+myapp create users --data '{"name":"alice"}'
+
+# 调用远端服务并指定认证与请求头
+myapp get users --userId=42 --server http://10.0.0.8:8080 --token abc --header X-Env=prod
+
+# 输出 JSON 或 YAML
+myapp get users --userId=42 --output json
+myapp get users --userId=42 --output yaml
+```
+
+动态命令默认从本进程注册的路由元数据生成：`GET/POST/PUT/PATCH/DELETE` 分别映射为 `get/create/update/patch/delete`，资源名优先取 handler 方法名，取不到时用路径最后一段。每条路由同时保留 `call <operationID>` 兜底命令。
+
+指定 `--server` 时命令树优先从该服务 `/cli/routes` 返回的元数据生成（含缓存命中场景），这样本进程未注册的路由也可通过远端元数据调用；远端拉取失败且无缓存时，CLI 会输出警告并降级为本进程本地元数据生成命令。
+
+参数生成规则：
+
+- `path`/`query`/`header` tag 对应独立 flag。
+- 非 GET/HEAD 请求的 `json` 字段通过 `--data` 传 JSON，或通过 `-f file.json` 从文件读取。
+- GET/HEAD 请求只会把显式 `query` tag 的字段映射为 query flag；仅写 `json` tag 的字段不会生成 flag（服务端绑定同样只认 `query` tag）。
+- 带 `verf:"required"` 的参数会标记为必填 flag。
+
+全局 flag：
+
+```text
+--server <url>      远端服务地址；缺省使用 engine 配置的监听地址
+--token <value>     附加 Authorization: Bearer <value>
+--header k=v        可重复，附加请求头
+--output table|json|yaml
+--refresh           强制刷新远端元数据缓存
+--cache-ttl 5m      元数据缓存有效期
+--cache-dir <path>  元数据缓存目录
+```
+
+启用 `/cli/routes` 后，`myapp routes --server http://host:port` 会拉取远端接口元数据并写入本地缓存。默认 TTL 为 5 分钟，缓存文件按 server 地址 hash 存放在用户缓存目录；带 `If-None-Match` 刷新命中 304 时复用缓存。服务不可达但存在缓存时会降级使用旧缓存并输出警告。
+
+`/cli/routes` 默认关闭，生产环境仅在需要远端发现时开启，并建议配合认证/网络隔离使用：
+
+```go
+config.WithEnableCLI(true)
+config.WithCLIRoutesPath("/cli/routes")
+```
+
+---
+
 ## 核心接口
 
 ### ICore 接口
@@ -305,12 +382,12 @@ type UserReq struct {
 
 #### 查询参数绑定（GET请求）
 
-使用 `json` tag 或 `query` tag 绑定查询参数。
+使用 `query` tag 绑定查询参数；仅写 `json` tag 的字段不会参与查询参数绑定。
 
 ```go
 type SearchReq struct {
-    Keyword string `query:"keyword"` // 推荐使用 query tag
-    Page    int    `json:"page"`     // 兼容 json tag
+    Keyword string `query:"keyword"`
+    Page    int    `query:"page"`
 }
 
 func Search(ctx context.Context, req *SearchReq) (interface{}, error) {
@@ -842,6 +919,8 @@ server := web.Default(
 | `WithEnablePprof`            | bool | false  | 是否启用性能分析           |
 | `WithEnableMetrics`          | bool | false  | 是否启用 Prometheus 指标   |
 | `WithEnableSwagger`          | bool | false  | 是否启用 Swagger 文档        |
+| `WithEnableCLI`              | bool | false  | 是否启用 `/cli/routes` 元数据接口 |
+| `WithCLIRoutesPath`          | string | "/cli/routes" | CLI 元数据接口路径 |
 | `WithDisableOptimization`    | bool | false  | 是否禁用性能优化           |
 | `WithDisableKeepalive`       | bool | false  | 是否禁用 Keep-Alive        |
 

@@ -48,6 +48,8 @@ type Options struct {
 	KeepAliveTimeout              time.Duration `yaml:"keepAliveTimeout" default:"180s"`
 	EnableSwagger                 bool          `yaml:"enableSwagger"`
 	EnablePprof                   bool          `yaml:"enablePprof"`
+	EnableCLI                     bool          `yaml:"enableCLI"`
+	CLIRoutesPath                 string        `yaml:"cliRoutesPath" default:"/cli/routes"`
 	Mode                          ServerMode    `yaml:"mode" default:"netpoll"`
 	LimiterEnabled                bool          `yaml:"limiterEnabled"`
 	Qps                           int           `yaml:"qps"`
@@ -227,6 +229,22 @@ func WithEnableActionController(opt bool) Option {
 func WithEnableSwagger(opt bool) Option {
 	return func(opts *Options) *Options {
 		opts.EnableSwagger = opt
+		return opts
+	}
+}
+
+// WithEnableCLI controls whether the /cli/routes metadata endpoint is exposed.
+func WithEnableCLI(opt bool) Option {
+	return func(opts *Options) *Options {
+		opts.EnableCLI = opt
+		return opts
+	}
+}
+
+// WithCLIRoutesPath sets the path of the CLI metadata endpoint.
+func WithCLIRoutesPath(path string) Option {
+	return func(opts *Options) *Options {
+		opts.CLIRoutesPath = path
 		return opts
 	}
 }
