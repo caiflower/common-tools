@@ -65,7 +65,11 @@ func (t *TimeStandard) UnmarshalJSON(data []byte) (err error) {
 	return
 }
 
-func (t *TimeStandard) MarshalJSON() ([]byte, error) {
+// MarshalJSON must use a value receiver: a pointer-receiver method is not in
+// TimeStandard's method set, so a TimeStandard stored in an interface{} (map/
+// slice element, gin.H, ...) is not addressable and falls back to struct
+// encoding ({}).
+func (t TimeStandard) MarshalJSON() ([]byte, error) {
 	if t.IsZero() {
 		return []byte("\"\""), nil
 	}
@@ -80,7 +84,8 @@ func (t *TimeStandard) IsZero() bool {
 	return t.Time().IsZero()
 }
 
-func (t *TimeStandard) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+// MarshalXML must use a value receiver for the same reason as MarshalJSON.
+func (t TimeStandard) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	err := e.EncodeElement(t.String(), start)
 	if err != nil {
 		return err

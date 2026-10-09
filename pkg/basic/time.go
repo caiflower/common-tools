@@ -122,7 +122,10 @@ func (t *Time) UnmarshalJSON(data []byte) (err error) {
 	return
 }
 
-func (t *Time) MarshalJSON() ([]byte, error) {
+// MarshalJSON must use a value receiver: a pointer-receiver method is not in
+// Time's method set, so a Time stored in an interface{} (map/slice element,
+// gin.H, ...) is not addressable and falls back to struct encoding ({}).
+func (t Time) MarshalJSON() ([]byte, error) {
 	if t.IsZero() {
 		return []byte("\"\""), nil
 	}
@@ -137,7 +140,8 @@ func (t *Time) IsZero() bool {
 	return t.Time().IsZero()
 }
 
-func (t *Time) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+// MarshalXML must use a value receiver for the same reason as MarshalJSON.
+func (t Time) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	err := e.EncodeElement(t.String(), start)
 	if err != nil {
 		return err
