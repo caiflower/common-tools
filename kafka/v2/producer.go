@@ -18,6 +18,7 @@ package v2
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -223,6 +224,48 @@ func handleAsyncProducerError(cfg *xkafka.Config, producerErr *sarama.ProducerEr
 	logger.Error("KafkaAsyncProducer %s got error. %s", cfg.Name, producerErr)
 }
 
+// describeSyncProducerError 把同步生产的失败原因展开成可读文本。
+//
+// sarama 的 ProducerErrors.Error() 只报「几条没投出去」（kafka: Failed to deliver N messages.），
+// 真正的原因在每条 ProducerError.Err 里（典型：ISR 不足、topic 不存在、无权限、消息过大），
+// 不展开的话排查时只看到一句没有信息量的聚合错误。
+func describeSyncProducerError(topic string, err error) []string {
+	if err == nil {
+		return nil
+	}
+
+	producerErrors, ok := err.(sarama.ProducerErrors)
+	if !ok {
+		return []string{fmt.Sprintf("topic=%s err=%v", topic, err)}
+	}
+
+	lines := make([]string, 0, len(producerErrors))
+	for i, producerErr := range producerErrors {
+		if producerErr == nil {
+			continue
+		}
+		msgTopic, partition, offset := topic, int32(-1), int64(-1)
+		if producerErr.Msg != nil {
+			msgTopic = producerErr.Msg.Topic
+			partition = producerErr.Msg.Partition
+			offset = producerErr.Msg.Offset
+		}
+		lines = append(lines, fmt.Sprintf("[%d] topic=%s partition=%d offset=%d err=%v",
+			i, msgTopic, partition, offset, producerErr.Err))
+	}
+	if len(lines) == 0 {
+		return []string{fmt.Sprintf("topic=%s err=%v", topic, err)}
+	}
+	return lines
+}
+
+// logSyncProducerError 打印同步生产的逐条失败原因：原因可能因分区而异，所以逐条打。
+func logSyncProducerError(cfg *xkafka.Config, topic string, err error) {
+	for _, line := range describeSyncProducerError(topic, err) {
+		logger.Error("[kafka-product] producer '%s' send failed: %s", cfg.Name, line)
+	}
+}
+
 func cloneSaramaConfig(config *sarama.Config) *sarama.Config {
 	if config == nil {
 		return nil
@@ -276,6 +319,7 @@ func (c *KafkaClient) Send(topic, key string, values ...interface{}) error {
 		} else {
 			reportSyncMessageResults(contexts, msgs, err)
 			xkafka.AddProducerErrCount(c.cfg, topic, xkafka.SyncErr)
+			logSyncProducerError(c.cfg, topic, err)
 			return err
 		}
 	}
