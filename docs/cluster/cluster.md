@@ -380,6 +380,20 @@ tracker := cluster.NewDefaultJobTracker(
 c.AddJobTracker(tracker)
 ```
 
+默认情况下 `MasterCall` 和 `SlaverCall` 是异步执行的，每次调度都会启动新的 goroutine。如果任务不能被并发执行，可以开启阻塞模式：
+
+```go
+tracker := cluster.NewJobTracker(
+    cluster.JobTrackerConfig{
+        Interval: 10,   // 定时任务间隔（秒）
+        Blocking: true, // 同步执行，等待任务完成后才进入下一次调度
+    },
+    caller,
+)
+```
+
+阻塞模式下，各 Caller 会依次执行；如果单次任务执行时间超过 `Interval`，下一次调度会顺延，同一个 Caller 的定时任务不会并发执行。
+
 ### 关闭 DefaultJobTracker
 
 DefaultJobTracker 实现了 `Close()` 方法，可以在关闭时清理资源：

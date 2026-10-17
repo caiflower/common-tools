@@ -56,6 +56,15 @@ func (dc *DefaultCaller) OnStartedFollowing(leaderName string) {}
 func (dc *DefaultCaller) MasterCall()                          {}
 func (dc *DefaultCaller) SlaverCall(leaderName string)         {}
 
+// JobTrackerConfig configures DefaultJobTracker.
+type JobTrackerConfig struct {
+	Interval int
+	// Blocking runs MasterCall and SlaverCall synchronously in the scheduler
+	// goroutine. A slow call delays the next tick. The default is false, which
+	// keeps the existing asynchronous behavior.
+	Blocking bool
+}
+
 const (
 	statusStopped uint32 = iota
 	statusRunning
@@ -64,6 +73,7 @@ const (
 
 type DefaultJobTracker struct {
 	Interval     int
+	Blocking     bool
 	leaderCtx    context.Context
 	leaderCancel context.CancelFunc
 	workerCtx    context.Context
@@ -73,18 +83,52 @@ type DefaultJobTracker struct {
 }
 
 func NewDefaultJobTracker(interval int, caller ...Caller) *DefaultJobTracker {
-	if interval <= 0 {
-		interval = 10
-	}
+	return NewJobTracker(JobTrackerConfig{Interval: interval}, caller...)
+}
 
+// NewJobTracker creates a tracker with explicit scheduling options.
+func NewJobTracker(config JobTrackerConfig, caller ...Caller) *DefaultJobTracker {
+	if config.Interval <= 0 {
+		config.Interval = 10
+	}
 	return &DefaultJobTracker{
-		Interval: interval,
+		Interval: config.Interval,
+		Blocking: config.Blocking,
 		callers:  caller,
 	}
 }
 
 func (t *DefaultJobTracker) Name() string {
 	return "DefaultJobTracker"
+}
+
+func (t *DefaultJobTracker) call(fn func()) {
+	if t.Blocking {
+		fn()
+		return
+	}
+	go fn()
+}
+
+func (t *DefaultJobTracker) runTicker(ctx context.Context, call func(Caller)) {
+	interval := time.Second * time.Duration(t.Interval)
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			for _, caller := range t.callers {
+				call(caller)
+			}
+			timer.Reset(interval)
+		}
+	}
 }
 
 func (t *DefaultJobTracker) OnStartedLeading() {
@@ -99,20 +143,9 @@ func (t *DefaultJobTracker) OnStartedLeading() {
 		go caller.OnStartedLeading()
 	}
 
-	go func(ctx context.Context) {
-		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				for _, caller := range t.callers {
-					go caller.MasterCall()
-				}
-			}
-		}
-	}(t.leaderCtx)
+	go t.runTicker(t.leaderCtx, func(caller Caller) {
+		t.call(caller.MasterCall)
+	})
 }
 
 func (t *DefaultJobTracker) OnStoppedLeading() {
@@ -153,20 +186,11 @@ func (t *DefaultJobTracker) OnStartedFollowing(leaderName string) {
 		go caller.OnStartedFollowing(leaderName)
 	}
 
-	go func(ctx context.Context) {
-		ticker := time.NewTicker(time.Second * time.Duration(t.Interval))
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				for _, caller := range t.callers {
-					go caller.SlaverCall(leaderName)
-				}
-			}
-		}
-	}(t.workerCtx)
+	go t.runTicker(t.workerCtx, func(caller Caller) {
+		t.call(func() {
+			caller.SlaverCall(leaderName)
+		})
+	})
 }
 
 func (t *DefaultJobTracker) Close() {

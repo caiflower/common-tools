@@ -237,3 +237,80 @@ func TestDefaultJobTracker(t *testing.T) {
 	defer cluster3.Close()
 	waitAllForReady(t, cluster1, cluster2, cluster3)
 }
+
+func TestNewJobTracker(t *testing.T) {
+	caller := &TestCaller{Name: "test"}
+
+	tracker := NewJobTracker(JobTrackerConfig{
+		Blocking: true,
+	}, caller)
+	assert.Equal(t, 10, tracker.Interval)
+	assert.True(t, tracker.Blocking)
+	assert.Len(t, tracker.callers, 1)
+
+	legacy := NewDefaultJobTracker(5, caller)
+	assert.Equal(t, 5, legacy.Interval)
+	assert.False(t, legacy.Blocking)
+}
+
+func TestDefaultJobTrackerCallBlocking(t *testing.T) {
+	tracker := &DefaultJobTracker{Blocking: true}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		tracker.call(func() {
+			close(started)
+			<-release
+		})
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("blocking call did not start")
+	}
+
+	select {
+	case <-done:
+		t.Fatal("blocking call returned before callback completed")
+	default:
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("blocking call did not return after callback completed")
+	}
+}
+
+func TestDefaultJobTrackerCallNonBlocking(t *testing.T) {
+	tracker := &DefaultJobTracker{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	returned := make(chan struct{})
+
+	go func() {
+		tracker.call(func() {
+			close(started)
+			<-release
+		})
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("non-blocking call did not return before callback completed")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("non-blocking callback did not start")
+	}
+
+	close(release)
+}
