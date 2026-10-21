@@ -80,18 +80,46 @@ func (m *heartbeatStreamManager) sendHeartbeat(nodeName string, term int32) bool
 		return false
 	}
 	entry := v.(*streamEntry)
-	entry.sendLock.Lock()
-	defer entry.sendLock.Unlock()
+	entry.requestLock.Lock()
+	defer entry.requestLock.Unlock()
 
+	ackCh := make(chan *proto.HeartbeatResponse, 1)
+	entry.sendLock.Lock()
 	if entry.stream == nil {
+		entry.sendLock.Unlock()
 		return false
 	}
 
+	entry.ackCh = ackCh
 	err := entry.stream.Send(&proto.HeartbeatRequest{
 		NodeName: m.cluster.GetMyName(),
 		Term:     term,
 	})
-	return err == nil
+	entry.sendLock.Unlock()
+	if err != nil {
+		entry.clearAck(ackCh)
+		return false
+	}
+
+	timeout := m.cluster.config.Timeout / 3
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+
+	select {
+	case resp := <-ackCh:
+		entry.clearAck(ackCh)
+		return resp != nil && resp.Success
+	case <-time.After(timeout):
+		entry.clearAck(ackCh)
+		// A late response on this stream cannot be safely correlated with the next request.
+		// Recreate the stream so a stale acknowledgement cannot be attributed to a newer heartbeat.
+		m.stopStream(nodeName)
+		return false
+	case <-m.cluster.ctx.Done():
+		entry.clearAck(ackCh)
+		return false
+	}
 }
 
 func (m *heartbeatStreamManager) runStream(ctx context.Context, gen int64, node *Node) {
@@ -149,11 +177,25 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, gen int64, node 
 				node.updateHeartbeat()
 			} else if resp.LeaderNodeName != "" && resp.LeaderNodeName != c.GetLeaderName() {
 				node.resetHeartbeatOnLeaderChange()
-				c.logger.Debug("[cluster] heartbeat from %s, leader changed: %s -> %s",
-					node.name, c.GetLeaderName(), resp.LeaderNodeName)
+				previousLeader := c.GetLeaderName()
+				if c.adoptLeaderFromHeartbeat(resp) {
+					c.logger.Warn("[cluster] heartbeat conflict resolved: local leader %s stepped down for %s (term %d)",
+						previousLeader, resp.LeaderNodeName, resp.Term)
+				} else {
+					c.logger.Debug("[cluster] heartbeat from %s, leader changed: %s -> %s",
+						node.name, previousLeader, resp.LeaderNodeName)
+				}
 			} else {
 				node.updateHeartbeatFailed()
 			}
+			entry.sendLock.Lock()
+			if entry.ackCh != nil {
+				select {
+				case entry.ackCh <- resp:
+				default:
+				}
+			}
+			entry.sendLock.Unlock()
 		}
 
 		if v, ok := m.streams.Load(node.name); !ok || v.(*streamEntry).generation != gen {
@@ -172,10 +214,53 @@ func (m *heartbeatStreamManager) runStream(ctx context.Context, gen int64, node 
 	}
 }
 
+func (c *Cluster) adoptLeaderFromHeartbeat(resp *proto.HeartbeatResponse) bool {
+	if resp == nil || resp.LeaderNodeName == "" {
+		return false
+	}
+
+	localLeader := c.GetLeaderName()
+	if resp.LeaderNodeName == localLeader {
+		return false
+	}
+
+	localTerm := c.GetMyTerm()
+	remoteTerm := int(resp.Term)
+	if remoteTerm < localTerm {
+		return false
+	}
+	// The same term must converge deterministically to avoid two persistent leaders.
+	if remoteTerm == localTerm && localLeader != "" && resp.LeaderNodeName > localLeader {
+		return false
+	}
+
+	var leaderNode *Node
+	if v, ok := c.aliveNodes.Load(resp.LeaderNodeName); ok {
+		leaderNode = v.(*Node)
+	} else if v, ok := c.allNode.Load(resp.LeaderNodeName); ok {
+		leaderNode = v.(*Node)
+	}
+	if leaderNode == nil {
+		return false
+	}
+
+	return c.signLeader(leaderNode, remoteTerm)
+}
+
 type streamEntry struct {
-	node       *Node
-	stream     proto.ClusterService_HeartbeatClient
-	cancel     context.CancelFunc
-	generation int64
-	sendLock   sync.Mutex
+	node        *Node
+	stream      proto.ClusterService_HeartbeatClient
+	cancel      context.CancelFunc
+	generation  int64
+	sendLock    sync.Mutex
+	requestLock sync.Mutex
+	ackCh       chan *proto.HeartbeatResponse
+}
+
+func (e *streamEntry) clearAck(ackCh chan *proto.HeartbeatResponse) {
+	e.sendLock.Lock()
+	defer e.sendLock.Unlock()
+	if e.ackCh == ackCh {
+		e.ackCh = nil
+	}
 }

@@ -639,8 +639,19 @@ func (c *Cluster) loadNodes() {
 		}
 	}
 
+	c.ensureCurrentNodeInMembership()
+
 	if c.IsEnable() {
 		c.logger.Info("[cluster] loadNodes success, nodes=%+v, addresses=%+v", c.GetAllNodeNames(), addresses)
+	}
+}
+
+func (c *Cluster) ensureCurrentNodeInMembership() {
+	if c.curNode == nil {
+		return
+	}
+	if _, ok := c.allNode.Load(c.curNode.name); !ok {
+		c.allNode.Store(c.curNode.name, c.curNode)
 	}
 }
 
@@ -654,7 +665,7 @@ func (c *Cluster) enableReplicasDiscovery() bool {
 }
 
 func (c *Cluster) getQuorum() int {
-	totalNodes := c.GetAllNodeCount()
+	totalNodes := max(c.GetAllNodeCount(), c.GetAliveNodeCount())
 	if totalNodes == 0 {
 		return 1
 	}
@@ -1115,22 +1126,34 @@ func (c *Cluster) heartbeat() {
 				quorum := c.getQuorum()
 				leastCnt := quorum - 1
 
-				success := 0
-				total := 0
+				var heartbeatNodes []*Node
 				c.aliveNodes.Range(func(key, value interface{}) bool {
 					nodeName := key.(string)
-					if nodeName != c.GetMyName() {
-						total++
-						if m.sendHeartbeat(nodeName, int32(c.term.Load())) {
-							success++
-						}
+					if nodeName == c.GetMyName() {
+						return true
 					}
+					heartbeatNodes = append(heartbeatNodes, value.(*Node))
 					return true
 				})
 
-				if total < leastCnt || success < leastCnt {
+				var success atomic.Int32
+				var wg sync.WaitGroup
+				for _, node := range heartbeatNodes {
+					wg.Add(1)
+					go func(node *Node) {
+						defer wg.Done()
+						if m.sendHeartbeat(node.name, int32(c.term.Load())) {
+							success.Add(1)
+						}
+					}(node)
+				}
+				wg.Wait()
+
+				total := len(heartbeatNodes)
+				successCnt := int(success.Load())
+				if total < leastCnt || successCnt < leastCnt {
 					consecutiveFailures++
-					c.logger.Warn("[cluster] heartbeat insufficient: %d/%d, consecutive failures: %d", success, leastCnt, consecutiveFailures)
+					c.logger.Warn("[cluster] heartbeat insufficient: %d/%d, consecutive failures: %d", successCnt, leastCnt, consecutiveFailures)
 
 					if consecutiveFailures >= maxConsecutiveFailures {
 						c.logger.Info("[cluster] too many heartbeat failures, stepping down as leader: %s", c.GetMyName())
@@ -1139,7 +1162,7 @@ func (c *Cluster) heartbeat() {
 					}
 				} else {
 					consecutiveFailures = 0
-					c.logger.Trace("[cluster] heartbeat ok: %d/%d responses", success, total)
+					c.logger.Trace("[cluster] heartbeat ok: %d/%d responses", successCnt, total)
 				}
 
 				ticker.Reset(leaderHeartbeatInterval)
