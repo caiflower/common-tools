@@ -1,4 +1,8 @@
-# Redis 模式动态节点发现配置说明
+# Redis 模式动态节点发现
+
+> 适用模块：`cluster` 的 `redis` 模式
+>
+> 相关文档：[Cluster 集群管理](README.md) · [Kubernetes 部署](kubernetes.md)
 
 ## 概述
 
@@ -31,6 +35,10 @@ Redis 模式支持基于 Redis 的动态节点发现机制，节点信息不再�
 节点索引、节点信息和选举 key 都使用 `{dataPath}` 作为 Redis hash tag，保证属于同一个 hash slot。这样 Redis Cluster 可以通过 Lua 原子完成“确认节点信息仍不存在，再清理节点索引”。
 
 ## 配置示例
+
+> [!IMPORTANT]
+> `Cluster.Redis` 的类型是 `redis/v2.RedisClient`。请使用
+> `github.com/caiflower/common-tools/redis/v2` 创建客户端；`redis/v1` 的客户端无法赋值。
 
 ### YAML 配置
 
@@ -196,3 +204,9 @@ redis-cli TTL "{myapp:cluster}:Nodes:node1"
 3. **同步间隔**：`nodeSyncInterval` 根据集群规模调整，大规模集群可适当增大
 4. **监控告警**：监控 Redis 连接状态和节点数量变化
 5. **灰度发布**：扩容时先启动新节点，观察稳定后再缩容旧节点
+
+## 相关文档
+
+- [Cluster 集群管理](README.md)
+- [Kubernetes 部署与扩缩容](kubernetes.md)
+- 源码：[cluster/cluster_redis.go](../../../cluster/cluster_redis.go)

@@ -1,56 +1,61 @@
 # common-tools
 
-一个功能强大的 Go 语言工具库集合，提供了丰富的基础设施组件和工具类。
+一个面向 Go 微服务的工具库集合，提供依赖注入、Web 框架、集群管理、数据客户端和常用工具包。
 
-## 📦 安装
+## 安装
 
 ```bash
 go get github.com/caiflower/common-tools
 ```
-## 📚 核心组件
 
-### 🏗️ 基础设施
+## 文档
 
-| 组件 | 路径 | 描述 | 文档                                   |
-| --- | --- | --- |--------------------------------------|
-| **依赖注入（IOC）** | `github.com/caiflower/common-tools/pkg/bean` | 自动注入和管理单例，类似Java的IOC容器 | [📖 详细文档](./docs/bean.md)            |
-| **cluster（集群管理）** | `github.com/caiflower/common-tools/cluster` | 基于Raft算法实现的集群管理，支持集群master选举和远程调用 | [📖 详细文档](./docs/cluster/cluster.md) |
-| **web框架** | `github.com/caiflower/common-tools/web/v1` | 轻量级web框架，支持tag参数校验、interceptor过滤和RESTful接口 | [📖 详细文档](./docs/web.md)             |
-| **global（全局管理）** | `github.com/caiflower/common-tools/global` | 全局资源管理器，管理Daemon进程，实现程序优雅退出 |                                      |
-| **taskx（任务框架）** | `github.com/caiflower/common-tools/taskx` | 任务调度框架，支持集群调度、DAG流任务、子任务结果传递（依赖MySQL） | [📖 详细文档](./docs/taskx/README.md)    |
+完整文档见 [docs/README.md](./docs/README.md)，包含组件导航、阅读路径和文档规范。
 
-### 🗄️ 数据库与缓存客户端
+## 核心组件
 
-| 组件 | 路径 | 描述 | 文档 |
+### 基础设施
+
+| 组件 | 导入路径 | 描述 | 文档 |
 | --- | --- | --- | --- |
-| **redis-client** | `github.com/caiflower/common-tools/redis/v1` | Redis客户端封装 | |
-| **db-client** | `github.com/caiflower/common-tools/db/v1` | 数据库连接客户端，基于bun实现，支持MySQL/PostgreSQL/Oracle等 | |
-| **clickhouse-client** | `github.com/caiflower/common-tools/ck/v1` | ClickHouse客户端封装 | |
-| **kafka-client**      | `github.com/caiflower/common-tools/kafka/` | 分为v1和v2版本，v1依赖cgo，v2不依赖 | |
+| **依赖注入（IoC）** | `github.com/caiflower/common-tools/pkg/bean` | 自动注入和管理单例，类似 Spring 的 IoC 容器 | [详细文档](./docs/infrastructure/bean.md) |
+| **Web 框架** | `github.com/caiflower/common-tools/web` | 高性能 RESTful 框架，支持参数校验、中间件、gRPC 和 CLI 双模式 | [详细文档](./docs/infrastructure/web/README.md) |
+| **Cluster 集群管理** | `github.com/caiflower/common-tools/cluster` | 基于 Raft 的集群管理，支持主节点选举、远程调用和任务调度 | [详细文档](./docs/infrastructure/cluster/README.md) |
+| **Global 全局管理** | `github.com/caiflower/common-tools/global` | 全局资源管理器，管理 Daemon 进程，实现优雅退出 | 待补充 |
+| **OpenTelemetry** | `github.com/caiflower/common-tools/otel` | Web、gRPC、Kafka、Redis、DB 的链路追踪接入 | 待补充 |
 
-### 🧰 工具包（pkg）
+### 数据库与缓存客户端
 
-| 组件 | 路径 | 描述 | 文档 |
+| 组件 | 导入路径 | 描述 | 文档 |
 | --- | --- | --- | --- |
-| **basic（数据结构）** | `github.com/caiflower/common-tools/pkg/basic` | Set、LinkedList、LinkedHashMap、PriorityQueue、DelayQueue等 | |
-| **cache（缓存）** | `github.com/caiflower/common-tools/pkg/cache` | LocalCache、LRU、LFU等本地缓存实现 | |
-| **golocal** | `github.com/caiflower/common-tools/pkg/golocal/v1` | 协程本地存储，类似Java的ThreadLocal | |
-| **limiter（限流器）** | `github.com/caiflower/common-tools/pkg/limiter` | 固定窗口和令牌桶限流算法实现 | |
-| **logger（日志）** | `github.com/caiflower/common-tools/pkg/logger` | 日志框架，支持标准输出和文件输出 | |
-| **syncx（自旋锁）** | `github.com/caiflower/common-tools/pkg/syncx` | 自旋锁实现（来自ants项目） | |
-| **crontab（定时任务）** | `github.com/caiflower/common-tools/pkg/crontab` | 基于cron表达式的定时任务框架 | |
-| **office** | `github.com/caiflower/common-tools/pkg/office` | Excel文件处理工具 | |
-| **tools（工具类）** | `github.com/caiflower/common-tools/pkg/tools` | 常用工具函数集合（JSON、加密、文件等） | |
+| **Redis 客户端** | `github.com/caiflower/common-tools/redis/v1`<br>`github.com/caiflower/common-tools/redis/v2` | Redis 客户端封装，v1 基于 go-redis v8，v2 基于 v9 | 待补充 |
+| **数据库客户端** | `github.com/caiflower/common-tools/db/v1` | 基于 bun 的数据库客户端，支持 MySQL、PostgreSQL、SQLite | 待补充 |
+| **ClickHouse 客户端** | `github.com/caiflower/common-tools/ck/v1` | ClickHouse 客户端封装 | 待补充 |
+| **Kafka 客户端** | `github.com/caiflower/common-tools/kafka/v1`<br>`github.com/caiflower/common-tools/kafka/v2` | v1 基于 confluent-kafka-go（cgo），v2 基于 Sarama（纯 Go） | 待补充 |
 
-## 🚀 快速开始
+### 工具包
 
-https://github.com/caiflower/cf-tools 快速创建项目
+| 组件 | 导入路径 | 描述 | 文档 |
+| --- | --- | --- | --- |
+| **basic（数据结构）** | `github.com/caiflower/common-tools/pkg/basic` | Set、LinkedList、LinkedHashMap、PriorityQueue、DelayQueue 等 | 待补充 |
+| **cache（缓存）** | `github.com/caiflower/common-tools/pkg/cache` | LocalCache、LRU、LFU 等本地缓存实现 | 待补充 |
+| **golocal（协程本地存储）** | `github.com/caiflower/common-tools/pkg/golocal/v1` | 类似 Java ThreadLocal 的协程本地存储 | 待补充 |
+| **limiter（限流器）** | `github.com/caiflower/common-tools/pkg/limiter` | 固定窗口、令牌桶、Redis 限流等实现 | 待补充 |
+| **logger（日志）** | `github.com/caiflower/common-tools/pkg/logger` | 支持标准输出和文件输出的日志框架 | 待补充 |
+| **syncx（自旋锁）** | `github.com/caiflower/common-tools/pkg/syncx` | 自旋锁实现 | 待补充 |
+| **crontab（定时任务）** | `github.com/caiflower/common-tools/pkg/crontab` | 基于 cron 表达式的定时任务框架 | 待补充 |
+| **office（Excel）** | `github.com/caiflower/common-tools/pkg/office` | Excel 文件处理工具 | 待补充 |
+| **tools（工具函数）** | `github.com/caiflower/common-tools/pkg/tools` | JSON、加密、文件等常用工具函数 | 待补充 |
 
-## 🤝 贡献
+## 快速开始
 
-欢迎提交 Issue 和 Pull Request！
+推荐使用 [cf-tools](https://github.com/caiflower/cf-tools) 创建项目骨架，再按
+[Web 快速开始](./docs/infrastructure/web/README.md#快速开始) 接入框架。
 
-## 📄 License
+## 贡献
 
-请查看项目根目录的 LICENSE 文件
+欢迎提交 Issue 和 Pull Request。修改文档前请阅读 [文档规范](./docs/README.md#文档规范)。
 
+## License
+
+项目使用 Apache License 2.0，详见根目录 [LICENSE](./LICENSE)。
